@@ -8,30 +8,13 @@
 <title>Otome Phone</title>
 <meta name="theme-color" content="#fef8f4">
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%23f5d5de'/><stop offset='100%25' stop-color='%23e8a0b4'/></linearGradient></defs><rect fill='url(%23g)' width='100' height='100' rx='22'/><g transform='translate(50,47)' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' opacity='.9'><path d='M0-8c-6-10-16-16-16-24 0-4 4-8 8-6 3 1.5 5 4 8 6 3-2 5-4.5 8-6 4-2 8 2 8 6 0 8-10 14-16 24z' fill='%23fff' fill-opacity='.25'/><path d='M0-8v44'/><path d='M0 12c-6-4-11-2-13 2'/><path d='M0 6c6-4 10-2 12 2'/></g></svg>">
+<link rel="manifest" href="./manifest.json">
 <script>
 if('serviceWorker' in navigator){
-  const manifest={
-    name:'Otome Phone',
-    short_name:'Otome Phone',
-    start_url:location.href.split('?')[0],
-    display:'fullscreen',
-    background_color:'#fef8f4',
-    theme_color:'#e8a0b4',
-    orientation:'portrait',
-    icons:[{
-      src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="%23f5d5de"/><stop offset="100%" stop-color="%23e8a0b4"/></linearGradient></defs><rect fill="url(%23g)" width="512" height="512" rx="110"/><g transform="translate(256,240)" fill="none" stroke="%23fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"><path d="M0-40c-30-50-80-80-80-120 0-22 20-40 40-30 15 7 25 20 40 30 15-10 25-23 40-30 20-10 40 8 40 30 0 40-50 70-80 120z" fill="%23fff" fill-opacity="0.25"/><path d="M0-40v220"/><path d="M0 60c-30-20-55-10-65 10"/><path d="M0 30c30-20 50-10 60 10"/></g></svg>'),
-      sizes:'512x512',
-      type:'image/svg+xml',
-      purpose:'any maskable'
-    }]
-  };
-  const blob=new Blob([JSON.stringify(manifest)],{type:'application/json'});
-  const link=document.createElement('link');
-  link.rel='manifest';link.href=URL.createObjectURL(blob);
-  document.head.appendChild(link);
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
 }
 </script>
+
 <script>
 // 注入自定义CSS，但保护核心布局不被覆盖
 try{
