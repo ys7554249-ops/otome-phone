@@ -12038,16 +12038,21 @@ let bubbleStyle = isOnlySticker
 
     const row=ce('div')
     row.style.cssText='display:flex;flex-direction:column;align-items:flex-end;animation:fadeIn .3s;padding:0 0 0 40px'
+        const _editIdx = getMsgs().length - 1
     row.innerHTML=`
       <div style="display:flex;align-items:flex-start;gap:8px;flex-direction:row-reverse">
         <div style="flex-shrink:0">${avatarEl(P().avatar,30,I.mirror(n?'#c8a8d0':'var(--rose)',14))}</div>
-                <div class=\"_bubble _bubble-self\" style=\"max-width:78%; font-size:13px; color:${bubbleVisual.color}; line-height:1.8; ${bubbleStyle}\">
+        <div style="max-width:78%;display:flex;flex-direction:column">
+                <div class="_bubble _bubble-self" style="font-size:13px; color:${bubbleVisual.color}; line-height:1.8; ${bubbleStyle}">
 
           <div style="white-space:pre-wrap">${parsedText}</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:4px;gap:12px"><div class="_uedit" data-idx="${_editIdx}" style="font-size:9px;color:var(--lav);cursor:pointer;opacity:.8">编辑</div><div class="_uwithdraw" data-idx="${_editIdx}" style="font-size:9px;color:#c47a7a;cursor:pointer;opacity:.6">撤回</div></div>
         </div>
       </div>
       <div style="font-size:9px;color:${n?'#9a8a9a':'var(--ink-l)'};opacity:.45;padding:3px 42px 0 0">${timeStr}</div>
     `
+
     if(ml.textContent.includes('还没有消息'))ml.innerHTML=''
     ml.appendChild(row);ml.scrollTop=ml.scrollHeight
   }
@@ -12700,19 +12705,19 @@ if(imgApi.key && !c.offlineMode && store.get('autoImageEnabled',true)){
   if(userWantImg){
     const checkArr2 = getMsgs(targetCharId)
     const lastC = [...checkArr2].reverse().find(m => m.from==='c')
-    // 如果AI最后这条回复没带[图片]，手动补一条图片消息
-   if(lastC && !lastC.text.includes('[图片]')){
-  const imgMsg = {
-    from:'c',
-    text:'[图片] ',
-    time:ftime(now()),
-    read:(activeCharId===targetCharId)
-  }
-
-  checkArr2.push(imgMsg)
-  saveMsgs(targetCharId,checkArr2)
-}
-
+    // 如果已经有待处理的[图片]消息，不再重复插入
+    const alreadyHasPending = checkArr2.some(m => m.from==='c' && m.text && m.text.includes('[图片]') && !m.image)
+    // 如果AI最后这条回复没带[图片]，且没有待处理的图片，手动补一条
+    if(lastC && !lastC.text.includes('[图片]') && !alreadyHasPending){
+      const imgMsg = {
+        from:'c',
+        text:'[图片] ',
+        time:ftime(now()),
+        read:(activeCharId===targetCharId)
+      }
+      checkArr2.push(imgMsg)
+      saveMsgs(targetCharId,checkArr2)
+    }
   }
 }
         // ===== 补图：AI回复了[图片]文字但没有实际图 =====
@@ -12728,18 +12733,21 @@ if(imgApi.key && !c.offlineMode && store.get('autoImageEnabled',true)){
           let oldNeg2=imgApi.negativePrompt
 // 直接用人设拼提示词，绕开 Gemini，确保一定能走到 genImage
 const isNAI = imgApi.provider === 'novelai'
-const charProfile = ((c.gender||'') + ' ' + (c.personality||'') + ' ' + (c.relation||'')).toLowerCase()
-const isFemaleChar = /女|她|少女|女生|女性|姐姐|妹妹|御姐|女生/.test(charProfile) &&
+const charProfile = ((c.gender||'') + ' ' + (c.personality||'') + ' ' + (c.relation||'') + ' ' + (c.intro||'') + ' ' + (c.name||'')).toLowerCase()
+const isMaleChar = /男|他|少年|男生|男性|哥哥|弟弟|王子|先生|帅/.test(charProfile) &&
+  !/女|她|少女|女生|女性|姐姐|妹妹|御姐|公主|小姐/.test(charProfile)
+const isFemaleChar = /女|她|少女|女生|女性|姐姐|妹妹|御姐|公主|小姐|姑娘/.test(charProfile) &&
   !/男|他|少年|男生|男性|哥哥|弟弟/.test(charProfile)
 
 const genderTags = isFemaleChar
   ? '1girl, beautiful girl, solo'
-  : '1boy, handsome boy, solo'
+  : isMaleChar
+    ? '1boy, handsome boy, solo'
+    : '1person, solo'
 
 const prompt = isNAI
   ? `masterpiece, best quality, newest, very aesthetic, absurdres, ${genderTags}, ${desc}, detailed face, expressive eyes, natural pose, suitable clothing, appropriate background, beautiful composition`
   : `realistic photography, professional photography, natural skin texture, high detail, sharp focus, ${genderTags}, ${desc}, looking at viewer, detailed face, soft lighting`
-alert('开始调用生图API，提示词：'+prompt.slice(0,40))
 const url=await genImage(prompt)
 imgApi.negativePrompt=oldNeg2
 
@@ -12776,7 +12784,7 @@ if(url){
             })
             store.set('generatedImages',imgs)
 
-            window._chatForceBottom = false;
+            window._chatForceBottom = true;
             if(document.getElementById('_msglist') && activeCharId === targetCharId) render('chat')
           }else{
             console.log('私聊补图失败：genImage返回空')
@@ -12790,15 +12798,17 @@ if(url){
 }
 
     // ===== 线上模式AI主动发图 =====
-    if(!c.offlineMode && imgApi.key && store.get('autoImageEnabled',true) && Math.random() < 0.15) {
+    const _userAlreadyWantImg = imgApi.key && !c.offlineMode && store.get('autoImageEnabled',true) && texts.some(t => /发.*(图|照片|自拍)|看看你|拍.*给我|来张|想看你|照片|自拍/.test(t))
+    if(!c.offlineMode && imgApi.key && store.get('autoImageEnabled',true) && !_userAlreadyWantImg && Math.random() < 0.15) {
       (async()=>{
         try{
           const lastTexts = processedLines.map(x=>x.text).join('\n')
+          const _charGenderHint = ((c.gender||'')+(c.intro||'')).match(/女|她|少女|姑娘|女生|姐姐|妹妹|御姐/) ? '女性角色，prompt必须用1girl' : ((c.gender||'')+(c.intro||'')).match(/男|他|少年|男生|哥哥|弟弟/) ? '男性角色，prompt必须用1boy' : ''
           const decision = await askAIJson(
             '只返回JSON',
-            `你是${c.name}，刚才聊天内容：${lastTexts.slice(0,200)}
+            `你是${c.name}（${_charGenderHint || '性别未知'}），刚才聊天内容：${lastTexts.slice(0,200)}
 你觉得现在适合给对方发一张照片吗？比如自拍、风景、食物、今天的穿搭等等。
-如果适合，返回：{"send":true,"desc":"一句话描述照片内容","prompt":"英文danbooru风格tag，masterpiece开头"}
+如果适合，返回：{"send":true,"desc":"一句话描述照片内容","prompt":"英文danbooru风格tag，masterpiece开头${_charGenderHint ? '，必须包含'+(_charGenderHint.includes('女')?'1girl':'1boy') : ''}"}
 如果不适合，返回：{"send":false}`,
             400
           )
@@ -12814,7 +12824,7 @@ if(url){
               const imgs = store.get('generatedImages',[])
               imgs.unshift({id:uid(), url:imgUrl, prompt:decision.prompt, time:new Date().toLocaleString(), scene:caption, charId:targetCharId, charName:c.name})
               store.set('generatedImages', imgs)
-              window._chatForceBottom = false;
+              window._chatForceBottom = true;
               if(document.getElementById('_msglist') && activeCharId === targetCharId) render('chat')
             }
           }
@@ -23670,6 +23680,15 @@ async function exportAllData(){
       }catch(e){}
     });
 
+    // 1.5 显式确保关键全局配置一定被导出（防止内存变量与cache不同步）
+    try{ data['ot_embApi']=JSON.stringify(embApi) }catch(e){}
+    try{ data['ot_imgApi']=JSON.stringify(imgApi) }catch(e){}
+    try{ data['ot_imgApiList']=JSON.stringify(imgApiList) }catch(e){}
+    try{ data['ot_activeImgApiId']=JSON.stringify(activeImgApiId) }catch(e){}
+    try{ data['ot_ttsApi']=JSON.stringify(ttsApi) }catch(e){}
+    try{ data['ot_apiList']=JSON.stringify(apiList) }catch(e){}
+    try{ data['ot_activeApiId']=JSON.stringify(activeApiId) }catch(e){}
+
     // 2. 收集 localStorage 里的所有数据（包括 ot_、气泡 _bubble、以及自定义CSS）
     Object.keys(localStorage).forEach(k=>{
       if(k.includes('_autoBackups')) return;
@@ -25057,9 +25076,10 @@ async function triggerCharCheckup(charId){
   if(!api||!api.key)return
 
   const pe=P()
+  const msgs=getMsgs(charId)
 
   // 收集查岗素材：你最近在干嘛
-// 修复：只能查出你和“他认识的人”的互动轨迹
+// 修复：只能查出你和"他认识的人"的互动轨迹
 const otherChars=getMyChars().filter(x=>x.id!==charId && (
   (x.relation||'').includes(c.name) || 
   (x.personality||'').includes(c.name) || 
@@ -25078,19 +25098,47 @@ otherChars.forEach(oc=>{
 const liveEvidence=store.get('charLiveNow',null)
 if(liveEvidence&&liveEvidence.charId!==charId){
   const liveChar=charList.find(x=>x.id===liveEvidence.charId)
-  // 只有认识这个主播才会吃醋
   if(liveChar && ((liveChar.personality||'').includes(c.name) || (c.personality||'').includes(liveChar.name))) {
      evidence+=`用户最近去过${liveChar.name}的直播间。`
   }
 }
 
-  const prompt=`你是「${c.name}」。性格：${(c.personality||'').slice(0,120)}。你和对方的关系：${c.relation||'未知'}。
-${evidence?'你发现了：'+evidence:'你没发现什么异常，但你就是想找用户聊天。'}
+  // 读取聊天记录和记忆（核心修复！）
+  const recentMsgs=msgs.slice(-20).map(m=>`${m.from==='u'?(pe.name||'用户'):c.name}：${m.text}`).join('\n')
+  const memText=getMemoryPromptText(charId)
+
+  // 检测情绪状态
+  const _recent10=msgs.slice(-10).map(m=>m.text||'').join('')
+  const _isFighting=/生气|吵架|混蛋|滚|分手|讨厌你|不理你|气死|别烦|闭嘴|脸皮厚|不知廉|破手表|屏蔽/.test(_recent10)
+  const _moodContext=_isFighting?'⚠️【重要】你们最近在吵架/闹矛盾！你的查岗方式必须反映这个状态——可能是赌气式质问、冷哼着找茬、或别扭地想确认对方有没有在生自己的气，绝对不能假装什么都没发生！':'无特殊冲突'
+
+  // 检索相关记忆事件（向量优先，关键词兜底）
+  let _relatedMem=''
+  try{
+    const _lastFew=msgs.slice(-5).map(m=>m.text||'').join(' ')
+    let _found=[]
+    if(embApi.key){try{_found=await searchMemoryByVector(charId,_lastFew,5)}catch(e){}}
+    if(!_found||!_found.length) _found=searchMemoryByKeyword(charId,_lastFew,5)
+    if(_found.length) _relatedMem='\n【与最近话题相关的记忆】\n'+_found.map(e=>e.text).join('；')
+  }catch(e){}
+
+  const prompt=`你是「${c.name}」。性格：${(c.personality||'').slice(0,200)}。你和对方的关系：${c.relation||'未知'}。
+对方是：${pe.name||'用户'}${pe.identity?' ('+pe.identity+')':''}
+${memText?'【你对ta的长期记忆】\n'+memText:''}${_relatedMem}
+
+【当前情绪状态】${_moodContext}
+
+【你们最近的聊天记录（必须仔细阅读！）】
+${recentMsgs||'（暂无记录）'}
+
+${evidence?'【查岗发现】'+evidence:'【查岗发现】没发现跟别人有什么可疑互动。'}
 
 你现在要查用户的岗（关心/试探/质问/撒娇式地问用户在干嘛）。
-请完全根据你的性格和你们的关系来决定语气：高冷的人冷淡地问、傲娇的人旁敲侧击、亲密的人直球或吃醋撒娇。
-如果发现了evidence，要表现出来但不要太直白（可以阴阳怪气/装作不在意地试探）。
-不要用emoji，像真人发微信。
+请完全根据你的性格、你们的关系、以及最近的聊天状态来决定语气：
+- 如果刚吵完架：带着情绪查岗（赌气质问/冷哼找茬/别扭试探）
+- 高冷的人冷淡地问、傲娇的人旁敲侧击、亲密的人直球或吃醋撒娇
+- 如果发现了evidence，要表现出来但不要太直白（可以阴阳怪气/装作不在意地试探）
+不要用emoji，像真人发微信。每条消息至少10个字，说完整的话。
 返回JSON：{"messages":["消息1","消息2"],"mood":"查岗后的心情"}`
 
   const res=await askAIJson('只返回JSON',prompt,400)
@@ -25104,7 +25152,9 @@ ${evidence?'你发现了：'+evidence:'你没发现什么异常，但你就是�
   if(res.mood){c.mood=res.mood;saveCharList()}
   saveMsgs(charId,arr)
 
-  addMemoryEvent(charId,`（查岗）主动找用户查岗，${evidence?'发现了一些蛛丝马迹':'没发现什么异常'}。`,'checkup')
+  // 记忆事件也要反映实际情况
+  const _evtMood=_isFighting?'（当时正在闹矛盾）':''
+  addMemoryEvent(charId,`（查岗）主动找用户查岗${_evtMood}，${evidence?'发现了一些蛛丝马迹':'没发现跟别人有可疑互动'}。`,'checkup')
 
   // 通知
   showBgNotification(c,res.messages[0])
@@ -29129,42 +29179,69 @@ if(msgs.length&&msgs[msgs.length-1].from==='c'&&!msgs[msgs.length-1].read){_bgSe
     const relText = (c.relation||'').trim()
     let typeHint='根据你和对方的关系、你的性格来决定语气，可以撒娇/分享日常/关心/吐槽/找借口搭话，像真人一样自然'
     
-    // 读取更多历史消息 + 记忆摘要作为上下文
-    const recentMsgs=msgs.slice(-15).map(m=>`${m.from==='u'?(P().name||'用户'):c.name}：${m.text}`).join('\n')
+     // 读取更多历史消息 + 记忆摘要作为上下文（扩大到30条，确保吵架等长对话不会丢失起因）
+    const recentMsgs=msgs.slice(-30).map(m=>`${m.from==='u'?(P().name||'用户'):c.name}：${m.text}`).join('\n')
     const memText=getMemoryPromptText(c.id)
     const pe=P()
     
-    // 计算距离上次聊天过了多久
+    // 计算距离上次聊天过了多久（精确到分钟）
     const lastMsgTime=msgs.length?msgs[msgs.length-1].time:''
     const lastContent=msgs.length?msgs[msgs.length-1].text:''
     const lastFrom=msgs.length?(msgs[msgs.length-1].from==='u'?(pe.name||'用户'):c.name):''
-    
+    let _gapText='一段时间'
+    try{
+      const _lt=new Date(msgs[msgs.length-1].time).getTime()
+      const _diffMin=Math.round((Date.now()-_lt)/60000)
+      if(_diffMin<60) _gapText=_diffMin+'分钟'
+      else if(_diffMin<1440) _gapText=Math.round(_diffMin/60)+'小时'
+      else _gapText=Math.round(_diffMin/1440)+'天'
+    }catch(e){}
+
+    // 检测最近聊天的情绪状态（吵架/冷战/甜蜜等）
+    const _recent10=msgs.slice(-10).map(m=>m.text||'').join('')
+    const _isFighting=/生气|吵架|混蛋|滚|分手|讨厌你|不理你|气死|别烦|闭嘴|脸皮厚|不知廉|破手表|屏蔽/.test(_recent10)
+    const _isColdWar=msgs.length>=2&&msgs[msgs.length-1].from==='c'&&msgs[msgs.length-2].from==='c'
+    const _moodHint=_isFighting?'⚠️你们最近在吵架/闹矛盾！你现在的情绪应该还没完全消化，发消息时必须延续这个情绪状态（可以是赌气、冷哼、不服软、或者别扭地找台阶下），绝对不能假装什么都没发生过！':_isColdWar?'⚠️对方似乎在冷你/没回消息，你的语气要体现出你注意到了这一点':'无特殊情绪状态'
+
+    // 用向量/关键词检索相关记忆事件（向量优先，关键词兜底）
+    let _relatedEvents=''
+    try{
+      const _lastFew=msgs.slice(-5).map(m=>m.text||'').join(' ')
+      let _found=[]
+      if(embApi.key){try{_found=await searchMemoryByVector(c.id,_lastFew,5)}catch(e){}}
+      if(!_found||!_found.length) _found=searchMemoryByKeyword(c.id,_lastFew,5)
+      if(_found.length) _relatedEvents='\n【与最近话题相关的历史事件】\n'+_found.map(e=>e.text).join('；')
+    }catch(e){}
+
     const prompt=`你是「${c.name}」。
 【你的性格】${c.personality||''}
 【和对方的关系】${c.relation||'未设定'}
 【对方是谁】${pe.name||'用户'}${pe.identity?' ('+pe.identity+')':''}
-${memText?'【你对ta的长期记忆】'+memText:''}
+${memText?'【你对ta的长期记忆】'+memText:''}${_relatedEvents}
 ${contextHint}。${typeHint}。
 
-【你们最近的聊天记录（核心记忆依据）】
+【当前情绪判断】${_moodHint}
+
+【你们最近的聊天记录（核心记忆依据，务必仔细阅读！）】
 ${recentMsgs||'（还没有聊天记录）'}
 
 ${lastContent?'【最后一条消息】'+lastFrom+'说的："'+lastContent+'"（时间：'+lastMsgTime+'）':''}
 
 【主动发消息行为准则】：
-1. 必须根据你们刚才的聊天记录自然延伸！如果是聊到一半的事情，要继续追问或接梗；如果刚才对方去忙了，询问对方忙完没有；绝不能当成第一次打招呼！
+1. 必须根据你们刚才的聊天记录自然延伸！如果在吵架就延续吵架的情绪，如果是聊到一半的事情要继续追问或接梗，如果刚才对方去忙了就询问忙完没有——绝不能当成第一次打招呼！
 2. 像发微信一样自然随意，1-2句口语即可，但每句话必须说完整（至少10个字），不要只蹦两三个字就结束
 3. 只输出你要发送的那句话，不要带任何括号、动作描写或前缀。
 
-现在距离上次聊天已经过了很久，你（${c.name}）抓着手机，主动给对方发一条微信。
+距离上次聊天过了${_gapText}，你（${c.name}）拿起手机，主动给对方发一条微信。
 
 【极度严格的真人准则】：
-1. 严禁任何客服式问候！绝对严禁发“下午好/早上好/在吗/沈少爷下午好”这种弱智客服打卡词！
-2. 你主动找ta必须有真人的真实动机：
-   - 嫌ta半天不回消息（例：“人呢，失踪了？”“还没忙完啊”）
-   - 随手分享手边正在干的事（例：“刚去楼下买了杯冰美式，好苦。”“外面突然下大雨了，你带伞没？”）
-   - 突然想念/傲娇撩拨（例：“突然有点想你。”“喂，某只小猪是不是睡死过去了”）
+1. 严禁任何客服式问候！绝对严禁发"下午好/早上好/在吗/在干嘛/XX下午好"这种弱智客服打卡词！
+2. 你主动找ta必须有真人的真实动机，而且必须跟你们最近的对话状态一致：
+   - 如果刚吵完架：赌气不服软（"哼，我可没有要跟你和好"）、别扭找台阶（"你今天有没有好好吃饭"）、冷嘲热讽
+   - 如果正常聊天中断：嫌ta半天不回消息（"人呢，失踪了？"）、随手分享手边正在干的事
+   - 如果氛围甜蜜：撒娇想念（"突然有点想你。"）、傲娇撩拨
 3. 一句完整的口语，至少10个字以上，随性自然，不要任何前缀`
+
 
 
     try{
@@ -29445,6 +29522,9 @@ async function bootstrap() {
   apiList=store.get('apiList',apiList)
   activeApiId=store.get('activeApiId',activeApiId)
   imgApi=store.get('imgApi',imgApi)
+  imgApiList=store.get('imgApiList',imgApiList)
+  activeImgApiId=store.get('activeImgApiId',activeImgApiId)
+  embApi=store.get('embApi',embApi)
   ttsApi=store.get('ttsApi',ttsApi)
   // ✅ 修复后（与顶部初始化保持一致）
 charList=store.get('charList',[{id:'c1',name:'苏白',relation:'暧昧',mood:'温柔',status:'在沙发上看书',affection:65,quote:'今天的风，很温柔呢。',personality:'温柔体贴、有些毒舌、偶尔傲娇，喜欢红茶和旧书。',avatar:'',worldBookIds:[],bindPersonaId:''}])
