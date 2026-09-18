@@ -14,11 +14,16 @@
 <link rel="manifest" href="./manifest.json">
 <script>
 if('serviceWorker' in navigator){
-  // 每次打开强制检查更新 sw.js，有新文件立刻替换
-  navigator.serviceWorker.register('./sw.js?v=' + Date.now()).then(reg => {
-    reg.update();
-  }).catch(()=>{});
+  // 先试探 sw.js 是否存在，存在才注册（兼容不支持PWA的平台）
+  fetch('./sw.js', {method:'HEAD'}).then(r=>{
+    if(r.ok) navigator.serviceWorker.register('./sw.js?v='+Date.now()).then(reg=>reg.update());
+    else navigator.serviceWorker.getRegistrations().then(rs=>{for(const r of rs)r.unregister()});
+  }).catch(()=>{
+    // sw.js不存在或网络错误，注销残留SW
+    navigator.serviceWorker.getRegistrations().then(rs=>{for(const r of rs)r.unregister()}).catch(()=>{});
+  });
 }
+
 </script>
 
 <script>
@@ -1436,7 +1441,10 @@ function openShop(charId,shopTypeId,investFromUser){
   const d=getNurtureData(charId)
   if(d.wallet.shop)return{success:false,msg:'已经有店铺了'}
   
-  const shopType=shopTypes.find(s=>s.id===shopTypeId)
+  let shopType=shopTypes.find(s=>s.id===shopTypeId)
+  if(!shopType && window._customShops && window._customShops[shopTypeId]){
+    shopType = window._customShops[shopTypeId]
+  }
   if(!shopType)return{success:false,msg:'店铺类型不存在'}
   
   // 移除技能要求检查
@@ -3049,6 +3057,17 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
       s += _momTxt;
     }
   }
+  // 注入生活资产与店铺感知
+  try {
+    const _nd = getNurtureData(c.id);
+    if(_nd && _nd.wallet){
+      let _shInfo = `\n【你的个人生活与产业状态】：\n- 你的个人小金库余额：¥${_nd.wallet.balance || 0}。\n`;
+      if(_nd.wallet.shop){
+        _shInfo += `- 你名下拥有专属店铺「${_nd.wallet.shop.name}」（等级Lv.${_nd.wallet.shop.level||1}），你清楚知道自己是店长，平时有打理生意的生活轨迹，聊天中可自然提及店里的事。\n`;
+      }
+      s += _shInfo;
+    }
+  } catch(e) {}
 
   // ===== 分支：线上 vs 线下 =====
   if(isOffline){
@@ -3331,6 +3350,12 @@ ${card.template}
       }
     }
   }
+    // 检测是否是自己刚在后台主动搭话
+    const _lastMyMsg = _recentMsgs.slice(-3).reverse().find(m => m.from === 'c');
+    if(_lastMyMsg && _lastMyMsg.isBgInitiated){
+      _extra += `\n【重要情境】：你刚刚在后台主动给对方发了："${_lastMyMsg.text}"！现在对方正在回复你刚才主动发起的话题，你必须顺着你刚才的话接下去聊（比如傲娇反问、解释为什么找ta），绝对禁止跳回更早之前无关的旧话题！`;
+    }
+
   // 关键词语义检索：从最近几条对话里抽关键词，找相关的历史记忆
   try{
     const _last3 = hist.slice(-3).map(m => typeof m.content==='string' ? m.content : '').join(' ').slice(0, 500)
@@ -17626,7 +17651,7 @@ pages.settings=()=>{
   <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">
     <div>
       <div style="font-size:13px;color:var(--ink)">当前运行版本</div>
-      <div style="font-size:10.5px;color:var(--ink-l);margin-top:2px" id="_cur_ver_text">v1.2.0</div>
+      <div style="font-size:10.5px;color:var(--ink-l);margin-top:2px" id="_cur_ver_text">v1.2.1</div>
     </div>
     <div class="btn-sub" id="_btn_check_update" style="padding:6px 14px;font-size:11.5px;border-radius:12px">
       检查更新
@@ -17694,7 +17719,7 @@ $('#_expall').onclick=()=>exportAllData()
 $('#_impall').onclick=()=>importAllData()
 $('#_clearimgs').onclick=()=>{if(!confirm('清空所有生图记录？'))return;store.set('generatedImages',[]);alert('已清空')}
 // 免后端的一键检查更新系统
-const APP_VERSION = 'v1.2.0';
+const APP_VERSION = 'v1.2.1';
 if($('#_cur_ver_text')) $('#_cur_ver_text').textContent = APP_VERSION;
 if($('#_btn_check_update')) {
   $('#_btn_check_update').onclick = async () => {
@@ -17722,17 +17747,21 @@ if($('#_btn_check_update')) {
             <div class="btn-main" id="_btn_do_update">立即更新并重启</div>
             <div class="btn-sub" id="_btn_cancel_update" style="margin-top:8px">暂不更新</div>
           `;
-          mb.querySelector('#_btn_cancel_update').onclick = close;
-          mb.querySelector('#_btn_do_update').onclick = async () => {
+            mb.querySelector('#_btn_do_update').onclick = async () => {
+            mb.querySelector('#_btn_do_update').textContent = '正在更新资源...';
+            // 彻底注销 Service Worker
             if ('serviceWorker' in navigator) {
               const regs = await navigator.serviceWorker.getRegistrations();
               for (const r of regs) await r.unregister();
             }
+            // 彻底清空所有缓存池
             if ('caches' in window) {
               const keys = await caches.keys();
               for (const k of keys) await caches.delete(k);
             }
-            window.location.reload(true);
+            // 核心关键：通过变更 URL 参数，强制手机 Webview 扔掉旧缓存读取新文件！
+            const targetUrl = window.location.origin + window.location.pathname + '?v=' + encodeURIComponent(remoteVer);
+            window.location.replace(targetUrl);
           };
         });
       } else {
@@ -17741,30 +17770,11 @@ if($('#_btn_check_update')) {
     } catch (e) {
       btn.textContent = '检查更新';
       btn.style.opacity = '1';
-      if(confirm('无法比对版本，是否直接强制刷新 App？（聊天记录不会丢）')) {
-        window.location.reload(true);
-      }
+      alert('检测更新失败，请检查网络连接');
     }
   };
 }
-// 每次打开 App 时，在后台静默检查是否有新版本
-setTimeout(async () => {
-  try {
-    const res = await fetch(window.location.pathname + '?_auto=' + Date.now(), { cache: 'no-store' });
-    const htmlText = await res.text();
-    const match = htmlText.match(/const APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
-    const remoteVer = match ? match[1] : null;
-    if (remoteVer && remoteVer !== APP_VERSION) {
-      if(confirm(`检测到有新版本 (${remoteVer})，是否立即更新？（记录不会丢失）`)){
-        if ('serviceWorker' in navigator) {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          for (const r of regs) await r.unregister();
-        }
-        window.location.reload(true);
-      }
-    }
-  } catch(e) {}
-}, 3000); // 打开 App 3秒后静默检测
+
 
 $('#_clearmap').onclick=async()=>{
   if(!confirm('清空所有地图剧情缓存？'))return
@@ -19665,65 +19675,25 @@ function showCharWalletDetail(char){
 }
 
 // 显示开店界面
-function showOpenShop(char){
-  const n=isN()
-  const d=getNurtureData(char.id)
-  
+async function showOpenShop(char){
+  const n=isNight()
   const mask=ce('div','modal-mask')
-  
   const box=ce('div','modal-box')
   box.style.maxHeight='85vh'
   
   const title=ce('div','modal-title')
-  title.textContent='选择店铺类型'
+  title.textContent=char.name+' · 专属产业筹备'
   box.appendChild(title)
   
   const content=ce('div')
-  content.style.cssText='max-height:60vh;overflow-y:auto'
+  content.style.cssText='max-height:60vh;overflow-y:auto;padding-bottom:10px'
   
-  const types=getShopTypes()
-  
-  types.forEach(shop=>{
-  const card=ce('div')
-  card.style.cssText=`padding:14px;border-radius:12px;background:rgba(255,255,255,.5);border:1px solid rgba(232,160,180,.1);margin-bottom:10px;cursor:pointer;`
-  
-  card.innerHTML=`
-    <div style="font-size:13px;font-weight:500;color:${n?'#d8c8e8':'var(--ink)'};margin-bottom:6px">${escHtml(shop.name)}</div>
-    <div style="font-size:11px;color:${n?'#b8a8c8':'var(--ink-l)'};line-height:1.6">
-      投资成本：¥${shop.invest}<br>
-      日收益：¥${shop.minIncome}-${shop.maxIncome}<br>
-      升级费用：¥${shop.upgradeCost}
-    </div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <div class="btn-main" style="flex:1;padding:8px;font-size:11px" onclick="
-        const res=openShop('${char.id}','${shop.id}',false)
-        if(res.success){
-          alert(res.msg)
-          this.closest('.modal-mask').remove()
-          render('wallet')
-        }else{
-          alert(res.msg)
-        }
-      ">TA自己投资</div>
-      <div class="btn-sub" style="flex:1;padding:8px;font-size:11px" onclick="
-        if(confirm('你将投资¥${shop.invest}，并获得分红权')){
-          const res=openShop('${char.id}','${shop.id}',true)
-          if(res.success){
-            alert(res.msg)
-            this.closest('.modal-mask').remove()
-            render('wallet')
-          }else{
-            alert(res.msg)
-          }
-        }
-      ">你来投资</div>
+  // 提示加载状态
+  content.innerHTML=`
+    <div style="text-align:center;padding:40px 10px;color:var(--ink-l);font-size:12px;line-height:1.8">
+      正在根据「${escHtml(char.name)}」的性格与背景<br>构思专属商业方案...
     </div>
   `
-
-    
-    content.appendChild(card)
-  })
-  
   box.appendChild(content)
   
   const closeBtn=ce('div','btn-sub')
@@ -19735,7 +19705,118 @@ function showOpenShop(char){
   mask.appendChild(box)
   document.body.appendChild(mask)
   mask.onclick=e=>{if(e.target===mask)mask.remove()}
+
+  // 核心：调用 AI 根据角色人设生成专属店铺
+  const fetchCustomShops = async () => {
+    content.innerHTML=`
+      <div style="text-align:center;padding:40px 10px;color:var(--ink-l);font-size:12px;line-height:1.8">
+        正在根据「${escHtml(char.name)}」的性格与背景<br>构思专属商业方案...
+      </div>
+    `
+    const prompt = `你是角色「${char.name}」。
+【你的性格与人设】：${(char.personality||'').slice(0, 300)}
+【你的身份/背景】：${(char.desc||char.background||'').slice(0, 200)}
+
+请根据你的个人特长、喜好、生活圈子，量身构思 3 个完全符合你人设风格的专属实体产业/店铺方案（绝对严禁千篇一律的奶茶店、猫咖！）。
+例如：拽哥机车手可以是机车改装工作室、摇滚音乐吧；高材生可以是私人咨询事务所、黑白胶片暗房；艺术生可以是陶艺手作坊、版画工坊。
+
+严格返回合法 JSON 数组，格式如下（严禁输出任何 markdown 标签或代码块，严禁使用任何 emoji 图标）：
+[
+  {
+    "id": "shop_custom_1",
+    "name": "店铺名字（富有角色人设特色）",
+    "desc": "一句话描述该店铺的经营特色与环境氛围",
+    "invest": 1500,
+    "minIncome": 120,
+    "maxIncome": 260,
+    "upgradeCost": 800
+  },
+  {
+    "id": "shop_custom_2",
+    "name": "店铺名字",
+    "desc": "一句话描述",
+    "invest": 2000,
+    "minIncome": 160,
+    "maxIncome": 320,
+    "upgradeCost": 1000
+  },
+  {
+    "id": "shop_custom_3",
+    "name": "店铺名字",
+    "desc": "一句话描述",
+    "invest": 3000,
+    "minIncome": 240,
+    "maxIncome": 480,
+    "upgradeCost": 1500
+  }
+]`
+
+    try {
+      const res = await askAIJson('只返回JSON数组', prompt, 1000)
+      const list = Array.isArray(res) ? res : (res.shops || [])
+      
+      if(!list || !list.length) throw new Error('未能获取有效方案')
+
+      content.innerHTML = ''
+      list.forEach(shop => {
+        const card = ce('div')
+        card.style.cssText = `padding:14px;border-radius:14px;background:rgba(255,255,255,.55);border:1px solid rgba(232,160,180,.18);margin-bottom:12px;`
+        card.innerHTML = `
+          <div style="font-size:14px;font-weight:600;color:var(--ink);letter-spacing:1px;margin-bottom:4px">${escHtml(shop.name)}</div>
+          <div style="font-size:11px;color:var(--ink-l);line-height:1.5;margin-bottom:10px">${escHtml(shop.desc||'')}</div>
+          <div style="font-size:11px;color:var(--rose-d);line-height:1.6;background:rgba(232,160,180,.08);padding:8px 10px;border-radius:8px">
+            投资预估：¥${shop.invest} · 预期日收：¥${shop.minIncome}-${shop.maxIncome}
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <div class="btn-main _btn_invest_self" style="flex:1;padding:9px;font-size:11.5px">TA自行出资</div>
+            <div class="btn-sub _btn_invest_user" style="flex:1;padding:9px;font-size:11.5px">由你注资合伙</div>
+          </div>
+        `
+
+        // 绑定开店事件
+        card.querySelector('._btn_invest_self').onclick = () => {
+          // 注册自定义类型
+          if(!window._customShops) window._customShops = {}
+          window._customShops[shop.id] = shop
+          const r = openShop(char.id, shop.id, false)
+          alert(r.msg)
+          if(r.success){ mask.remove(); render('wallet') }
+        }
+
+        card.querySelector('._btn_invest_user').onclick = () => {
+          if(confirm(`你将为「${shop.name}」出资 ¥${shop.invest}，并获得产业分红权？`)){
+            if(!window._customShops) window._customShops = {}
+            window._customShops[shop.id] = shop
+            const r = openShop(char.id, shop.id, true)
+            alert(r.msg)
+            if(r.success){ mask.remove(); render('wallet') }
+          }
+        }
+
+        content.appendChild(card)
+      })
+
+      // 重新生成专属方案按钮
+      const refreshBtn = ce('div', 'btn-sub')
+      refreshBtn.style.cssText = 'text-align:center;padding:10px;font-size:11.5px;margin-top:8px;border-style:dashed;'
+      refreshBtn.textContent = '重新构思产业方案'
+      refreshBtn.onclick = fetchCustomShops
+      content.appendChild(refreshBtn)
+
+    } catch(err) {
+      content.innerHTML = `
+        <div style="text-align:center;padding:30px 10px;color:var(--rose-d);font-size:12px">
+          构思遇到了一点小问题：${escHtml(err.message)}
+        </div>
+        <div class="btn-main" id="_retry_shop" style="margin-top:10px">重新尝试</div>
+      `
+      content.querySelector('#_retry_shop').onclick = fetchCustomShops
+    }
+  }
+
+  fetchCustomShops()
 }
+
 
 
 // ===== 群聊系统 =====
@@ -24076,7 +24157,13 @@ async function settleJob(charId,data,c){
   data.wallet.balance+=pay
   data.wallet.transactions.unshift({type:'in',amount:pay,desc:'工作收入',time:new Date().toLocaleString()})
   if(data.wallet.transactions.length>100)data.wallet.transactions=data.wallet.transactions.slice(0,100)
-  
+    // 核心：打工经历自动写入主页「关键事件」
+  try {
+    if (typeof addKeyEvent === 'function') {
+      addKeyEvent(charId, `完成了「${info?.title || '兼职工作'}」，赚得 ¥${pay} 收入`);
+    }
+  } catch(e) {}
+
   data.exp+=exp
   data.totalEarned+=pay
   data.level=calcNurtureLevel(data.exp)
@@ -28964,25 +29051,41 @@ ${lastContent?'【最后一条消息】'+lastFrom+'说的："'+lastContent+'"（
 2. 像发微信一样自然随意，1-2句口语即可，不要长篇大论。
 3. 只输出你要发送的那句话，不要带任何括号、动作描写或前缀。
 
-现在你主动给${pe.name||'对方'}发一条消息。核心要求：
-- 你发的内容必须跟上面的聊天记录有关联！可以是接着聊上次的话题、回应上次没说完的事、突然想起之前聊过的某件事、或者基于你们的关系日常分享
-- 如果上次是对方说的最后一句话，你可以过了一会儿突然回复/补充
-- 如果上次是你说的最后一句话，不要重复类似的内容，换个角度
-- 像真人发微信，一句话，简短自然
-- 绝对不要用emoji
-- 直接输出消息内容，不要加角色名前缀`
+现在距离上次聊天已经过了很久，你（${c.name}）抓着手机，主动给对方发一条微信。
+
+【极度严格的真人准则】：
+1. 严禁任何客服式问候！绝对严禁发“下午好/早上好/在吗/沈少爷下午好”这种弱智客服打卡词！
+2. 你主动找ta必须有真人的真实动机：
+   - 嫌ta半天不回消息（例：“人呢，失踪了？”“还没忙完啊”）
+   - 随手分享手边正在干的事（例：“刚去楼下买了杯冰美式，好苦。”“外面突然下大雨了，你带伞没？”）
+   - 突然想念/傲娇撩拨（例：“突然有点想你。”“喂，某只小猪是不是睡死过去了”）
+3. 像真实用手机微信打字，1句口语，随性自然，不要任何前缀。`
 
     try{
       const reply=await askAI(`你是${c.name}。你必须先仔细阅读聊天记录再发消息，发的内容要跟上下文有关联。只输出消息内容，不要任何前缀。`,prompt,150)
       if(!reply||reply.includes('API')||reply.includes('没配置'))return
       
-      // 写入消息（标记为未读）
+      // 写入消息（标记为未读，并注入主动搭话的记忆阻断）
       const arr=getMsgs(c.id)
-      arr.push({from:'c',text:reply.trim(),time:ftime(now()),read:false})
+      arr.push({
+        from:'c',
+        text:reply.trim(),
+        time:ftime(now()),
+        read:false,
+                isBgInitiated:true
+      })
       saveMsgs(c.id,arr)
+
+      // 核心：直接记入角色的「关键事件」列表！
+      try {
+        if (typeof addKeyEvent === 'function') {
+          addKeyEvent(c.id, `在后台主动发微信："${reply.trim()}"`);
+        }
+      } catch(e) {}
       
       // 弹窗通知
       showBgNotification(c,reply.trim())
+
     }catch(e){}
   _bgSending=false
   
