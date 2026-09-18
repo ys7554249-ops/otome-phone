@@ -7,9 +7,9 @@
   "theme_color": "#e8a0b4",
   "orientation": "portrait",
   "icons": [{
-    "src": "icon.svg",
+    "src": "https://s1.oururl.cn/autoupload/b7nhj/20260918/lNO0/1080X1016/mmexport1789724191807..jpg",
     "sizes": "512x512",
-    "type": "image/svg+xml",
+    "type": "image/jpeg",
     "purpose": "any maskable"
   }]
 }
