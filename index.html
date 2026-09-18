@@ -4226,6 +4226,25 @@ function showNiceConfirm(text, onOk, onCancel){
   box.querySelector('#_nc_cancel').onclick = () => { mask.remove(); if(onCancel) onCancel(); };
   box.querySelector('#_nc_ok').onclick = () => { mask.remove(); if(onOk) onOk(); };
 }
+// 全局劫持 confirm() → 自动转为莫兰迪粉白弹窗
+(function(){
+  var _el=null,_pass=0,_seen=0
+  document.addEventListener('click',function(e){
+    _seen=0
+    if(!e._r){_el=e.target;_pass=0}
+  },true)
+  window.confirm=function(msg){
+    _seen++
+    if(_seen<=_pass)return true
+    var n=_seen
+    showNiceConfirm(msg.replace(/^⚠️\s*/,'').replace(/^👀\s*/,'').replace(/^🚑\s*/,''),function(){
+      _pass=n;_seen=0
+      if(_el){var ev=new MouseEvent('click',{bubbles:true,cancelable:true});ev._r=true;_el.dispatchEvent(ev)}
+    })
+    return false
+  }
+})()
+
 function showModal(title,buildFn){
   const mask=ce('div','modal-mask'),box=ce('div','modal-box'),n=isN()
   if(n){
@@ -11472,6 +11491,7 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
           <div class="btn-sub" id="_lp_cancel" style="margin-top:10px">取消</div>
         `
         mb.querySelector('#_lp_del').onclick=()=>{
+          if(!confirm('确定删除这条消息？')) return
           const a=getMsgs()
           const dm=a[idx]
           if(dm&&dm.from==='c'){
