@@ -17621,6 +17621,18 @@ pages.settings=()=>{
       <div class="btn-sub" id="_expall">导出全部数据</div>
       <div class="btn-sub" id="_impall" style="margin-top:8px">导入数据</div>
       <div class="btn-sub" id="_clearimgs" style="margin-top:8px">清空生图记录</div>
+<div class="card" style="margin-top:12px">
+  <div class="card-t">版本与维护</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">
+    <div>
+      <div style="font-size:13px;color:var(--ink)">当前运行版本</div>
+      <div style="font-size:10.5px;color:var(--ink-l);margin-top:2px" id="_cur_ver_text">v1.2.0</div>
+    </div>
+    <div class="btn-sub" id="_btn_check_update" style="padding:6px 14px;font-size:11.5px;border-radius:12px">
+      检查更新
+    </div>
+  </div>
+</div>
       <div class="btn-sub" id="_clearmap" style="margin-top:8px">清空地图剧情缓存</div>
       <div class="btn-sub" id="_clearbackup" style="margin-top:8px;color:#c47a7a">🚑 清空自动备份（卡死时点这里）</div>
     </div>
@@ -17681,6 +17693,79 @@ $('#_savemgr').onclick=()=>openSaveManager()
 $('#_expall').onclick=()=>exportAllData()
 $('#_impall').onclick=()=>importAllData()
 $('#_clearimgs').onclick=()=>{if(!confirm('清空所有生图记录？'))return;store.set('generatedImages',[]);alert('已清空')}
+// 免后端的一键检查更新系统
+const APP_VERSION = 'v1.2.0';
+if($('#_cur_ver_text')) $('#_cur_ver_text').textContent = APP_VERSION;
+if($('#_btn_check_update')) {
+  $('#_btn_check_update').onclick = async () => {
+    const btn = $('#_btn_check_update');
+    btn.textContent = '检测中...';
+    btn.style.opacity = '0.6';
+    try {
+      const res = await fetch(window.location.pathname + '?_check=' + Date.now(), { cache: 'no-store' });
+      const htmlText = await res.text();
+      const match = htmlText.match(/const APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+      const remoteVer = match ? match[1] : null;
+      btn.textContent = '检查更新';
+      btn.style.opacity = '1';
+
+      if (remoteVer && remoteVer !== APP_VERSION) {
+        showModal('发现新版本', (mb, close) => {
+          mb.innerHTML = `
+            <div style="text-align:center;padding:10px 0 16px">
+              <div style="font-size:16px;font-weight:600;color:var(--ink);margin-bottom:6px">发现全新版本！</div>
+              <div style="font-size:12px;color:var(--rose-d)">线上版本：${remoteVer}（当前：${APP_VERSION}）</div>
+              <div style="font-size:11.5px;color:var(--ink-l);margin-top:12px;line-height:1.6">
+                更新将自动清除旧缓存并加载新功能，<br><b style="color:var(--green)">聊天记录与存档将完整保留，绝不丢失。</b>
+              </div>
+            </div>
+            <div class="btn-main" id="_btn_do_update">立即更新并重启</div>
+            <div class="btn-sub" id="_btn_cancel_update" style="margin-top:8px">暂不更新</div>
+          `;
+          mb.querySelector('#_btn_cancel_update').onclick = close;
+          mb.querySelector('#_btn_do_update').onclick = async () => {
+            if ('serviceWorker' in navigator) {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              for (const r of regs) await r.unregister();
+            }
+            if ('caches' in window) {
+              const keys = await caches.keys();
+              for (const k of keys) await caches.delete(k);
+            }
+            window.location.reload(true);
+          };
+        });
+      } else {
+        alert('当前已是最新版本 (' + APP_VERSION + ')，无需更新！');
+      }
+    } catch (e) {
+      btn.textContent = '检查更新';
+      btn.style.opacity = '1';
+      if(confirm('无法比对版本，是否直接强制刷新 App？（聊天记录不会丢）')) {
+        window.location.reload(true);
+      }
+    }
+  };
+}
+// 每次打开 App 时，在后台静默检查是否有新版本
+setTimeout(async () => {
+  try {
+    const res = await fetch(window.location.pathname + '?_auto=' + Date.now(), { cache: 'no-store' });
+    const htmlText = await res.text();
+    const match = htmlText.match(/const APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+    const remoteVer = match ? match[1] : null;
+    if (remoteVer && remoteVer !== APP_VERSION) {
+      if(confirm(`检测到有新版本 (${remoteVer})，是否立即更新？（记录不会丢失）`)){
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          for (const r of regs) await r.unregister();
+        }
+        window.location.reload(true);
+      }
+    }
+  } catch(e) {}
+}, 3000); // 打开 App 3秒后静默检测
+
 $('#_clearmap').onclick=async()=>{
   if(!confirm('清空所有地图剧情缓存？'))return
   const allData=await dataDB.getAll()
@@ -23419,83 +23504,89 @@ function refreshAllCharRelations(){
   saveCharRelations(rels)
 }
 
-function exportAllData(){
+async function exportAllData(){
   try {
-    // 从内存缓存（IndexedDB的镜像）收集数据
     const data={};
+    // 1. 收集 store.cache 数据
     Object.keys(store.cache).forEach(k=>{
-      // 关键修复：跳过自动备份，它们已经在缓存里膨胀，会导致 Invalid string length
-      if(k === '_autoBackups') return;
-      if(k.endsWith('::_autoBackups')) return;
+      if(k === '_autoBackups' || k.endsWith('::_autoBackups')) return;
       try{
         data['ot_'+k]=JSON.stringify(store.cache[k])
-      }catch(e){
-        console.warn('导出跳过异常字段', k, e.message)
+      }catch(e){}
+    });
+
+    // 2. 收集 localStorage 里的所有数据（包括 ot_、气泡 _bubble、以及自定义CSS）
+    Object.keys(localStorage).forEach(k=>{
+      if(k.includes('_autoBackups')) return;
+      if(k.startsWith('ot_') || k.startsWith('_bubble') || k.startsWith('custom') || k==='activeCharId' || k==='activePersonaId'){
+        data[k] = localStorage.getItem(k);
       }
     });
-    // 兼容：也把 localStorage 里的旧数据带上
-    Object.keys(localStorage).forEach(k=>{
-      if(k.startsWith('ot_')&&!data[k]&&!k.includes('_autoBackups')) data[k]=localStorage.getItem(k)
-    });
+
+    // 3. 核心突破：将 imgDB 里的所有本地头像/图片一起打包导出！
+    data['_exported_images'] = {};
+    try {
+      if(window.imgDB && imgDB.getAll){
+        const allImgs = await imgDB.getAll();
+        for(const item of allImgs){
+          if(item && item.id && item.blob){
+            const b64 = await new Promise(res=>{
+              const reader = new FileReader();
+              reader.onload = ()=>res(reader.result);
+              reader.readAsDataURL(item.blob);
+            });
+            data['_exported_images'][item.id] = b64;
+          }
+        }
+      }
+    }catch(ie){
+      console.warn('导出本地图片库异常', ie);
+    }
     
     // 生成文件 Blob
     const jsonStr = JSON.stringify(data);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const blobUrl = URL.createObjectURL(blob);
-    const fileName = 'otome_backup_' + new Date().getTime() + '.json';
+    const fileName = 'otome_backup_full_' + new Date().getTime() + '.json';
 
-    // 检测是否在微信或QQ内置浏览器中
     const ua = navigator.userAgent.toLowerCase();
     const isWeChat = ua.includes('micromessenger');
     const isQQ = ua.includes('qq/') || ua.includes('mqqbrowser');
 
-    showModal('导出数据备份', (mb, close) => {
+    showModal('导出全量数据备份', (mb, close) => {
       mb.innerHTML = `
         <div style="text-align:center;padding:10px 0;font-size:12px;color:var(--ink-l);line-height:1.8">
-          ${(isWeChat || isQQ) ? '<span style="color:#c47a7a;font-weight:bold;font-size:13px;">⚠️ 检测到您在微信/QQ内<br>如果点击下载无反应，请点击右上角<br>【在默认浏览器打开】后再下载！</span><br><br>' : ''}
-          请妥善保管备份文件，换手机或清理缓存时可用于恢复。
+          ${(isWeChat || isQQ) ? '<span style="color:#c47a7a;font-weight:bold;font-size:13px;">⚠️ 检测到您在微信/QQ内<br>如果点击下载无反应，请在默认浏览器打开！</span><br><br>' : ''}
+          已完整包含：角色库、聊天记录、世界书、<b>头像库图片、气泡样式与壁纸</b>。
         </div>
         
-        <!-- 终极兼容：原生 a 标签直接触发下载 + 高级 SVG 图标 -->
         <a id="_ex_direct_dl" href="${blobUrl}" download="${fileName}" style="display:flex; align-items:center; justify-content:center; gap:8px; margin-top:10px; padding:14px; border-radius:20px; background:linear-gradient(135deg, var(--rose-l), var(--rose)); color:#fff; text-decoration:none; font-size:14px; font-weight:bold; box-shadow:0 4px 12px rgba(232,160,180,0.3);">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          下载备份文件 (.json)
+          下载全量备份文件 (.json)
         </a>
         
-        <!-- iOS 备用通道 -->
         <div class="btn-sub" id="_ex_share" style="margin-top:12px; display:none; padding:14px;">
           <div style="display:flex; align-items:center; justify-content:center; gap:8px; font-weight:500;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
             存储到手机文件 (iOS推荐)
           </div>
         </div>
       `;
 
-      // 如果手机支持原生 Share API（比如苹果 Safari），显示专属保存按钮
       if (navigator.canShare) {
         const shareBtn = mb.querySelector('#_ex_share');
         shareBtn.style.display = 'block';
         shareBtn.onclick = async () => {
           try {
             const file = new File([blob], fileName, { type: 'application/json' });
-            await navigator.share({ files: [file], title: '乙女游戏备份' });
-          } catch (e) {
-            console.log('分享取消或失败');
-          }
+            await navigator.share({ files: [file], title: '乙女小手机完整备份' });
+          } catch (e) {}
         };
       }
-      
-      // 点击下载后，延迟提示
-      mb.querySelector('#_ex_direct_dl').onclick = () => {
-        setTimeout(() => {
-          alert('下载指令已发送！\n如果没弹出下载提示，请按红字说明【在浏览器打开】。');
-        }, 500);
-      };
     });
-  } catch (err) {
-    alert('导出时发生错误: ' + err.message);
+  } catch(e) {
+    alert('导出遇到问题: ' + e.message);
   }
 }
+
 
 function importAllData(){
   showModal('导入数据备份',(mb,close)=>{
@@ -23509,28 +23600,54 @@ function importAllData(){
       <div class="btn-sub" id="_im_btn" style="margin-top:10px">导入粘贴的数据</div>
     `;
 
-    const doImport = async (txt) => {
-  try {
-    const data=JSON.parse(txt); let c=0;
-    for(const k of Object.keys(data)){
-      if(k.startsWith('ot_')){
-        const realKey=k.replace('ot_','');
-        try{
-          const val=JSON.parse(data[k]);
-          store.cache[realKey]=val;
-          await dataDB.set(realKey,val);
-          c++;
-        }catch(e){
-          // 如果值不是JSON就原样存
-          localStorage.setItem(k,data[k]);
+      const doImport=async(txt)=>{
+    try{
+      const data=JSON.parse(txt); let c=0;
+
+      // 1. 恢复本地头像图片库到 imgDB
+      if(data['_exported_images'] && window.imgDB && imgDB.save){
+        const imgs = data['_exported_images'];
+        for(const imgId of Object.keys(imgs)){
+          try {
+            const b64 = imgs[imgId];
+            const arr = b64.split(',');
+            const mime = (arr[0].match(/:(.*?);/)||[])[1] || 'image/png';
+            const bstr = atob(arr[1]);
+            let n = bstr.length;
+            const u8 = new Uint8Array(n);
+            while(n--) u8[n] = bstr.charCodeAt(n);
+            const blob = new Blob([u8], {type:mime});
+            await imgDB.save(imgId, blob);
+          } catch(ie){}
+        }
+      }
+
+      // 2. 恢复所有数据与气泡/CSS
+      for(const k of Object.keys(data)){
+        if(k === '_exported_images') continue;
+        if(k.startsWith('ot_')){
+          const realKey=k.replace('ot_','');
+          try{
+            const val=JSON.parse(data[k]);
+            store.cache[realKey]=val;
+            await dataDB.set(realKey,val);
+            c++;
+          }catch(e){
+            localStorage.setItem(k,data[k]);
+            c++;
+          }
+        } else {
+          // 气泡样式、自定义壁纸、自定义CSS等
+          localStorage.setItem(k, data[k]);
           c++;
         }
       }
-    }
-    if(c>0){ alert('导入成功，页面即将刷新'); location.reload(); }
-    else { alert('文件中没有找到有效数据'); }
-  } catch(e) { alert('导入失败，数据格式错误'); }
-};
+
+      if(c>0){ alert('导入成功！所有头像库、气泡和记录已全部恢复，页面即将刷新'); location.reload(); }
+      else { alert('文件中没有找到有效数据'); }
+    } catch(e) { alert('导入失败，数据格式错误: ' + e.message); }
+  };
+
 
     mb.querySelector('#_im_file').onclick=()=>{
       const ip=document.createElement('input');ip.type='file';ip.accept='application/json';
@@ -24824,13 +24941,34 @@ async function handleCaughtSnooping(charId){
   const api=getApi()
   if(!api||!api.key)return
 
-  const prompt=`你是「${c.name}」。性格：${(c.personality||'').slice(0,120)}。你和对方的关系：${c.relation||'未知'}。
-你刚刚发现用户在偷看你的手机！
-请完全根据你的性格做出反应：傲娇的假装生气其实有点窃喜、害羞的慌张抢手机、高冷的冷声质问、亲昵的无奈打趣。
-发1-2条短消息。不要emoji。
-返回JSON：{"messages":["反应消息"],"mood":"被偷看后的心情"}`
+  const pe=P()
+  // 提取手机里刚才被偷看的秘密作为“抓包证据”
+  let evidence = '';
+  if(phoneData){
+    if(phoneData.memo) evidence += `【手机里的私人备忘录】：${phoneData.memo}\n`;
+    if(phoneData.drafts&&phoneData.drafts.length) evidence += `【打了又删的羞耻草稿】：${phoneData.drafts.join('；')}\n`;
+    if(phoneData.searchHistory&&phoneData.searchHistory.length) evidence += `【偷搜的记录】：${phoneData.searchHistory.slice(0,3).join('；')}\n`;
+    if(phoneData.contactName) evidence += `【给对方肉麻特别的备注】：${phoneData.contactName}\n`;
+  }
 
-  const res=await askAIJson('只返回JSON',prompt,300)
+  const prompt=`你是「${c.name}」。
+【你的性格与真实设定】：${c.personality||'（暂无人设）'}
+【你与对方（${pe.name||'用户'}）的关系】：${c.relation||'暧昧'}
+
+💥【抓包现场紧急事件】：
+你毫无预警地突然走过来，当场抓包了对方（${pe.name||'用户'}）正在偷偷翻你的私人手机！
+手机屏幕上正停留在你极其私密、见不得人、甚至写满对对方心事的内容上：
+${evidence||'手机里的私密记录与备忘录'}
+
+⚠️ 反应与台词铁律：
+1. 必须完全符合你的性格！
+   - 暴躁/傲娇/忠犬型：瞬间脸红炸毛，一把扑过来抢夺手机，语无伦次又羞又恼地凶对方“草……你都看见什么了？！谁准你翻我备忘录的？！”
+   - 腹黑/掌控欲强型：不怒反笑，一把攥住对方手腕甚至将对方逼到墙角/沙发边，居高临下危险逼问：“查岗查得开心吗？看到那些草稿，不打算给我一个交代？”
+   - 纯情/害羞型：整个人彻底熟透，慌不择路地抢过手机扣在怀里，结结巴巴想找地缝钻进去。
+2. 连续发出 2~3 条极其真实、带有强烈情绪冲击力的现场微信消息（可以带动作语气质感，如同当场抓获现行）！
+3. 返回严格JSON格式：{"messages":["消息1","消息2","消息3"],"mood":"抓包后的真实心情（如：羞恼炸毛/意味深长/心跳过速）"}`
+
+  const res=await askAIJson('只返回JSON',prompt,1000)
   if(!res)return
 
   const arr=getMsgs(charId)
@@ -25105,7 +25243,21 @@ ${recognizedContext ? '\n【你所知晓的关联情报】：\n' + recognizedCon
         <div style="text-align:center;padding:10px 0 20px;padding-bottom:max(20px,env(safe-area-inset-bottom));font-size:9px;color:rgba(255,255,255,.12)">被发现概率 30%</div>
       </div>`
     setTimeout(()=>{
-      const sb=$('#_sneakout');if(sb)sb.onclick=async()=>{if(!caught&&Math.random()<0.3){caught=true;await handleCaughtSnooping(charId);alert(c.name+'发现你偷看了手机！');activeCharId=charId;saveCharList();_navSkipPush=true;render('chat')}else{_navSkipPush=true;render('snoop')}}
+      const sb=$('#_sneakout');if(sb)sb.onclick=async()=>{
+  if(!caught&&Math.random()<0.4){
+    caught=true;
+    // 加个震动反馈
+    if(navigator.vibrate) navigator.vibrate([100,50,100]);
+    await handleCaughtSnooping(charId);
+    activeCharId=charId;
+    saveCharList();
+    _navSkipPush=true;
+    render('chat');
+  }else{
+    _navSkipPush=true;
+    render('snoop')
+  }
+}
       document.querySelectorAll('._dkw').forEach(el=>{el.onclick=()=>showApp(el.dataset.key)})
     },50)
   }
@@ -28748,22 +28900,22 @@ function startBackgroundMessages(){
 
     // 只在非聊天页时触发
     if(document.getElementById('_msglist'))return
-    // 每次间隔至少90秒
-    if(Date.now()-_lastBgCheck<90000)return
-if(_bgSending)return
-_lastBgCheck=Date.now()
-_bgSending=true
+    // 每次间隔至少 25 分钟（1500000毫秒），符合真实活人习惯
+    if(Date.now()-_lastBgCheck<1500000)return
+    if(_bgSending)return
+    _lastBgCheck=Date.now()
+    _bgSending=true
 
-const api=getApi()
+    const api=getApi()
     if(!api||!api.key){_bgSending=false;return}
     
-    // 随机选一个好感度>30的角色
+    // 随机选一个角色
     const myChars=getMyChars().filter(c=>!c.isDeleted&&!c.isBlocked)
     if(!myChars.length){_bgSending=false;return}
     
-    // 15%概率触发
-    if(Math.random()>0.15){_bgSending=false;return}
-    
+    // 40% 概率触发发消息
+    if(Math.random()>0.4){_bgSending=false;return}
+
     const c=myChars[Math.floor(Math.random()*myChars.length)]
     const msgs=getMsgs(c.id)
     
@@ -28796,16 +28948,21 @@ if(msgs.length&&msgs[msgs.length-1].from==='c'&&!msgs[msgs.length-1].read){_bgSe
     const lastFrom=msgs.length?(msgs[msgs.length-1].from==='u'?(pe.name||'用户'):c.name):''
     
     const prompt=`你是「${c.name}」。
-【你的性格】${(c.personality||'').slice(0,200)}
+【你的性格】${c.personality||''}
 【和对方的关系】${c.relation||'未设定'}
 【对方是谁】${pe.name||'用户'}${pe.identity?' ('+pe.identity+')':''}
-${memText?'【你对ta的长期记忆】'+memText.slice(0,300):''}
+${memText?'【你对ta的长期记忆】'+memText:''}
 ${contextHint}。${typeHint}。
 
-【你们最近的聊天记录（非常重要，你必须读完再说话）】
+【你们最近的聊天记录（核心记忆依据）】
 ${recentMsgs||'（还没有聊天记录）'}
 
-${lastContent?'【最后一条消息】'+lastFrom+'说的："'+lastContent.slice(0,60)+'"（时间：'+lastMsgTime+'）':''}
+${lastContent?'【最后一条消息】'+lastFrom+'说的："'+lastContent+'"（时间：'+lastMsgTime+'）':''}
+
+【主动发消息行为准则】：
+1. 必须根据你们刚才的聊天记录自然延伸！如果是聊到一半的事情，要继续追问或接梗；如果刚才对方去忙了，询问对方忙完没有；绝不能当成第一次打招呼！
+2. 像发微信一样自然随意，1-2句口语即可，不要长篇大论。
+3. 只输出你要发送的那句话，不要带任何括号、动作描写或前缀。
 
 现在你主动给${pe.name||'对方'}发一条消息。核心要求：
 - 你发的内容必须跟上面的聊天记录有关联！可以是接着聊上次的话题、回应上次没说完的事、突然想起之前聊过的某件事、或者基于你们的关系日常分享
