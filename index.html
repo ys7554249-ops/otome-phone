@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Otome Phone</title>
 <meta name="theme-color" content="#fef8f4">
-<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%23f5d5de'/><stop offset='100%25' stop-color='%23e8a0b4'/></linearGradient></defs><rect fill='url(%23g)' width='100' height='100' rx='22'/><g transform='translate(50,47)' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' opacity='.9'><path d='M0-8c-6-10-16-16-16-24 0-4 4-8 8-6 3 1.5 5 4 8 6 3-2 5-4.5 8-6 4-2 8 2 8 6 0 8-10 14-16 24z' fill='%23fff' fill-opacity='.25'/><path d='M0-8v44'/><path d='M0 12c-6-4-11-2-13 2'/><path d='M0 6c6-4 10-2 12 2'/></g></svg>">
+<link rel="apple-touch-icon" href="https://s1.oururl.cn/autoupload/b7nhj/20260918/lNO0/1080X1016/mmexport1789724191807..jpg">
 <link rel="manifest" href="./manifest.json">
 <script>
 if('serviceWorker' in navigator){
@@ -17646,18 +17646,6 @@ pages.settings=()=>{
       <div class="btn-sub" id="_expall">导出全部数据</div>
       <div class="btn-sub" id="_impall" style="margin-top:8px">导入数据</div>
       <div class="btn-sub" id="_clearimgs" style="margin-top:8px">清空生图记录</div>
-<div class="card" style="margin-top:12px">
-  <div class="card-t">版本与维护</div>
-  <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">
-    <div>
-      <div style="font-size:13px;color:var(--ink)">当前运行版本</div>
-      <div style="font-size:10.5px;color:var(--ink-l);margin-top:2px" id="_cur_ver_text">v1.2.1</div>
-    </div>
-    <div class="btn-sub" id="_btn_check_update" style="padding:6px 14px;font-size:11.5px;border-radius:12px">
-      检查更新
-    </div>
-  </div>
-</div>
       <div class="btn-sub" id="_clearmap" style="margin-top:8px">清空地图剧情缓存</div>
       <div class="btn-sub" id="_clearbackup" style="margin-top:8px;color:#c47a7a">🚑 清空自动备份（卡死时点这里）</div>
     </div>
@@ -17718,62 +17706,7 @@ $('#_savemgr').onclick=()=>openSaveManager()
 $('#_expall').onclick=()=>exportAllData()
 $('#_impall').onclick=()=>importAllData()
 $('#_clearimgs').onclick=()=>{if(!confirm('清空所有生图记录？'))return;store.set('generatedImages',[]);alert('已清空')}
-// 免后端的一键检查更新系统
-const APP_VERSION = 'v1.2.1';
-if($('#_cur_ver_text')) $('#_cur_ver_text').textContent = APP_VERSION;
-if($('#_btn_check_update')) {
-  $('#_btn_check_update').onclick = async () => {
-    const btn = $('#_btn_check_update');
-    btn.textContent = '检测中...';
-    btn.style.opacity = '0.6';
-    try {
-      const res = await fetch(window.location.pathname + '?_check=' + Date.now(), { cache: 'no-store' });
-      const htmlText = await res.text();
-      const match = htmlText.match(/const APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
-      const remoteVer = match ? match[1] : null;
-      btn.textContent = '检查更新';
-      btn.style.opacity = '1';
 
-      if (remoteVer && remoteVer !== APP_VERSION) {
-        showModal('发现新版本', (mb, close) => {
-          mb.innerHTML = `
-            <div style="text-align:center;padding:10px 0 16px">
-              <div style="font-size:16px;font-weight:600;color:var(--ink);margin-bottom:6px">发现全新版本！</div>
-              <div style="font-size:12px;color:var(--rose-d)">线上版本：${remoteVer}（当前：${APP_VERSION}）</div>
-              <div style="font-size:11.5px;color:var(--ink-l);margin-top:12px;line-height:1.6">
-                更新将自动清除旧缓存并加载新功能，<br><b style="color:var(--green)">聊天记录与存档将完整保留，绝不丢失。</b>
-              </div>
-            </div>
-            <div class="btn-main" id="_btn_do_update">立即更新并重启</div>
-            <div class="btn-sub" id="_btn_cancel_update" style="margin-top:8px">暂不更新</div>
-          `;
-            mb.querySelector('#_btn_do_update').onclick = async () => {
-            mb.querySelector('#_btn_do_update').textContent = '正在更新资源...';
-            // 彻底注销 Service Worker
-            if ('serviceWorker' in navigator) {
-              const regs = await navigator.serviceWorker.getRegistrations();
-              for (const r of regs) await r.unregister();
-            }
-            // 彻底清空所有缓存池
-            if ('caches' in window) {
-              const keys = await caches.keys();
-              for (const k of keys) await caches.delete(k);
-            }
-            // 核心关键：通过变更 URL 参数，强制手机 Webview 扔掉旧缓存读取新文件！
-            const targetUrl = window.location.origin + window.location.pathname + '?v=' + encodeURIComponent(remoteVer);
-            window.location.replace(targetUrl);
-          };
-        });
-      } else {
-        alert('当前已是最新版本 (' + APP_VERSION + ')，无需更新！');
-      }
-    } catch (e) {
-      btn.textContent = '检查更新';
-      btn.style.opacity = '1';
-      alert('检测更新失败，请检查网络连接');
-    }
-  };
-}
 
 
 $('#_clearmap').onclick=async()=>{
