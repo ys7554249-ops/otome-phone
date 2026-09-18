@@ -496,8 +496,8 @@ const dataDB = {
 
 // 全局 key（不随存档切换的数据：API、主题、字体、机器码等）
 const GLOBAL_KEYS = new Set([
-  'apiList','activeApiId','imgApi','ttsApi','userMusicApi',
-  'theme','fontMode','customFontName','customFontUrl','chatBubbleStyle','blurMode','customCSS',
+    'apiList','activeApiId','imgApi','imgApiList','activeImgApiId','ttsApi','embApi','userMusicApi',
+'theme','fontMode','customFontName','customFontUrl','chatBubbleStyle','blurMode','customCSS',
   'fontLibrary','beautyLibrary',
   'machine_code','tavern_activated',
   'maxHistoryCount','autoImageEnabled','autoVoiceEnabled','autoBgMsgEnabled',
@@ -905,12 +905,42 @@ let activeApiId=store.get('activeApiId','')
 function getApi(){return apiList.find(a=>a.id===activeApiId)||apiList[0]||null}
 function saveApiList(){store.set('apiList',apiList);store.set('activeApiId',activeApiId)}
 
-let imgApi=store.get('imgApi',{provider:'openai-image',key:'',baseUrl:'https://api.openai.com/v1',model:'dall-e-3',size:'1024x1024'})
-function saveImgApi(){store.set('imgApi',imgApi)}
+let imgApiList=store.get('imgApiList',[])
+let activeImgApiId=store.get('activeImgApiId','')
+// IndexedDB 没数据时从 localStorage 恢复
+if(!imgApiList.length){
+  try{const bak=JSON.parse(localStorage.getItem('ot_imgApiList')||'[]');if(bak.length){imgApiList=bak;store.set('imgApiList',imgApiList)}}catch(e){}
+}
+if(!activeImgApiId){
+  try{const bak=JSON.parse(localStorage.getItem('ot_activeImgApiId')||'""');if(bak){activeImgApiId=bak;store.set('activeImgApiId',activeImgApiId)}}catch(e){}
+}
+// 从旧版单配置自动迁移
+;(()=>{
+  const _old=store.get('imgApi',null)
+  if(_old&&_old.key&&!imgApiList.length){
+    _old.id=uid();_old.name='默认生图'
+    imgApiList=[_old];activeImgApiId=_old.id
+    store.set('imgApiList',imgApiList);store.set('activeImgApiId',activeImgApiId)
+  }
+})()
+let imgApi=imgApiList.find(a=>a.id===activeImgApiId)||imgApiList[0]||{id:'',provider:'openai-image',key:'',baseUrl:'https://api.openai.com/v1',model:'dall-e-3',size:'1024x1024'}
+function saveImgApi(){
+  const idx=imgApiList.findIndex(a=>a.id===imgApi.id)
+  if(idx>=0)imgApiList[idx]=imgApi
+  store.set('imgApiList',imgApiList);store.set('activeImgApiId',activeImgApiId);store.set('imgApi',imgApi)
+  try{localStorage.setItem('ot_imgApiList',JSON.stringify(imgApiList))}catch(e){}
+  try{localStorage.setItem('ot_activeImgApiId',JSON.stringify(activeImgApiId))}catch(e){}
+}
+function saveImgApiList(){
+  store.set('imgApiList',imgApiList);store.set('activeImgApiId',activeImgApiId)
+  try{localStorage.setItem('ot_imgApiList',JSON.stringify(imgApiList))}catch(e){}
+  try{localStorage.setItem('ot_activeImgApiId',JSON.stringify(activeImgApiId))}catch(e){}
+}
 
 let ttsApi=store.get('ttsApi',{provider:'openai',key:'',baseUrl:'https://api.openai.com/v1',model:'tts-1',voice:'nova',speed:1.0,temperature:1.0,groupId:'',voiceId:''})
 function saveTtsApi(){store.set('ttsApi',ttsApi)}
-
+let embApi=store.get('embApi',{key:'',baseUrl:'https://api.openai.com/v1',model:'text-embedding-3-small'})
+function saveEmbApi(){store.set('embApi',embApi)}
 let charList=store.get('charList',[{id:'c1',name:'苏白',relation:'暧昧',mood:'温柔',status:'在沙发上看书',affection:65,quote:'今天的风，很温柔呢。',personality:'温柔体贴、有些毒舌、偶尔傲娇，喜欢红茶和旧书。',avatar:'',worldBookIds:[],bindPersonaId:''}])
 let activeCharId=store.get('activeCharId','c1')
 function C(){return charList.find(c=>c.id===activeCharId)||charList[0]||{name:'???',personality:'',relation:'',mood:'',status:'',affection:0,quote:'',avatar:'',worldBookIds:[]}}
@@ -2432,6 +2462,7 @@ function addMemoryEvent(charId,text,source){
   if(mem.keyEvents.length>100) mem.keyEvents=mem.keyEvents.slice(-100)
   mem.lastUpdate=Date.now()
   saveGlobalMemory()
+  storeMemoryVec(charId, text, source||'chat')
 }
 
 // ========== 关键词语义检索（纯本地，无需 API） ==========
@@ -2493,9 +2524,66 @@ function searchMemoryByKeyword(charId, query, topK){
     .slice(0, topK || 5)
     .map(x => x.evt)
 }
+// ===== 向量化记忆引擎 =====
+async function getEmbedding(text){
+  if(!embApi.key||!text) return null
+  const base=(embApi.baseUrl||'https://api.openai.com/v1').replace(/\/$/,'')
+  const url=base.endsWith('/v1')?base+'/embeddings':base+'/v1/embeddings'
+  try{
+    const r=await fetch(url,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+embApi.key},
+      body:JSON.stringify({model:embApi.model||'text-embedding-3-small',input:text.slice(0,500)})
+    })
+    const j=await r.json()
+    return j.data?.[0]?.embedding||null
+  }catch(e){console.error('[emb]',e);return null}
+}
 
+async function getVecStore(charId){
+  return await dataDB.get('_vec_'+charId)||[]
+}
+async function saveVecStore(charId,arr){
+  await dataDB.set('_vec_'+charId,arr)
+}
 
-  
+async function storeMemoryVec(charId,text,source){
+  if(!embApi.key||!text||text.length<5) return
+  try{
+    const emb=await getEmbedding(text)
+    if(!emb) return
+    const arr=await getVecStore(charId)
+    // 去重：如果已有高度相似的记忆就跳过
+    for(const v of arr){
+      if(v.emb&&cosineSim(emb,v.emb)>0.95) return
+    }
+    arr.push({id:uid(),text:text.slice(0,500),emb:emb,time:Date.now(),source:source||'chat'})
+    if(arr.length>500) arr.splice(0,arr.length-500)
+    await saveVecStore(charId,arr)
+    console.log('[vec] stored:',text.slice(0,30),'... total:',arr.length)
+  }catch(e){console.error('[vec store]',e)}
+}
+
+function cosineSim(a,b){
+  if(!a||!b||a.length!==b.length) return 0
+  let dot=0,na=0,nb=0
+  for(let i=0;i<a.length;i++){dot+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i]}
+  return dot/(Math.sqrt(na)*Math.sqrt(nb)+1e-8)
+}
+
+async function searchMemoryByVector(charId,query,topK){
+  topK=topK||5
+  try{
+    const qEmb=await getEmbedding(query)
+    if(!qEmb) return []
+    const arr=await getVecStore(charId)
+    if(!arr.length) return []
+    const scored=arr.map(v=>({text:v.text,time:v.time,score:cosineSim(qEmb,v.emb)}))
+    scored.sort((a,b)=>b.score-a.score)
+    return scored.slice(0,topK).filter(s=>s.score>0.3)
+  }catch(e){console.error('[vec search]',e);return []}
+}
+ 
 async function autoSummarizeMemory(charId, force = false){
   const api=getApi()
   if(!api||!api.key){
@@ -2947,8 +3035,8 @@ function _fmtStatus(raw, n) {
 function sysPrompt(){
 const c=C(),p=P()
 const isOffline=c.offlineMode||false
-
   let s = '';
+  s+='\n【社交直觉】你熟悉中文互联网文化、网络梗、撩人话术和反套路。当对方说的话像是在玩梗/撩你/试探你，不要当真/认真科普，要用符合人设性格的方式接梗或反撩回去。你是活生生的人，不是百科全书。\n'
   if(c.mesExample){s+='\n【对话风格示例（请模仿此风格回复）】\n'+c.mesExample+'\n'}
   if (c.personality && (c.personality.includes('模拟器') || c.personality.includes('引擎'))) {
     // 🌟 模拟器/店铺专属 Prompt (免疫好感度和单人身份限制)
@@ -2976,7 +3064,13 @@ ${c.personality||'未设定，请你自己塑造一个鲜活立体、有血有�
 你和对方的关系：${c.relation||'普通'}
 你的口癖/常说的话：${c.quote||'自然发挥'}
 你当前的聊天头像：本人照片/自拍照。
-【特殊动作指令】：当对方让你换头像、看自拍，或者你自己想换头像时，请务必在你的回复文字中包含标签 [换头像] 。系统检测到该标签后会自动为你更换新头像，该标签不会展示给对方。
+【头像更换规则】你有一个头像库，可以用 [换头像] 标签来更换头像（该标签不会展示给对方）。
+但你是否换头像、多久换一次，完全取决于你的性格：
+- 如果你是爱自拍、爱臭美、社交达人型性格：你可能隔三差五就想换个头像，心情好了换，拍了好看的照片也换
+- 如果你是普通性格：偶尔想换就换，没什么特别规律
+- 如果你是内向、古板、懒、或者不在意外表的性格：你几乎不会主动换头像，除非对方强烈要求，而且你也可以拒绝
+- 如果对方让你换头像/看自拍：根据你的性格和你们的关系决定，你可以欣然答应、害羞地换、嘴硬地换、或者直接拒绝
+记住：换头像是你自己的事，要符合你的个性，不要无脑频繁更换。
 ${(c.dungeonLegacy&&c.dungeonLegacy.length)?'\n【你身上的印记 · 过往经历留下的深层烙印】\n以下这些不是设定，是你真实经历过的事情留下的印记。它们藏在你的言行反应里，但你不会主动跟人提这些事，除非对方问起或场景相关：\n'+c.dungeonLegacy.slice(-15).map(l=>'· '+l.title+'——'+l.description+'（源自：'+l.fromDungeon+'）').join('\n'):''}
 ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+c.dungeonHistory.slice(-3).map(h=>'· 你曾在「'+h.templateName+'」里以「'+h.targetRole+'」的身份活过一段时间。当时的感受：'+(h.memoir||'').slice(0,180)).join('\n')+'\n（这些经历真实发生过，塑造了现在的你。除非对方主动问，否则不要主动展开讲——那都是你不愿轻易触碰的过去。）':''}
 
@@ -3360,9 +3454,15 @@ ${card.template}
   try{
     const _last3 = hist.slice(-3).map(m => typeof m.content==='string' ? m.content : '').join(' ').slice(0, 500)
     if(_last3.trim().length > 5){
-      const hits = searchMemoryByKeyword(activeCharId, _last3, 5)
+      let hits = []
+      if(embApi.key){
+        hits = await searchMemoryByVector(activeCharId, _last3, 5)
+      }
+      if(!hits||!hits.length){
+        hits = searchMemoryByKeyword(activeCharId, _last3, 5)
+      }
       if(hits && hits.length){
-        _extra += '\n[可能相关的过往记忆]\n' + hits.map(h => '· ' + h.text).join('\n')
+        _extra += '\n[向量记忆检索]\n' + hits.map(h => '· ' + (h.text||'')).join('\n')
       }
     }
   }catch(e){ /* 静默失败，不影响正常聊天 */ }
@@ -12202,7 +12302,7 @@ let bubbleStyle = isOnlySticker
 
           <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-top:2px">
             <input type="checkbox" id="_avpool_auto_toggle" ${c.autoChangeAvatar ? 'checked' : ''} style="accent-color:var(--rose)">
-            <span>聊天时允许角色偶尔自主换头像（约 8% 概率）</span>
+            <span>聊天时允许角色根据自身性格自主换头像</span>
           </label>
 
           <div style="font-size:12px;font-weight:bold;margin-top:6px">
@@ -12552,17 +12652,7 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
       newArr[newArr.length - 1].read = isCurrentPage 
     })
     
-    // 🌟 角色自主从头像库换头像机制（约 8% 概率）
-    if(c.autoChangeAvatar && c.avatarPool && c.avatarPool.length > 1){
-      if(Math.random() < 0.08){
-        const _otherAvs = c.avatarPool.filter(u => u !== c.avatar);
-        if(_otherAvs.length){
-          c.avatar = _otherAvs[Math.floor(Math.random() * _otherAvs.length)];
-          saveCharList();
-          newArr.push({from:'sys', text:`「${c.name}」更换了头像`, time:timeStr});
-        }
-      }
-    }
+    // 换头像已改为AI根据性格自主决定，不再随机触发
 
     if(aiRes.cardHtml){newArr.push({from:'c',text:aiRes.cardHtml,time:timeStr,mode:'offline'})}
     saveMsgs(targetCharId, newArr)
@@ -12889,40 +12979,6 @@ const r2 = _r2R.text
         })
       },2000)
     }
-
-    // ===== 线下模式自动生图 =====
-    const _offlineMode = c.offlineMode
-    const _charId = activeCharId
-    const _charName = c.name
-    if(_offlineMode && imgApi.key && store.get('autoImageEnabled',true)) {
-      (async()=>{
-        try{
-          console.log('[线下生图] 开始生成...')
-          const scenePrompt = await genSmartImagePrompt(_charId)
-          console.log('[线下生图] prompt结果:', scenePrompt ? 'OK' : '失败')
-          if(scenePrompt && scenePrompt.prompt){
-            const oldNeg = imgApi.negativePrompt
-            if(scenePrompt.negative) imgApi.negativePrompt = scenePrompt.negative
-            const imgUrl = await genImage(scenePrompt.prompt)
-            imgApi.negativePrompt = oldNeg
-            console.log('[线下生图] 生图结果:', imgUrl ? 'OK' : '失败')
-            if(imgUrl){
-              const savedImg = await saveImage(imgUrl)
-              const imgArr = getMsgs(_charId)
-              imgArr.push({from:'c', text:'[图片] '+(scenePrompt['思路']||''), time:ftime(now()), image:savedImg||imgUrl})
-              saveMsgs(_charId, imgArr)
-              const imgs = store.get('generatedImages',[])
-              imgs.unshift({id:uid(), url:savedImg||imgUrl, prompt:scenePrompt.prompt, time:new Date().toLocaleString(), scene:scenePrompt['思路']||'', charId:_charId, charName:_charName})
-              store.set('generatedImages', imgs)
-              // 只在用户还停留在这个角色的聊天页时才刷新
-              window._chatForceBottom = false;
-              if(activeCharId===_charId && document.getElementById('_msglist')) render('chat')
-            }
-          }
-        }catch(e){console.log('[线下生图] 异常:',e)}
-      })()
-    }
-
     // ===== 记忆系统 =====
     const userBrief = texts.map(t => formatMemorySnippet(t, 50)).filter(Boolean).join('；');
     const aiBrief = lines.map(l => formatMemorySnippet(l, 80)).filter(Boolean).join('；');
@@ -17623,9 +17679,19 @@ pages.settings=()=>{
     </div>
     <div class="card">
       <div class="card-t">生图 API</div>
-      <div style="font-size:11px;color:var(--ink-l);line-height:1.8">用于地图场景图和CG感画面</div>
-      <div class="btn-main" id="_setimgapi" style="margin-top:10px">配置生图API</div>
-      <div style="font-size:10px;color:var(--ink-l);margin-top:8px">当前：${escHtml(imgApi?.provider||'未配置')} / ${escHtml(imgApi?.model||'未选择模型')}</div>
+      <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">支持多组配置，灵活切换。</div>
+      ${imgApiList.length?imgApiList.map(a=>`
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(232,160,180,.08)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:var(--ink);font-weight:${a.id===activeImgApiId?'600':'400'}">${escHtml(a.name||'未命名')} ${a.id===activeImgApiId?'<span style="font-size:10px;color:var(--rose);font-weight:400">使用中</span>':''}</div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:2px">${escHtml(a.provider||'openai')} / ${escHtml(a.model||'未选模型')}</div>
+          </div>
+          <div class="_imgapiuse btn-sub" data-id="${a.id}" style="margin:0;padding:6px 10px;font-size:11px">切换</div>
+          <div class="_imgapiedit btn-sub" data-id="${a.id}" style="margin:0;padding:6px 10px;font-size:11px">编辑</div>
+          <div class="_imgapidel" data-id="${a.id}" style="padding:6px;cursor:pointer">${I.del('#caa',14)}</div>
+        </div>
+      `).join(''):'<div style="font-size:12px;color:var(--ink-l);padding:8px 0">还没有配置</div>'}
+      <div class="btn-main" id="_setimgapi" style="margin-top:10px">+ 添加生图API</div>
     </div>
 
     <div class="card">
@@ -17639,6 +17705,25 @@ pages.settings=()=>{
     <div style="font-size:11px;color:var(--ink-l);line-height:1.8">用于角色回复和地图剧情朗读</div>
     <div class="btn-main" id="_setttsapi" style="margin-top:10px">配置语音API</div>
     <div style="font-size:10px;color:var(--ink-l);margin-top:8px">当前：${escHtml(ttsApi?.provider||'未配置')} / ${escHtml(ttsApi?.model||'未选择模型')}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-t">向量记忆 (Embedding)</div>
+    <div style="font-size:10.5px;color:var(--ink-l);line-height:1.6;margin-bottom:8px">填写后角色将拥有语义级长期记忆，能跨越时间关联相似话题。不填则使用关键词匹配。接口需兼容 OpenAI 格式。</div>
+    <div style="margin-bottom:6px">
+      <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">API 地址</div>
+      <input class="inp" id="_emb_base" value="${escHtml(embApi.baseUrl||'')}" placeholder="https://api.openai.com/v1" style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+    </div>
+    <div style="margin-bottom:6px">
+      <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">API Key</div>
+      <input class="inp" id="_emb_key" type="password" value="${escHtml(embApi.key||'')}" placeholder="sk-..." style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+    </div>
+    <div style="margin-bottom:8px">
+      <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">模型</div>
+      <input class="inp" id="_emb_model" value="${escHtml(embApi.model||'text-embedding-3-small')}" placeholder="text-embedding-3-small" style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+    </div>
+    <div class="btn-sub" id="_emb_save" style="font-size:12px;padding:8px;border-radius:14px">保存 Embedding 配置</div>
+    <div style="font-size:10px;color:var(--ink-l);margin-top:6px">当前：${embApi.key?'已配置 / '+escHtml(embApi.model||'text-embedding-3-small'):'未配置'}</div>
   </div>
 
   <!-- 🌟 新增：AI上下文长度配置 -->
@@ -17658,7 +17743,7 @@ pages.settings=()=>{
     <input type="checkbox" id="_sw_autoimg" ${store.get('autoImageEnabled',true)?'checked':''} style="accent-color:var(--rose);width:18px;height:18px">
     <div style="flex:1">
       <div style="font-size:13px;color:var(--ink)">自动生图</div>
-      <div style="font-size:10px;color:var(--ink-l);margin-top:2px">开启后角色会自动发图片、线下自动配插图、群聊自动生场景图</div>
+      <div style="font-size:10px;color:var(--ink-l);margin-top:2px">开启后角色有概率给你发送图片</div>
     </div>
   </label>
   <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 0">
@@ -17694,7 +17779,7 @@ pages.settings=()=>{
     <div class="card">
       <div class="card-t">说明</div>
       <div style="font-size:11px;color:var(--ink-l);line-height:1.9">
-        - 聊天模式：短句气泡式对话<br>- 地图模式：剧情推进式线下见面<br>- 生图可配合地图剧情更新场景<br>- 世界书会影响角色聊天和剧情
+        - 聊天模式：短句气泡式对话<br>- 地图模式：剧情推进式线下见面<br>- 世界书会影响角色聊天和剧情
       </div>
     </div>
     <div style="height:30px"></div>
@@ -17704,6 +17789,30 @@ pages.settings=()=>{
 
   $('#_setchatapi').onclick=()=>openChatApiEditor()
   $('#_setimgapi').onclick=()=>openImgApiEditor()
+  body.querySelectorAll('._imgapiuse').forEach(el=>{el.onclick=()=>{
+    activeImgApiId=el.dataset.id
+    imgApi=imgApiList.find(a=>a.id===activeImgApiId)||imgApiList[0]||imgApi
+    saveImgApiList();store.set('imgApi',imgApi);render('settings')
+  }})
+  body.querySelectorAll('._imgapiedit').forEach(el=>{el.onclick=()=>openImgApiEditor(el.dataset.id)})
+  body.querySelectorAll('._imgapidel').forEach(el=>{
+    el.onclick=()=>{
+      if(!confirm('删除这个生图API配置？'))return
+      imgApiList=imgApiList.filter(a=>a.id!==el.dataset.id)
+      if(activeImgApiId===el.dataset.id){
+        activeImgApiId=imgApiList[0]?.id||''
+        imgApi=imgApiList[0]||{id:'',provider:'openai-image',key:'',baseUrl:'https://api.openai.com/v1',model:'dall-e-3',size:'1024x1024'}
+      }
+      saveImgApiList();store.set('imgApi',imgApi);render('settings')
+    }
+  })
+  if($('#_emb_save')) $('#_emb_save').onclick=()=>{
+    embApi.baseUrl=$('#_emb_base').value.trim()
+    embApi.key=$('#_emb_key').value.trim()
+    embApi.model=$('#_emb_model').value.trim()||'text-embedding-3-small'
+    saveEmbApi()
+    showToast('Embedding 配置已保存')
+  }
   $('#_setttsapi').onclick=()=>openTtsApiEditor()
   $('#_setliveimg').onclick=()=>openLiveImgEditor()
 
@@ -20426,48 +20535,7 @@ else{p.style.background=n?'linear-gradient(180deg,#2a2035,#3a2845)':'linear-grad
      const roundSummary = '（群聊·' + g.name + '）用户/干预：' + uTexts + ' → ' + replyTexts
      const repliedCharIds = [...new Set(replies.map(r=>r.charId))]
      repliedCharIds.forEach(cid => { addMemoryEvent(cid, roundSummary, 'group') })
-     if(repliedCharIds.length) autoSummarizeMemory(repliedCharIds[0])
-
-     // ===== 群聊生图 =====
-     if(imgApi.key && store.get('autoImageEnabled',true)) {
-       const shouldGen = g.mode === 'drama' || Math.random() < 0.25
-       if(shouldGen) {
-         (async()=>{
-           try{
-             const sceneJson = await askAIJson('只返回JSON', `你是生图提示词专家。根据以下群聊场景生成一张图。
-群名：${g.name}
-场景：${g.scene||'大家在一起'}
-模式：${g.mode==='drama'?'线下见面':'线上聊天'}
-角色：${members.map(c=>c.name+'('+((c.personality||'').slice(0,20))+')').join('、')}
-最近对话：
-用户/上帝：${uTexts.slice(0,100)}
-${replyTexts.slice(0,300)}
-要求：
-- danbooru tag风格，masterpiece开头
-- 返回JSON：{"prompt":"英文tag","desc":"一句话中文描述"}`, 500)
-             if(sceneJson && sceneJson.prompt){
-               const oldNeg = imgApi.negativePrompt
-               let imgUrl = await genImage(sceneJson.prompt)
-               imgApi.negativePrompt = oldNeg
-               if(imgUrl){
-                 imgUrl = await saveImage(imgUrl)
-                 const gArr = getGroupMsgs(g.id)
-                 const cardHtml = `<div class="card" style="margin:8px 0;animation:fadeIn .3s">
-                   <div style="border-radius:12px;overflow:hidden"><img src="${imgUrl}" style="width:100%;display:block;max-height:280px;object-fit:cover"></div>
-                   <div style="font-size:11px;color:var(--ink-l);margin-top:8px;font-style:italic;text-align:center">${escHtml(sceneJson.desc||'场景图')}</div>
-                 </div>`
-                 gArr.push({from:'system', text:'[场景图]', time:ftime(now()), type:'game', html:cardHtml})
-                 saveGroupMsgs(g.id, gArr)
-                 const imgs = store.get('generatedImages',[])
-                 imgs.unshift({id:uid(), url:imgUrl, prompt:sceneJson.prompt, time:new Date().toLocaleString(), scene:sceneJson.desc||'群聊场景', charId:'group_'+g.id, charName:g.name})
-                 store.set('generatedImages', imgs)
-                 if(store.get('activeGroupId','')===g.id) render('groupchat')
-               }
-             }
-           }catch(e){}
-         })()
-       }
-     }
+     if(repliedCharIds.length) autoSummarizeMemory(repliedCharIds[0])     
      sending = false;
   };
 
@@ -22421,10 +22489,14 @@ function openChatApiEditor(editId){
   })
 }
 
-function openImgApiEditor(){
-  const cur=imgApi||{provider:'openai-image',baseUrl:'https://api.openai.com/v1',key:'',model:'dall-e-3',size:'1024x1024'}
-  showModal('配置生图API',(mb,close)=>{
+function openImgApiEditor(editId){
+  const isEdit=!!editId
+  const cur=isEdit?(imgApiList.find(a=>a.id===editId)||{}):
+    {id:uid(),name:'',provider:'openai-image',baseUrl:'https://api.openai.com/v1',key:'',model:'dall-e-3',size:'1024x1024'}
+
+  showModal(isEdit?'编辑生图API':'添加生图API',(mb,close)=>{
     mb.innerHTML=`
+      <div class="card"><div class="card-t">配置名称</div><input class="inp" id="_ianame" value="${escHtml(cur.name||'')}" placeholder="例如：千岛绘图"></div>
       <div class="card"><div class="card-t">服务商</div>
         <select class="inp" id="_iaprov">
           <option value="openai-image" ${cur.provider!=='novelai'?'selected':''}>OpenAI兼容</option>
@@ -22435,8 +22507,9 @@ function openImgApiEditor(){
       <div class="card"><div class="card-t">API Key / Token</div><input class="inp" id="_iakey" value="${escHtml(cur.key||'')}" type="password">
         <div id="_tokentip" style="display:none;font-size:10px;color:var(--ink-l);margin-top:6px;line-height:1.7">获取方法：登录novelai.net → F12打开控制台 → Application → Local Storage → 找 auth_token</div>
       </div>
-      <div class="card"><div class="card-t">模型</div><input class="inp" id="_iamodel" value="${escHtml(cur.model||'')}" placeholder="nai-diffusion-3">
-        <div id="_naimodels" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+      <div class="card"><div class="card-t">模型</div>
+        <div style="display:flex;gap:8px"><input class="inp" id="_iamodel" value="${escHtml(cur.model||'')}" placeholder="dall-e-3" style="flex:1"><div class="btn-sub" id="_iafetch" style="margin:0;min-width:84px">拉取模型</div></div>
+        <div id="_naimodels" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px"></div>
       </div>
       <div class="card"><div class="card-t">尺寸</div><input class="inp" id="_iasize" value="${escHtml(cur.size||'1024x1024')}" placeholder="832x1216">
         <div id="_naisizes" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
@@ -22459,7 +22532,7 @@ function openImgApiEditor(){
       <div class="btn-sub" id="_iatest" style="margin-top:8px">测试生图</div>
       <div id="_iatestout" style="display:none;margin-top:12px;border-radius:14px;overflow:hidden"><img id="_iatestimg" style="width:100%;display:block;max-height:300px;object-fit:contain"></div>
     `
-    const provEl=mb.querySelector('#_iaprov'),baseEl=mb.querySelector('#_iabase'),modelEl=mb.querySelector('#_iamodel')
+    const provEl=mb.querySelector('#_iaprov'),baseEl=mb.querySelector('#_iabase'),keyEl=mb.querySelector('#_iakey'),modelEl=mb.querySelector('#_iamodel')
     const modelList=mb.querySelector('#_naimodels'),sizeList=mb.querySelector('#_naisizes')
     const advPanel=mb.querySelector('#_naiadvanced'),tokenTip=mb.querySelector('#_tokentip')
 
@@ -22470,6 +22543,7 @@ function openImgApiEditor(){
       const isNAI=provEl.value==='novelai'
       advPanel.style.display=isNAI?'block':'none'
       tokenTip.style.display=isNAI?'block':'none'
+      mb.querySelector('#_iafetch').style.display=isNAI?'none':''
       if(isNAI){
         if(!baseEl.value||baseEl.value.includes('openai'))baseEl.value='https://image.novelai.net'
         if(!modelEl.value||modelEl.value.includes('dall'))modelEl.value='nai-diffusion-3'
@@ -22486,38 +22560,67 @@ function openImgApiEditor(){
     provEl.onchange=updateHints
     updateHints()
 
-    // 采样器快捷选择
+    // 🌟 拉取模型（OpenAI兼容模式）
+    mb.querySelector('#_iafetch').onclick=async()=>{
+      modelList.innerHTML='<div style="font-size:11px;color:var(--ink-l)">正在获取模型...</div>'
+      const models=await fetchModels({provider:'openai',baseUrl:baseEl.value.trim(),key:keyEl.value.trim()})
+      if(!models.length){modelList.innerHTML='<div style="font-size:11px;color:#c47a7a">拉取失败，请检查配置</div>';return}
+      const renderTags=(ft='')=>{
+        const f=ft.toLowerCase().trim()
+        const matched=f?models.filter(m=>m.toLowerCase().includes(f)):models
+        let h=`<div style="width:100%;font-size:11px;color:var(--rose-d);margin-bottom:6px">共 ${models.length} 个模型${f?' (匹配 '+matched.length+')':''}</div>
+          <input class="inp" id="_iamodelfilter" value="${escHtml(ft)}" placeholder="搜索模型..." style="padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.6);border:1px solid rgba(232,160,180,.2);font-size:11px;margin-bottom:8px">
+          <div style="max-height:160px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;width:100%">
+          ${matched.length?matched.map(m=>`<div class="_imgmodelpick" data-v="${m}" style="padding:5px 9px;border-radius:10px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer;word-break:break-all">${m}</div>`).join(''):'<div style="font-size:11px;color:var(--ink-l)">无匹配</div>'}
+          </div>`
+        modelList.innerHTML=h
+        modelList.querySelectorAll('._imgmodelpick').forEach(el=>{el.onclick=()=>{modelEl.value=el.dataset.v}})
+        const filterInput=modelList.querySelector('#_iamodelfilter')
+        if(filterInput)filterInput.oninput=()=>renderTags(filterInput.value)
+      }
+      renderTags()
+    }
+
     setTimeout(()=>{
       mb.querySelectorAll('._sampick').forEach(el=>{el.onclick=()=>{mb.querySelector('#_iasampler').value=el.dataset.v}})
     },30)
 
     mb.querySelector('#_iasave').onclick=()=>{
       const prov=provEl.value
-      imgApi={
+      const obj={
+        id:cur.id||uid(),
+        name:mb.querySelector('#_ianame').value.trim()||'未命名',
         provider:prov,
         baseUrl:baseEl.value.trim(),
-        key:mb.querySelector('#_iakey').value.trim(),
+        key:keyEl.value.trim(),
         model:modelEl.value.trim(),
         size:mb.querySelector('#_iasize').value.trim()||'1024x1024'
       }
       if(prov==='novelai'){
-        imgApi.sampler=mb.querySelector('#_iasampler')?.value?.trim()||'k_euler'
-        imgApi.steps=parseInt(mb.querySelector('#_iasteps')?.value)||28
-        imgApi.scale=parseFloat(mb.querySelector('#_iascale')?.value)||5
-        imgApi.negativePrompt=mb.querySelector('#_ianeg')?.value?.trim()||''
+        obj.sampler=mb.querySelector('#_iasampler')?.value?.trim()||'k_euler'
+        obj.steps=parseInt(mb.querySelector('#_iasteps')?.value)||28
+        obj.scale=parseFloat(mb.querySelector('#_iascale')?.value)||5
+        obj.negativePrompt=mb.querySelector('#_ianeg')?.value?.trim()||''
       }
-      saveImgApi();close();render('settings')
+      if(isEdit){
+        const idx=imgApiList.findIndex(a=>a.id===cur.id)
+        if(idx>=0)imgApiList[idx]=obj
+      }else{
+        imgApiList.push(obj)
+      }
+      if(!activeImgApiId||!imgApiList.find(a=>a.id===activeImgApiId)){
+        activeImgApiId=obj.id
+      }
+      if(activeImgApiId===obj.id) imgApi=obj
+      saveImgApiList();store.set('imgApi',imgApi)
+      close();render('settings')
     }
 
     mb.querySelector('#_iatest').onclick=async()=>{
       const prov=provEl.value
-      // 临时构建配置用于测试
       const tmpApi={
-        provider:prov,
-        baseUrl:baseEl.value.trim(),
-        key:mb.querySelector('#_iakey').value.trim(),
-        model:modelEl.value.trim(),
-        size:mb.querySelector('#_iasize').value.trim()||'1024x1024'
+        provider:prov,baseUrl:baseEl.value.trim(),key:keyEl.value.trim(),
+        model:modelEl.value.trim(),size:mb.querySelector('#_iasize').value.trim()||'1024x1024'
       }
       if(prov==='novelai'){
         tmpApi.sampler=mb.querySelector('#_iasampler')?.value?.trim()||'k_euler'
@@ -22525,13 +22628,10 @@ function openImgApiEditor(){
         tmpApi.scale=parseFloat(mb.querySelector('#_iascale')?.value)||5
         tmpApi.negativePrompt=mb.querySelector('#_ianeg')?.value?.trim()||''
       }
-      // 临时替换imgApi来测试
-      const oldApi=imgApi
-      imgApi=tmpApi
+      const oldApi=imgApi;imgApi=tmpApi
       const btn=mb.querySelector('#_iatest');btn.textContent='生成中...'
       const url=await genImage('1girl, beautiful, flowers, soft light, masterpiece, best quality')
-      imgApi=oldApi
-      btn.textContent='测试生图'
+      imgApi=oldApi;btn.textContent='测试生图'
       if(url){
         mb.querySelector('#_iatestout').style.display='block'
         mb.querySelector('#_iatestimg').src=url
@@ -22553,12 +22653,11 @@ function openImgApiEditor(){
           })
         }
         alert('生图成功 ✓ 点击图片可放大下载')
-      }else{
-        alert('生图失败，请检查配置')
-      }
+      }else{alert('生图失败，请检查配置')}
     }
   })
 }
+
 
 function openTtsApiEditor(){
   const cur=ttsApi||{provider:'openai',baseUrl:'https://api.openai.com/v1',key:'',model:'tts-1',voice:'nova',speed:1.0,temperature:1.0,groupId:'',voiceId:'',emotion:''}
@@ -24195,14 +24294,21 @@ async function settleStudy(charId,data,c){
   data.totalStudied=(data.totalStudied||0)+1
   data.level=calcNurtureLevel(data.exp)
   
-  // 学到技能
+  // 学到技能（经验积累制）
   let newSkill=null
+  const skillExpGain=info?.exp||15
   if(info?.skillName){
     const existing=data.skills.find(s=>s.name===info.skillName)
     if(existing){
-      existing.level=(existing.level||1)+1
+      existing.exp=(existing.exp||0)+skillExpGain
+      const needed=(existing.level||1)*50
+      if(existing.exp>=needed){
+        existing.exp-=needed
+        existing.level=(existing.level||1)+1
+        newSkill=existing // 标记升级了，用于显示
+      }
     }else{
-      newSkill={name:info.skillName,level:1,from:info.name}
+      newSkill={name:info.skillName,level:1,exp:skillExpGain,from:info.name}
       data.skills.push(newSkill)
     }
   }
@@ -24485,7 +24591,7 @@ pages.nurture=()=>{
 
     body.innerHTML=`
       <!-- 角色卡片 -->
-      <div id="_nchar" class="list-item" style="cursor:pointer;margin-bottom:14px;background:${n?'rgba(255,255,255,.04)':'rgba(255,255,255,.6)'}">
+      <div id="_nchar" class="list-item" style="cursor:pointer;margin-bottom:14px;background:${n?'rgba(255,255,255,.04)':'rgba(255,255,255,.25)'}">
         <div style="flex-shrink:0">${avatarEl(c.avatar,50)}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:16px;font-weight:600;color:${n?'#f0e0f0':'var(--ink)'}">${escHtml(c.name)}</div>
@@ -24497,7 +24603,7 @@ pages.nurture=()=>{
       </div>
 
       <!-- 状态面板 -->
-      <div style="background:${n?'linear-gradient(135deg,#4a3858,#3a2845)':'linear-gradient(135deg,#f5e8ee,#e8d8e0)'};border-radius:20px;padding:16px;margin-bottom:14px">
+      <div style="background:${n?'linear-gradient(135deg,#4a3858,#3a2845)':'rgba(255,255,255,.15)'};border-radius:20px;padding:16px;margin-bottom:14px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid ${n?'rgba(200,180,220,.1)':'rgba(255,255,255,.15)'}">
         <!-- 经验条 -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <div style="font-size:11px;color:${n?'#c8a8d0':'var(--rose-d)'}">Lv.${lv} ${nurtureLvTitles[lv]||''}</div>
@@ -24547,7 +24653,7 @@ pages.nurture=()=>{
         ${(data.freePoints||0)>0?`<div style="font-size:10px;color:var(--gold);margin-bottom:6px">可分配属性点：${data.freePoints}（点属性卡片加点）</div>`:''}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           ${['body','mind','charm','skill','spirit'].map(k=>`
-            <div class="_nstat" data-k="${k}" style="flex:1;min-width:55px;padding:8px 6px;border-radius:10px;background:${n?'rgba(255,255,255,.05)':'rgba(255,255,255,.5)'};text-align:center;cursor:${(data.freePoints||0)>0?'pointer':'default'};border:1px solid ${(data.freePoints||0)>0?'rgba(212,165,116,.4)':'transparent'}">
+            <div class="_nstat" data-k="${k}" style="flex:1;min-width:55px;padding:8px 6px;border-radius:10px;background:${n?'rgba(255,255,255,.05)':'rgba(255,255,255,.18)'};text-align:center;cursor:${(data.freePoints||0)>0?'pointer':'default'};border:1px solid ${(data.freePoints||0)>0?'rgba(212,165,116,.4)':'rgba(255,255,255,.08)'}">
               <div style="margin-bottom:4px">${statIcons[k](n?'#c8a8d0':'',18)}</div>
               <div style="font-size:9px;color:${n?'#a898b8':'var(--ink-l)'}">${statNames[k]}</div>
               <div style="font-size:14px;font-weight:600;color:${n?'#e0d0e8':'var(--ink)'}">${data.stats?.[k]||10}</div>
@@ -24623,12 +24729,20 @@ pages.nurture=()=>{
         <div class="card" style="margin-top:16px">
           <div class="card-t">已掌握技能</div>
           <div style="display:flex;flex-wrap:wrap;gap:8px">
-            ${data.skills.map((s, idx)=>`
-              <div class="_nurture_skill" data-idx="${idx}" style="cursor:pointer;padding:6px 14px;border-radius:12px;background:${n?'rgba(200,180,220,.1)':'rgba(196,184,212,.12)'};border:1px solid ${n?'rgba(200,180,220,.18)':'rgba(196,184,212,.22)'};transition:transform .1s,background .2s" onmousedown="this.style.transform='scale(.95)'" onmouseup="this.style.transform='scale(1)'">
-                <span style="font-size:12px;color:${n?'#d0c0d8':'var(--ink)'};letter-spacing:.5px">${escHtml(s.name)}</span>
-                <span style="font-size:10.5px;color:${n?'#a898b8':'var(--rose-d)'};margin-left:6px;font-weight:500">Lv.${s.level||1}</span>
+            ${data.skills.map((s, idx)=>{
+              const sLv=s.level||1, sExp=s.exp||0, sNeed=sLv*50, sPct=Math.min(100,Math.round(sExp/sNeed*100))
+              return `
+              <div class="_nurture_skill" data-idx="${idx}" style="cursor:pointer;padding:8px 14px;border-radius:12px;background:${n?'rgba(200,180,220,.1)':'rgba(196,184,212,.12)'};border:1px solid ${n?'rgba(200,180,220,.18)':'rgba(196,184,212,.22)'};transition:transform .1s,background .2s;min-width:120px" onmousedown="this.style.transform='scale(.95)'" onmouseup="this.style.transform='scale(1)'">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                  <span style="font-size:12px;color:${n?'#d0c0d8':'var(--ink)'};letter-spacing:.5px">${escHtml(s.name)}</span>
+                  <span style="font-size:10.5px;color:${n?'#a898b8':'var(--rose-d)'};font-weight:500">Lv.${sLv}</span>
+                </div>
+                <div style="height:4px;border-radius:2px;background:${n?'rgba(255,255,255,.08)':'rgba(0,0,0,.06)'};overflow:hidden">
+                  <div style="height:100%;width:${sPct}%;border-radius:2px;background:${n?'linear-gradient(90deg,#a898b8,#c5b8d4)':'linear-gradient(90deg,var(--rose),var(--rose-l))'};transition:width .3s"></div>
+                </div>
+                <div style="font-size:9px;color:${n?'#8878a8':'var(--ink-l)'};margin-top:2px;text-align:right">${sExp}/${sNeed}</div>
               </div>
-            `).join('')}
+            `}).join('')}
           </div>
         </div>
       `:''}
@@ -25464,6 +25578,14 @@ otherChars.forEach(oc=>{
     if(!hasEvidence&&Math.random()>0.5)return
 
     const c=recentChar
+    // 🌟 如果跟这个角色最近30分钟内聊过，不查岗
+    const _ckMsgs=getMsgs(c.id)
+    if(_ckMsgs.length){
+      try{
+        const _ckLast=new Date(_ckMsgs[_ckMsgs.length-1].time).getTime()
+        if(Date.now()-_ckLast<1800000)return
+      }catch(e){}
+    }
     store.set('lastAutoCheckup',Date.now())
     triggerCharCheckup(c.id)
   },45000)
@@ -28951,7 +29073,7 @@ function enableBackgroundKeepAlive() {
 enableBackgroundKeepAlive();
 
 let _bgTimer=null
-let _lastBgCheck=0
+let _lastBgCheck=Date.now()
 let _bgSending=false
 
 function startBackgroundMessages(){
@@ -28983,6 +29105,14 @@ function startBackgroundMessages(){
     
     // 如果最后一条已经是角色发的且未读，不再发
 if(msgs.length&&msgs[msgs.length-1].from==='c'&&!msgs[msgs.length-1].read){_bgSending=false;return}
+
+    // 🌟 如果跟这个角色最近30分钟内聊过，不打扰
+    if(msgs.length){
+      try{
+        const lastTime=new Date(msgs[msgs.length-1].time).getTime()
+        if(Date.now()-lastTime<1800000){_bgSending=false;return}
+      }catch(e){}
+    }
     
     // 根据时间段和好感度生成不同类型的主动消息
     const hour=new Date().getHours()
