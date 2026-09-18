@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,7 +14,10 @@
 <link rel="manifest" href="./manifest.json">
 <script>
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  // 每次打开强制检查更新 sw.js，有新文件立刻替换
+  navigator.serviceWorker.register('./sw.js?v=' + Date.now()).then(reg => {
+    reg.update();
+  }).catch(()=>{});
 }
 </script>
 
@@ -109,20 +115,35 @@ input,textarea,select{font-family:'Noto Serif SC',Georgia,serif}
 }
 @media (min-width:0px){
   body.night-mode{--ink:#ece0f0;--ink-l:#b8a8c8;--rose-d:#e0b8ce}
-  body.night-mode .card{background:rgba(255,255,255,.08);border-color:rgba(200,180,220,.12)}
-  body.night-mode .card-t{color:#d8b8e0}
-  body.night-mode .btn-main{background:linear-gradient(135deg,rgba(200,168,208,.25),rgba(160,128,180,.3));color:#e0d0e8;box-shadow:0 2px 12px rgba(160,128,180,.15)}
-  body.night-mode .btn-sub{background:rgba(255,255,255,.06);border-color:rgba(200,180,220,.12);color:#c8a8d0}
-  body.night-mode .list-item{background:rgba(255,255,255,.04);border-color:rgba(200,180,220,.06)}
-  body.night-mode .modal-box{background:#2a2035}
-  body.night-mode .modal-title{color:#f0e0f0}
-  body.night-mode .inp{color:#e0d0e8}
-  body.night-mode .tarea{color:#e0d0e8}
-  body.night-mode .inp::placeholder,.tarea::placeholder{color:rgba(200,180,220,.3)}
+  body.night-mode .card{background:rgba(255,255,255,.08)!important;border-color:rgba(200,180,220,.12)!important}
+  body.night-mode .card-t{color:#d8b8e0!important}
+  body.night-mode .btn-main{background:linear-gradient(135deg,rgba(200,168,208,.25),rgba(160,128,180,.3))!important;color:#e0d0e8!important;box-shadow:0 2px 12px rgba(160,128,180,.15)!important}
+  body.night-mode .btn-sub{background:rgba(255,255,255,.06)!important;border-color:rgba(200,180,220,.12)!important;color:#c8a8d0!important}
+  body.night-mode .list-item{background:rgba(255,255,255,.04)!important;border-color:rgba(200,180,220,.06)!important}
+  body.night-mode .modal-box{background:#2a2035!important}
+  body.night-mode .modal-title{color:#f0e0f0!important}
+  body.night-mode .inp{color:#e0d0e8!important}
+  body.night-mode .tarea{color:#e0d0e8!important}
+  body.night-mode .inp::placeholder,.tarea::placeholder{color:rgba(200,180,220,.3)!important}
 }
 @keyframes vinylSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .vinyl-spin{animation:vinylSpin 3s linear infinite}
 .vinyl-pause{animation-play-state:paused}
+._card-forward{max-width:260px;min-width:180px;border-radius:12px;overflow:hidden}
+._card-forward-body{padding:10px 14px}
+._card-forward-msg{padding:2px 0;font-size:11px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+._card-forward-title{font-size:12px;font-weight:500;margin-bottom:6px}
+._bubble:has(._card-forward){background:transparent !important;border:none !important;box-shadow:none !important;padding:2px !important}
+@keyframes recallFade{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(.95)}}
+._recall-notice{font-size:11px;font-style:italic;opacity:.5;text-align:center;padding:6px 0}
+._bp-area{background:rgba(0,0,0,.03);border-radius:16px;padding:16px 14px;margin-bottom:14px;display:flex;flex-direction:column;gap:10px;min-height:100px}
+._bp-row{display:flex;width:100%}
+._bp-row.right{justify-content:flex-end}
+._bp-row.left{justify-content:flex-start}
+._bp-bbl{position:relative;display:inline-block;max-width:65%;min-width:50px;padding:10px 14px;font-size:13px;line-height:1.6;word-break:break-word;overflow:visible}
+._bp-bbl ._deco-img{position:absolute;width:32px;height:32px;object-fit:contain;pointer-events:none;z-index:2}
+._deco-tl{top:-12px;left:-12px}._deco-tr{top:-12px;right:-12px}._deco-bl{bottom:-12px;left:-12px}._deco-br{bottom:-12px;right:-12px}
+._css-box{width:100%;min-height:80px;max-height:200px;border:1px solid rgba(232,160,180,.2);border-radius:10px;padding:8px 10px;font-size:11px;font-family:monospace;line-height:1.6;background:rgba(255,255,255,.7);color:var(--ink);resize:vertical}
 </style>
 </head>
 <body>
@@ -194,16 +215,8 @@ const escHtml=s=>{if(!s)return'';const d=document.createElement('div');d.textCon
 const now=()=>new Date(),pad=n=>(n<10?'0':'')+n,ftime=d=>pad(d.getHours())+':'+pad(d.getMinutes())
 const fdate=d=>{const w='日一二三四五六'[d.getDay()];return(d.getMonth()+1)+'月'+d.getDate()+'日 星期'+w}
 const greet=()=>{const h=now().getHours();return h<6?'夜深了':h<9?'早安':h<12?'上午好':h<14?'午安':h<18?'下午好':h<21?'晚上好':'夜深了'}
-const tod=()=>{const h=now().getHours();return h<6?'night':h<8?'dawn':h<17?'day':h<20?'dusk':'night'}
-const isN=()=>{
-  // 用户可以在美化设置里禁用自动夜间模式，让自定义CSS完全接管
-  try{
-    const mode=store.get('nightMode','auto')
-    if(mode==='off')return false
-    if(mode==='on')return true
-  }catch(e){}
-  return tod()==='night'
-}
+const tod=()=>'day'
+const isN=()=>false
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6)// ===== 酒馆卡解析与一机一码激活系统 =====
 function calcActivationCode(mc) {
     let hash = 0;
@@ -713,13 +726,34 @@ function getBubbleStyle(isU,n){
   return { bg, color, borderRadius, style }
 }
 
+// ===== 自由气泡 CSS 系统 =====
+function _getCustomBubbleCss(isU){
+  const key=isU?'_bubbleCssSelf':'_bubbleCssOther'
+  return localStorage.getItem(key)||''
+}
+function _getDecoImg(isU){
+  const key=isU?'_bubbleDecoSelf':'_bubbleDecoOther'
+  return localStorage.getItem(key)||''
+}
+function _getDecoPos(isU){
+  const key=isU?'_bubbleDecoPosS':'_bubbleDecoPosO'
+  return localStorage.getItem(key)||'tr'
+}
+function _decoHtml(isU){
+  const url=_getDecoImg(isU)
+  if(!url) return ''
+  const pos=_getDecoPos(isU)
+  const cls={'tl':'_deco-tl','tr':'_deco-tr','bl':'_deco-bl','br':'_deco-br'}[pos]||'_deco-tr'
+  return `<img class="_deco-img ${cls}" src="${url}" onerror="this.style.display='none'">`
+}
+function _hasCustomCss(){
+  return !!(localStorage.getItem('_bubbleCssSelf')||localStorage.getItem('_bubbleCssOther'))
+}
+
 let curTheme=store.get('theme','sakura')
 function bgNow(){
   const t=themes[curTheme]||themes.sakura
-  // 关掉时段跟随时，固定用白天那一档，主题色最纯粹
-  if(!store.get('todBgEnabled',true)) return t.home[1]
-  const idx={dawn:0,day:1,dusk:2,night:3}[tod()]
-  return t.home[idx]
+  return t.home[1]
 }
 function petalColor(){return(themes[curTheme]||themes.sakura).petal}
 
@@ -3098,7 +3132,7 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
    - 用"嗯…""那个…""怎么说呢"来犹豫：话说到一半想想怎么接
    - 句子可以说一半不说了："我本来想…算了没事""其实我…嗯没什么"
    这些口头禅和断句方式要符合你的性格——话多的人连珠炮"然后然后然后"，高冷的人惜字如金偶尔蹦一个"就…那样吧"，急性子说话东一句西一句跳着来。
-${store.get('autoVoiceEnabled', true) ? `6. 【语音消息功能】（极其重要）：如果你想给对方发语音，或者对方要求听你的声音，**必须**在你具体要说的那句话开头加上 \`[语音回复]\` 标记！\n   - 正确示例：\`[语音回复] 笨蛋，早点睡吧，晚安。\`\n   - 错误示例：不要说"我给你发过去了"却不写语音内容！` : `6. 【警告】：当前系统禁用了语音功能，绝对不要发送任何语音消息，也不要使用[语音回复]等标记！`}
+${store.get('autoVoiceEnabled', true) ? `6. 【语音消息功能】（极其重要）：如果你想给对方发语音，或者对方要求听你的声音，**必须**在你具体要说的那句话开头加上 \`[语音回复]\` 标记！\n   - 【字数严格限制】：模拟微信真实发语音习惯，单条语音严禁超过 20 个字（相当于 2~5 秒）！长篇解释或吐槽必须用普通打字发送，严禁发超长语音！\n   - 正确示例：\`[语音回复] 笨蛋，早点睡吧，晚安。\`\n   - 错误示例：不要说"我发过去了"却不写台词，更严禁一段语音发几十上百字！` : `6. 【警告】：当前系统禁用了语音功能，绝对不要发送任何语音消息，也不要使用[语音回复]等标记！`}
 7. 【发图片能力】如果你决定给对方发一张照片（自拍、风景、食物、截图等），请在消息里写 [图片] 加上简短描述，例如"[图片] 刚拍的自拍"。系统会自动生成对应的图片。不要只是口头说"我拍好了"却不发出来！想发就直接写[图片]！
 10.【转账处理】当对方给你发了转账（聊天记录中有"[转账] X元"的消息），你必须根据自身性格和当时情境决定收下还是退还：
    - 收下转账：在回复中单独一行写 [收转账]
@@ -3107,8 +3141,15 @@ ${store.get('autoVoiceEnabled', true) ? `6. 【语音消息功能】（极其重
 8. 【表情包互动规则】你可以使用表情包表达情绪，格式必须是：(含义:链接)。
 可用表情包仓库见每条消息前缀。
 【最高警告】：当用户发表情包时，这是你们俩微信里通用的表情包！绝对不准说对方"偷你的图"、"盗图"，不要提"图库"或"代码"！把它当成对方做了一个搞笑动作，自然地吐槽或回应即可！
-
-
+11.【转发聊天记录功能】你可以把你和朋友/同事/家人的聊天记录截图转发给对方看！格式：
+   [forward:标题:发送者1>消息1|发送者2>消息2|发送者1>消息3]
+   示例：[forward:和闺蜜的聊天记录:小美>你和那个人怎么样了|我>别提了 烦死|小美>哈哈哈活该|我>你给我闭嘴]
+   什么时候用：八卦、吐槽、炫耀、求助（"你帮我看看这人说的什么意思"）、或者故意让对方吃醋。
+   转发的内容要符合你的社交圈——你有自己的朋友、同事、家人，他们会跟你聊各种事。
+   当对方给你转发了他和别人的聊天记录时，像真人一样反应：吃醋、八卦、帮分析、吐槽。
+12.【撤回消息】如果你发了一条消息后立刻后悔（说漏嘴、打错字、发错人），可以在那条消息的同一行末尾加 [撤回] 标记。
+   示例：我喜欢你 [撤回]
+   撤回后对方会看到"对方撤回了一条消息"。一次回复最多撤回一条，别滥用。适合口是心非/说漏嘴/发错人的场景。
 
 绝对不要做的事：
 - 你可以在聊天中自然使用emoji（如😊❤️🥺😭✨💕🌸😤😘💖😏🙈😂🥰等），但要克制不要堆砌，一条消息最多1-3个，根据性格决定用量
@@ -3129,15 +3170,39 @@ ${store.get('autoVoiceEnabled', true) ? `6. 【语音消息功能】（极其重
 async function fetchModels(apiObj){
   if(!apiObj||!apiObj.key)return[]
   try{
+    let base = (apiObj.baseUrl||'').trim().replace(/\/+$/, '')
+    let url = ''
+    let headers = {}
+
     if(apiObj.provider==='claude'){
-      const r=await fetch((apiObj.baseUrl||'https://api.anthropic.com').replace(/\/$/,'')+'/v1/models',{headers:{'x-api-key':apiObj.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}})
-      if(!r.ok)return[];const d=await r.json();return(d.data||[]).map(m=>m.id).sort()
+      if(!base) base = 'https://api.anthropic.com'
+      url = base.endsWith('/v1') ? (base + '/models') : (base + '/v1/models')
+      headers = {'x-api-key': apiObj.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true'}
     }else{
-      const r=await fetch((apiObj.baseUrl||'https://api.openai.com/v1').replace(/\/$/,'')+'/models',{headers:{'Authorization':'Bearer '+apiObj.key}})
-      if(!r.ok)return[];const d=await r.json();return(d.data||[]).map(m=>m.id).sort()
+      if(!base) base = 'https://api.openai.com/v1'
+      url = base.endsWith('/v1') ? (base + '/models') : (base + '/v1/models')
+      headers = {'Authorization': 'Bearer ' + apiObj.key}
     }
-  }catch(e){return[]}
+
+    let r = await fetch(url, { headers })
+    if(!r.ok && url.includes('/v1/models')){
+      r = await fetch(base + '/models', { headers }).catch(() => r)
+    }
+    if(!r.ok) return []
+    const d = await r.json()
+    
+    let rawList = Array.isArray(d) ? d : (d.data || d.models || [])
+    const models = rawList.map(m => {
+      if(typeof m === 'string') return m
+      return m?.id || m?.name || m?.model || ''
+    }).filter(Boolean)
+
+    return Array.from(new Set(models)).sort()
+  }catch(e){
+    return []
+  }
 }
+
 
 const _avCache={id:null,b64:null}
 
@@ -8983,17 +9048,20 @@ if(_htmlCardHit){
         const _rpWish=_rpParts?_rpParts[2]:'恭喜发财'
         const _rpAmt=_rpParts?_rpParts[1]:''
         const _rpId='_rp'+Math.random().toString(36).slice(2,8)
-        const ic=n?'#d89080':'#c86050'
+        const _cardCss=_getCustomBubbleCss(isU)
+        const _cardDeco=_decoHtml(isU)
+        const _cardStyle=_cardCss?(_cardCss+';position:relative;overflow:visible;min-width:210px;cursor:pointer;'):`border-radius:${radius};overflow:hidden;width:220px;cursor:pointer;background:${bg};`
         bubbleContent=`
-          <div class="_card-redpacket" data-idx="${idx}" style="border-radius:${radius};overflow:hidden;width:220px;cursor:pointer">
-            <div class="_card-redpacket-body" style="background:${n?'linear-gradient(135deg,#5a2a2a,#7a3a2a)':'linear-gradient(135deg,#d84a3a,#c43a2a)'};padding:14px 16px;display:flex;align-items:center;gap:12px">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="${n?'#f0c8b0':'#ffe8d8'}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M4 9h16"/><circle cx="12" cy="15" r="2.5"/><path d="M10 2l2 7 2-7"/></svg>
+          <div class="_card-redpacket ${isU?'_bubble-self':'_bubble-other'}" data-idx="${idx}" style="${_cardStyle}">
+            ${_cardDeco}
+            <div class="_card-redpacket-body" style="padding:14px 16px;display:flex;align-items:center;gap:12px;background:transparent">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M4 9h16"/><circle cx="12" cy="15" r="2.5"/><path d="M10 2l2 7 2-7"/></svg>
               <div style="flex:1">
-                <div style="font-size:14px;color:#fff;font-weight:500">${escHtml(_rpWish||'恭喜发财')}</div>
-                <div style="font-size:10px;color:rgba(255,255,255,.6);margin-top:3px">${isU?(m&&m._claimed?c.name+' 已领取':'你发出了红包'):(m&&m._claimed?'已领取 · ¥'+escHtml(_rpAmt):'点击领取红包')}</div>
+                <div style="font-size:14px;font-weight:500">${escHtml(_rpWish||'恭喜发财')}</div>
+                <div style="font-size:10px;opacity:.7;margin-top:3px">${isU?(m&&m._claimed?c.name+' 已领取':'你发出了红包'):(m&&m._claimed?'已领取 · ¥'+escHtml(_rpAmt):'点击领取红包')}</div>
               </div>
             </div>
-            <div style="background:${n?'rgba(90,42,42,.6)':'rgba(200,60,40,.08)'};padding:6px 16px;font-size:10px;color:${n?'rgba(255,200,180,.5)':'rgba(200,60,40,.4)'}">红包</div>
+            <div style="padding:4px 16px 8px;font-size:9px;opacity:.65;border-top:1px solid rgba(128,128,128,.15)">红包</div>
           </div>`
       }else if(txt.startsWith('[转账]')){
         const info=txt.replace('[转账]','').trim()
@@ -9011,29 +9079,35 @@ if(_htmlCardHit){
         } else {
           _tfStatus = isU ? '待接收' : '点击收款';
         }
+        const _cardCss=_getCustomBubbleCss(isU)
+        const _cardDeco=_decoHtml(isU)
+        const _cardStyle=_cardCss?(_cardCss+';position:relative;overflow:visible;min-width:210px;cursor:pointer;'):`border-radius:${radius};overflow:hidden;width:220px;cursor:pointer;background:${bg};`
         bubbleContent=`
-          <div class="_card-transfer" data-idx="${idx}" style="border-radius:${radius};overflow:hidden;width:220px;cursor:pointer">
-            <div class="_card-transfer-body" style="background:${_tfReturned?(n?'linear-gradient(135deg,#3a3a3a,#4a4a4a)':'linear-gradient(135deg,#a0a0a0,#909090)'):(n?'linear-gradient(135deg,#2a3a2a,#3a4a3a)':'linear-gradient(135deg,#e8a040,#d89030)')};padding:14px 16px;display:flex;align-items:center;gap:12px">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="${n?'#c0e0c0':'#fff'}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-5"/></svg>
+          <div class="_card-transfer ${isU?'_bubble-self':'_bubble-other'}" data-idx="${idx}" style="${_cardStyle}">
+            ${_cardDeco}
+            <div class="_card-transfer-body" style="padding:12px 14px;display:flex;align-items:center;gap:10px;background:transparent">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-5"/></svg>
               <div style="flex:1">
-                <div style="font-size:18px;color:#fff;font-weight:600">¥${escHtml(_tfAmt||'0')}</div>
-                <div style="font-size:10px;color:rgba(255,255,255,.6);margin-top:3px">${_tfStatus}</div>
+                <div style="font-size:17px;font-weight:600">¥${escHtml(_tfAmt||'0')}</div>
+                <div style="font-size:10px;opacity:.7;margin-top:2px">${_tfStatus}</div>
               </div>
             </div>
-            <div style="background:${n?'rgba(42,58,42,.6)':'rgba(200,140,40,.08)'};padding:4px 16px;font-size:9px;color:${n?'rgba(180,220,180,.5)':'rgba(200,140,40,.5)'}">转账${_tfNote&&!/^已收款$|^已退还$|^已被/.test(_tfNote)?' · '+escHtml(_tfNote):''}</div>
+            <div style="padding:4px 14px 8px;font-size:9px;opacity:.65;border-top:1px solid rgba(128,128,128,.15)">转账${_tfNote&&!/^已收款$|^已退还$|^已被/.test(_tfNote)?' · '+escHtml(_tfNote):''}</div>
           </div>`
       }else if(txt.startsWith('[礼物]')){
         const info=txt.replace('[礼物]','').trim()
-        const ic=n?'#d8a8c0':'var(--rose)'
+        const _cardCss=_getCustomBubbleCss(isU)
+        const _cardDeco=_decoHtml(isU)
+        const _cardStyle=_cardCss?(_cardCss+';position:relative;overflow:visible;min-width:210px;cursor:pointer;'):`border-radius:${radius};overflow:hidden;width:220px;cursor:pointer;background:${bg};`
         bubbleContent=`
-          <div class="_card-gift" data-idx="${idx}" style="border-radius:${radius};overflow:hidden;width:220px;cursor:pointer">
-            <div class="_card-gift-body" style="background:${n?'linear-gradient(135deg,#3a2835,#4a3848)':'linear-gradient(135deg,#f5e0ea,#f0d0dc)'};padding:12px;text-align:center">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="${n?'#e8c0d0':'var(--rose-d)'}"
- stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="11" rx="1.5"/><rect x="5" y="6" width="14" height="4" rx="1"/><path d="M12 6v15"/><path d="M8.5 6C8.5 4 10 2.5 12 4c2-1.5 3.5 0 3.5 2"/></svg>
-              <div style="font-size:12px;color:${n?'#f0d8e0':'var(--ink)'};font-weight:500;margin-top:6px">${escHtml(info||'一份礼物')}</div>
-              <div style="font-size:9px;color:${n?'rgba(240,216,224,.5)':'var(--ink-l)'};margin-top:3px">${m&&m._accepted?(isU?c.name+' 已收下':'已收下'):(isU?'你送出了礼物 · 点击送出':'收到一份礼物 · 点击收下')}</div>
+          <div class="_card-gift ${isU?'_bubble-self':'_bubble-other'}" data-idx="${idx}" style="${_cardStyle}">
+            ${_cardDeco}
+            <div class="_card-gift-body" style="padding:12px;text-align:center;background:transparent">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="11" rx="1.5"/><rect x="5" y="6" width="14" height="4" rx="1"/><path d="M12 6v15"/><path d="M8.5 6C8.5 4 10 2.5 12 4c2-1.5 3.5 0 3.5 2"/></svg>
+              <div style="font-size:12px;font-weight:500;margin-top:6px">${escHtml(info||'一份礼物')}</div>
+              <div style="font-size:9px;opacity:.7;margin-top:3px">${m&&m._accepted?(isU?c.name+' 已收下':'已收下'):(isU?'你送出了礼物 · 点击送出':'收到一份礼物 · 点击收下')}</div>
             </div>
-            <div style="background:${n?'rgba(58,40,53,.6)':'rgba(232,160,180,.08)'};padding:4px 12px;font-size:9px;color:${n?'rgba(232,192,208,.4)':'rgba(232,160,180,.45)'}">礼物</div>
+            <div style="padding:4px 12px 8px;font-size:9px;opacity:.65;border-top:1px solid rgba(128,128,128,.15)">礼物</div>
           </div>`
       }else if(txt.startsWith('[语音通话]')){
   const info=txt.replace('[语音通话]','').trim()
@@ -9060,6 +9134,27 @@ if(_htmlCardHit){
         </div>
       </div>
     </div>`
+      }else if(txt.startsWith('[转发] ')){
+        // 解析格式：[转发] 标题|||发送者::内容|||发送者::内容
+        const _fwRaw=txt.replace('[转发] ','')
+        const _fwParts=_fwRaw.split('|||')
+        const _fwTitle=_fwParts[0]||'聊天记录'
+        const _fwMsgs=_fwParts.slice(1).map(p=>{
+          const sp=p.indexOf('::')
+          if(sp<0)return{n:'',t:p}
+          return{n:p.slice(0,sp).trim(),t:p.slice(sp+2).trim()}
+        }).filter(m=>m.t)
+        bubbleContent=`
+          <div class="_card-forward" style="border-radius:${radius};overflow:hidden;max-width:260px;cursor:pointer">
+            <div class="_card-forward-body" style="background:${n?'rgba(255,255,255,.06)':'rgba(255,255,255,.75)'};padding:10px 14px;border:1px solid ${n?'rgba(200,180,220,.1)':'rgba(232,160,180,.12)'};border-radius:${radius}">
+              <div class="_card-forward-title" style="font-size:12px;font-weight:500;color:${n?'#d8c8e0':'var(--ink)'};margin-bottom:6px">${escHtml(_fwTitle)}</div>
+              ${_fwMsgs.slice(0,4).map(m=>`<div class="_card-forward-msg" style="font-size:11px;color:${n?'#b8a8c8':'var(--ink-l)'};line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="color:${n?'#c8b8d8':'var(--rose-d)'}">${escHtml(m.n)}:</span> ${escHtml(m.t)}</div>`).join('')}
+              ${_fwMsgs.length>4?`<div style="font-size:10px;color:${n?'#9888a8':'#aaa'};margin-top:4px">查看${_fwMsgs.length}条消息</div>`:''}
+            </div>
+            <div style="background:${n?'rgba(255,255,255,.03)':'rgba(0,0,0,.02)'};padding:4px 14px;font-size:9px;color:${n?'#8a7a9a':'#bbb'};border-top:1px solid ${n?'rgba(255,255,255,.05)':'rgba(0,0,0,.04)'}">聊天记录</div>
+          </div>`
+      }else if(m._recalled){
+        bubbleContent=`<div class="_recall-notice" style="font-size:11px;color:${n?'#9888a8':'var(--ink-l)'};font-style:italic;opacity:.6;text-align:center;padding:6px 0">${isU?'你':'对方'}撤回了一条消息</div>`
       }else if(txt.startsWith('[小剧场]')){
         const info=txt.replace('[小剧场]','').trim()
         bubbleContent=`
@@ -9476,17 +9571,14 @@ if(_htmlCardHit){
                   box-sizing:border-box;
                   margin:0;
                   padding:7px 12px;
-                  border-radius:16px 16px 16px 4px;
-                  background:${n ? 'rgba(255,255,255,.08)' : 'rgba(255,255,255,.45)'};
-                  color:${clr};
+                  ${(_getCustomBubbleCss(false) || `border-radius:16px 16px 16px 4px; background:${n ? 'rgba(255,255,255,.08)' : 'rgba(255,255,255,.45)'}; border:none; backdrop-filter:var(--glass-blur, blur(8px));`)}
                   font-size:13px;
                   line-height:1.7;
                   text-align:left;
                   white-space:pre-wrap;
                   overflow-wrap:anywhere;
                   word-break:break-word;
-                  border:none;
-                  backdrop-filter:var(--glass-blur, blur(8px));
+                  padding:10px 14px;
                 ">${_restoreMediaTags(escHtml(pt.v))}</div>
              </div>
             `
@@ -9663,12 +9755,17 @@ txt = '\u2063BLMX_RENDERED\u2063';
           if(_isCardOnly && !m.quote){
             bubbleContent = `<div data-idx="${idx}" style="white-space:normal">${parsedText}</div>`;
           }else{
+                        const _customCss=_getCustomBubbleCss(isU)
+            const _deco=_decoHtml(isU)
+            const _baseStyle=bubbleStyle+` font-size:13px; color:${clr}; line-height:1.8; letter-spacing:.3px; padding:10px 14px;`
+            const _finalStyle=_customCss?(_customCss+`; font-size:13px; color:${clr}; line-height:1.8; letter-spacing:.3px; position:relative; overflow:visible; padding:10px 14px; display:inline-block; max-width:100%; box-sizing:border-box;`):_baseStyle
             bubbleContent=`
-                        <div class=\"_bubble ${isU?'_bubble-self':'_bubble-other'}\" data-idx=\"${idx}\" style=\"${bubbleStyle} font-size:13px; color:${clr}; line-height:1.8; letter-spacing:.3px\">
-
+              <div class="_bubble ${isU?'_bubble-self':'_bubble-other'}" data-idx="${idx}" style="${_finalStyle}">
+              ${_deco}
               ${quoteHtml}
-              <div style="white-space:pre-wrap">${_blmxHtml || parsedText}</div>
+              <div style="white-space:pre-wrap;word-break:break-word">${_blmxHtml || parsedText}</div>
             </div>`
+
           }
           if(_blmxHtml){
             parsedText = '';
@@ -9949,9 +10046,14 @@ ${bubbleContent}${toolsHtml}</div>
         </div>
         <div class="_fp" data-fn="location" style="display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;padding:8px 0">
           <div style="width:40px;height:40px;border-radius:12px;background:${n?'rgba(100,180,200,.1)':'rgba(80,160,200,.08)'};display:flex;align-items:center;justify-content:center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${n?'#80b8d0':'#5090c0'}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
-          <span style="font-size:10px;color:${n?'#c0b0c8':'var(--ink-l)'}\">位置</span>
+          <span style="font-size:10px;color:${n?'#c0b0c8':'var(--ink-l)'}">位置</span>
+        </div>
+        <div class="_fp" data-fn="forward" style="display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;padding:8px 0">
+          <div style="width:40px;height:40px;border-radius:12px;background:${n?'rgba(120,180,140,.1)':'rgba(100,160,120,.08)'};display:flex;align-items:center;justify-content:center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${n?'#80c0a0':'#509070'}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 12h16"/></svg></div>
+          <span style="font-size:10px;color:${n?'#c0b0c8':'var(--ink-l)'}">转发</span>
         </div>
       </div>
+
     </div>
   `
 
@@ -11901,7 +12003,7 @@ let bubbleStyle = isOnlySticker
             <div style="flex:1;height:24px;display:flex;align-items:center;gap:2px">${[...Array(12)].map((_,j)=>`<div style="width:2.5px;height:${4+Math.random()*16}px;border-radius:2px;background:${n?'rgba(216,168,192,.4)':'rgba(232,160,180,.35)'}"></div>`).join('')}</div>
             <div style="font-size:10px;color:${n?'#b8a8c8':'var(--ink-l)'}">${Math.floor(info.length/4)+1}"</div>
           </div>
-          <div style="padding:6px 14px;font-size:11px;color:${n?'rgba(200,180,210,.5)':'rgba(100,80,80,.35)'};background:${n?'rgba(255,255,255,.04)':'rgba(255,255,255,.4)'}">${escHtml(info.slice(0,30))}${info.length>30?'...':''}</div>
+          <div style="padding:6px 14px;font-size:11px;color:${n?'rgba(200,180,210,.6)':'rgba(100,80,80,.5)'};background:${n?'rgba(255,255,255,.04)':'rgba(255,255,255,.4)'};word-break:break-word;line-height:1.4">${escHtml(info)}</div>
         </div>`;
   }else if(txt.startsWith('[小剧场]')){
       const info=txt.replace('[小剧场]','').trim();
@@ -12277,8 +12379,36 @@ if(typing.parentElement) typing.remove()
         if(rest)processedLines.push({text:rest,from:'c'});
         return;
       }
-      
-      // 终极无赖拦截法：只要这行字里有“[语音回复]”或者“（语音”，直接强行扣押并提取台词
+
+      // === 转发聊天记录解析 ===
+      const fwMatch=line.match(/\[forward[:：]([^:：]+?)[:：]([\s\S]+?)\]/)
+      if(fwMatch){
+        const fwTitle=fwMatch[1].trim()
+        const fwBody=fwMatch[2].split('|').map(seg=>{
+          const sp=seg.indexOf('>')
+          if(sp<0)return null
+          return {n:seg.slice(0,sp).trim(),t:seg.slice(sp+1).trim()}
+        }).filter(Boolean)
+        if(fwBody.length){
+          const fwText='[转发] '+fwTitle+'|||'+fwBody.map(m=>m.n+'::'+m.t).join('|||')
+          processedLines.push({text:fwText,from:'c'})
+          const rest=line.replace(fwMatch[0],'').trim()
+          if(rest)processedLines.push({text:rest,from:'c'})
+          return
+        }
+      }
+
+      // === 撤回消息检测 ===
+      if(line.includes('[撤回]')){
+        const recallText=line.replace(/\s*\[撤回\]\s*/g,'').trim()
+        if(recallText){
+          processedLines.push({text:recallText,from:'c',_recallAfter:true})
+        }
+        return
+      }
+
+      // 终极无赖拦截法：只要这行字里有"[语音回复]"或者"（语音"，直接强行扣押并提取台词
+
       const voiceMatch = line.match(/[\[(（【][^\])）】]*语音[^\])）】]*[\])）】][:：]?\s*["「『“]?([^"」』”]+)["」』”]?/);
       if(line.includes('[语音回复]') || voiceMatch){
         let voiceText = '';
@@ -12295,6 +12425,7 @@ if(typing.parentElement) typing.remove()
         }
         
         if(voiceText) {
+          if(voiceText.length > 25) voiceText = voiceText.slice(0, 25); // 限制最长不超过25字
           processedLines.push({text:`[语音] ${voiceText}`, from:'c', doTts:true});
           return;
         }
@@ -12331,6 +12462,7 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
       if(item._claimed) _msgObj._claimed=true
       if(item._returned) _msgObj._returned=true
       if(item._isReceiptCard) _msgObj._isReceiptCard=true
+      if(item._recallAfter) _msgObj._recallAfter=true
       newArr.push(_msgObj)
 
       // 线上可以直接追加普通气泡；
@@ -12367,6 +12499,31 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
 
     if(aiRes.cardHtml){newArr.push({from:'c',text:aiRes.cardHtml,time:timeStr,mode:'offline'})}
     saveMsgs(targetCharId, newArr)
+
+// === 撤回延迟处理 ===
+const _recallItems=newArr.filter(m=>m._recallAfter&&m.from==='c')
+if(_recallItems.length){
+  setTimeout(()=>{
+    const _rArr=getMsgs(targetCharId)
+    let changed=false
+    _recallItems.forEach(ri=>{
+      const fi=_rArr.findIndex(m=>m._recallAfter&&m.text===ri.text&&m.from==='c')
+      if(fi>=0){
+        _rArr[fi].text='对方撤回了一条消息'
+        _rArr[fi]._recalled=true
+        delete _rArr[fi]._recallAfter
+        changed=true
+      }
+    })
+    if(changed){
+      saveMsgs(targetCharId,_rArr)
+      if(document.getElementById('_msglist')&&activeCharId===targetCharId){
+        window._chatForceBottom=true;render('chat')
+      }
+    }
+  },2000+Math.random()*3000)
+}
+
 sending=false
 
 if(document.getElementById('_msglist') && activeCharId === targetCharId){
@@ -13406,9 +13563,154 @@ ${recentMsgs}
 
           }
         })
+      case 'forward':{
+        // 转发当前聊天记录给其他联系人
+        const _fwAllMsgs=getMsgs(activeCharId).filter(m=>(m.from==='u'||m.from==='c')&&!m._recalled)
+        if(!_fwAllMsgs.length){alert('当前聊天没有消息可转发');break}
+        const _fwTargets=getMyChars().filter(ch=>ch.id!==activeCharId)
+        if(!_fwTargets.length){alert('没有其他联系人');break}
+        const _curChar=getMyChars().find(ch=>ch.id===activeCharId)
+        const _curName=_curChar?_curChar.name:'对方'
+        showModal('转发聊天记录',(mb,close)=>{
+          let _fwSelected=[]
+          // ======= 清理消息文本的工具函数 =======
+          const _fwClean=(txt)=>{
+            if(!txt)return '[特殊消息]'
+            let t=txt
+            // 去掉状态/心声标签
+            t=t.replace(/\[状态[:：][\s\S]*$/,'').replace(/\[心声[:：][\s\S]*$/,'')
+            // 去掉 CHATCARD 内部格式
+            t=t.replace(/CHATCARD\d+\s*/gi,'')
+            // 去掉 [对方消息|xxx] [我的消息|xxx] 等内部标签
+            t=t.replace(/\[(?:对方|我的?)消息[|\|｜][^\]]*\]/g,'')
+            // 去掉图片文件名
+            t=t.replace(/[a-z0-9]{6,}\.(jpe?g|png|gif|webp|svg)\b/gi,'')
+            // MiPhone 格式清理
+            t=t.replace(/MiPhone_(?:start|end)/g,'').replace(/msg_(?:start|end)/g,'')
+            // 特殊卡片简化
+            t=t.replace(/\[语音\]\s*/g,'🎤 语音消息 ')
+            t=t.replace(/\[图片[^\]]*\]/g,'📷 图片 ')
+            t=t.replace(/\[红包[^\]]*\]/g,'🧧 红包 ')
+            t=t.replace(/\[转账[^\]]*\]/g,'💰 转账 ')
+            t=t.replace(/\[礼物[^\]]*\]/g,'🎁 礼物 ')
+            t=t.replace(/\[转发[^\]]*\]/g,'📋 转发 ')
+            t=t.replace(/\[(?:语音通话|视频通话)[^\]]*\]/g,'📞 通话 ')
+            t=t.replace(/\[位置[^\]]*\]/g,'📍 位置 ')
+            t=t.replace(/\[小剧场[^\]]*\]/g,'🎬 小剧场 ')
+            t=t.replace(/\[换头像[^\]]*\]/g,'')
+            // 去掉 HTML 标签
+            t=t.replace(/<[^>]+>/g,' ')
+            // 去掉多余空白
+            t=t.replace(/\s+/g,' ').trim()
+            if(!t)return '[特殊消息]'
+            return t.slice(0,80)
+          }
+          // ======= 第一步：选消息 =======
+          const _fwRenderMsgs=()=>{
+            const pName=P().name||'我'
+            const displayMsgs=_fwAllMsgs.slice(-50)
+            mb.innerHTML=`
+              <div style="font-size:12px;color:${n?'#b8a8c8':'var(--ink-l)'};margin-bottom:10px">选择要转发的消息：</div>
+              <div style="max-height:50vh;overflow-y:auto;border:1px solid ${n?'rgba(200,180,220,.08)':'rgba(232,160,180,.1)'};border-radius:12px;padding:8px" id="_fwlist">
+                ${displayMsgs.map((m,i)=>{
+                  const sender=m.from==='u'?pName:_curName
+                  const cleanTxt=_fwClean(m.text)
+                  return `<label data-fi="${i}" style="display:flex;align-items:flex-start;gap:8px;padding:6px 4px;cursor:pointer;border-bottom:1px solid ${n?'rgba(255,255,255,.04)':'rgba(0,0,0,.04)'}">
+                    <input type="checkbox" data-fi="${i}" style="margin-top:3px;accent-color:var(--rose)">
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:10px;color:${m.from==='u'?(n?'#a0c8b0':'var(--green)'):(n?'#c8b8d8':'var(--rose-d)')};margin-bottom:1px">${escHtml(sender)}</div>
+                      <div style="font-size:12px;color:${n?'#d8c8e0':'var(--ink)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(cleanTxt)}</div>
+                    </div>
+                  </label>`
+                }).join('')}
+              </div>
+              <div id="_fwnext" style="margin-top:12px;padding:10px;border-radius:16px;background:${n?'linear-gradient(135deg,#c8a8d0,#a888b8)':'linear-gradient(135deg,var(--rose-l),#f0c8d4)'};text-align:center;font-size:13px;color:${n?'#fff':'var(--ink)'};cursor:pointer;letter-spacing:1px">下一步：选择发送对象 (<span id="_fwcnt">0</span>)</div>
+            `
+            const cntEl=mb.querySelector('#_fwcnt')
+            mb.querySelectorAll('#_fwlist input[type=checkbox]').forEach(cb=>{
+              cb.onchange=()=>{
+                const fi=+cb.dataset.fi
+                if(cb.checked&&!_fwSelected.includes(fi))_fwSelected.push(fi)
+                else _fwSelected=_fwSelected.filter(x=>x!==fi)
+                cntEl.textContent=_fwSelected.length
+              }
+            })
+            mb.querySelector('#_fwnext').onclick=()=>{
+              if(!_fwSelected.length){alert('请先勾选要转发的消息');return}
+              _fwSelected.sort((a,b)=>a-b)
+              _fwRenderTargets()
+            }
+          }
+          // ======= 第二步：选目标联系人 =======
+          const _fwRenderTargets=()=>{
+            mb.innerHTML=`
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                <div id="_fwback2" style="cursor:pointer;font-size:12px;color:${n?'#c8b8d8':'var(--rose-d)'}">◁ 返回</div>
+                <div style="flex:1;font-size:12px;color:${n?'#b8a8c8':'var(--ink-l)'}">已选 ${_fwSelected.length} 条消息，发给谁？</div>
+              </div>
+              ${_fwTargets.map(ch=>`
+                <div class="_fwtarget" data-id="${ch.id}" style="display:flex;align-items:center;gap:10px;padding:10px;margin-bottom:6px;border-radius:12px;background:${n?'rgba(255,255,255,.05)':'rgba(255,255,255,.6)'};border:1px solid ${n?'rgba(200,180,220,.08)':'rgba(232,160,180,.1)'};cursor:pointer">
+                  <div style="flex-shrink:0">${avatarEl(ch.avatar,36)}</div>
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;color:${n?'#e0d0e8':'var(--ink)'};font-weight:500">${escHtml(ch.name)}</div>
+                    <div style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:2px">${escHtml(ch.relation||'')}</div>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${n?'#a898b8':'var(--ink-l)'}" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
+              `).join('')}
+            `
+            mb.querySelector('#_fwback2').onclick=()=>_fwRenderMsgs()
+            mb.querySelectorAll('._fwtarget').forEach(el=>{
+              el.onclick=()=>{
+                const targetCh=_fwTargets.find(ch=>ch.id===el.dataset.id)
+                if(!targetCh)return
+                const pName=P().name||'我'
+                const displayMsgs=_fwAllMsgs.slice(-50)
+                const selMsgs=displayMsgs.filter((_,i)=>_fwSelected.includes(i))
+                // 构建转发卡片存储文本
+                const _fwTitle='和'+_curName+'的聊天记录'
+                const _fwBody=selMsgs.map(m=>{
+                  const sender=m.from==='u'?pName:_curName
+                  return sender+'::'+_fwClean(m.text)
+                }).join('|||')
+                const fwText='[转发] '+_fwTitle+'|||'+_fwBody
+                // 构建给 AI 看的纯文本摘要（也要清理）
+                const _fwReadable=selMsgs.map(m=>{
+                  const s=m.from==='u'?pName:_curName
+                  return s+'：'+_fwClean(m.text)
+                }).join('\n')
+                close()
+                // ====== 只存消息，不调 funcReply ======
+                const targetArr=getMsgs(targetCh.id)
+                // 存一条用户发的转发卡片
+                targetArr.push({
+                  from:'u',
+                  text:fwText,
+                  time:ftime(now()),
+                  replied:false,
+                  // 额外存一份可读文本，AI回复时读这个
+                  _forwardReadable:_fwReadable,
+                  _forwardFrom:_curName
+                })
+                saveMsgs(targetCh.id,targetArr)
+                // toast 提示
+                const _toast=document.createElement('div')
+                _toast.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);color:#fff;padding:10px 20px;border-radius:20px;font-size:12px;z-index:9999;pointer-events:none;z-index:10000'
+                _toast.textContent='已转发给 '+targetCh.name
+                document.body.appendChild(_toast)
+                setTimeout(()=>_toast.remove(),1800)
+                // 跳转到目标联系人的聊天页
+                activeCharId=targetCh.id
+                saveCharList()
+                window._chatForceBottom=true
+                render('chat')
+              }
+            })
+          }
+          _fwRenderMsgs()
+        })
         break
-
-      case 'goodnight':
+      }
         await funcReply('晚安',`我跟你说了晚安，要睡觉了。你会怎么回？符合你的性格和我们的关系，自然一点，像真人说晚安。`)
         break
 
@@ -15332,37 +15634,103 @@ async function genMapScenePrompt(placeObj,charObj,lastText){
 
 // 注入时空机原版地图与 VN 剧场样式
 (function() {
-  if (document.getElementById('star-map-vn-style')) return;
+  const oldS = document.getElementById('star-map-vn-style');
+  if(oldS) oldS.remove();
   const s = document.createElement('style');
   s.id = 'star-map-vn-style';
   s.textContent = `
-    .starmap-container { background: #FFFDF0; background-image: radial-gradient(#F5E6C4 20%, transparent 20%); background-size: 20px 20px; height: 100%; display: flex; flex-direction: column; overflow: hidden; font-family: 'Noto Serif SC', -apple-system, sans-serif; position: relative; }
-    .starmap-header { display: flex; justify-content: space-between; align-items: center; padding: max(env(safe-area-inset-top), 16px) 20px 12px; background: rgba(255,255,255,0.92); backdrop-filter: blur(10px); border-bottom: 1.5px solid #F0E6D8; flex-shrink: 0; z-index: 10; }
-    .starmap-title { font-size: 18px; font-weight: 900; color: #4A3428; letter-spacing: 1.5px; display: flex; align-items: center; gap: 6px; }
-    .starmap-close { border: 1.5px solid #D7CCC8; border-radius: 20px; padding: 4px 16px; font-size: 12px; color: #5D4037; font-weight: bold; background: #fff; cursor: pointer; box-shadow: 0 2px 6px rgba(93,64,55,0.08); }
-    .starmap-tip { margin: 12px auto 8px; background: rgba(255,255,255,0.95); border: 1.5px solid #8D6E63; border-radius: 20px; text-align: center; padding: 9px 16px; font-size: 12px; font-weight: bold; color: #5D4037; width: 88%; z-index: 10; flex-shrink: 0; box-shadow: 0 4px 12px rgba(93,64,55,0.08); }
-    .starmap-body { flex: 1; position: relative; overflow-y: auto; display: flex; justify-content: center; align-items: flex-start; padding: 10px 0 40px; }
-    .starmap-grid { position: relative; width: 330px; height: 560px; }
-    .starmap-v-line { position: absolute; left: 50%; top: 0; bottom: 0; width: 14px; background: #fff; border: 2px solid #5D4037; border-radius: 10px; transform: translateX(-50%); z-index: 2; }
-    .starmap-h-line { position: absolute; top: 48%; left: -10px; right: -10px; height: 36px; background: #68B0D8; border-top: 3px solid #fff; border-bottom: 3px solid #fff; transform: translateY(-50%); z-index: 1; border-radius: 20px; box-shadow: inset 0 2px 6px rgba(0,0,0,0.1); }
-    .starmap-zone { position: absolute; border-radius: 20px; border: 2px dashed rgba(93,64,55,0.2); z-index: 1; box-shadow: inset 0 0 20px rgba(255,255,255,0.6); }
-    .starmap-zone.tl { top: 0; left: 0; width: 46%; height: 44%; background: #D6EDD9; }
-    .starmap-zone.tr { top: 0; right: 0; width: 46%; height: 44%; background: #C2EAF6; }
-    .starmap-zone.bl { bottom: 0; left: 0; width: 46%; height: 44%; background: #E2F0CD; }
-    .starmap-zone.br { bottom: 0; right: 0; width: 46%; height: 44%; background: #FCD8CC; }
-    .starmap-poi { position: absolute; padding: 10px 14px; border-radius: 14px; border: 2px solid #5D4037; font-weight: 800; font-size: 12px; color: #5D4037; cursor: pointer; z-index: 4; box-shadow: 0 4px 0 rgba(93,64,55,0.3); transition: transform 0.1s, box-shadow 0.1s; display: flex; align-items: center; gap: 4px; }
-    .starmap-poi:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(93,64,55,0.3); }
-    .poi-cafe { background: #FFD8A8; top: 14%; left: 10%; }
-    .poi-oldbook { background: #D3C6C1; top: 56%; right: 10%; }
-    .poi-school { background: #C2E5F2; top: 14%; right: 10%; }
-    .poi-roof { background: #E6CBEA; top: 56%; left: 10%; }
-    .poi-river { background: #4FA8D6; color: #fff; top: 48%; left: 5%; transform: translateY(-50%); border-color: #fff; box-shadow: 0 4px 0 rgba(0,80,160,0.3); }
-    .poi-store { background: #FFF4B2; top: 48%; right: 5%; transform: translateY(-50%); }
-    .poi-bamboo { background: #A3D4B6; top: 16%; left: 10%; }
-    .poi-park { background: #8FC29B; bottom: 14%; right: 10%; }
-    .poi-cinema { background: #E5C3D1; top: 12%; right: 10%; }
-    .poi-arcade { background: #EEA7C4; top: 46%; left: 10%; }
-    .poi-night { background: #FA9D81; bottom: 12%; right: 10%; }
+    /* ☀️ 默认白天/亮色模式：清爽手绘高德风 */
+    .starmap-container { background: var(--cream, #fef8f4); height: 100%; display: flex; flex-direction: column; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, 'Noto Serif SC', sans-serif; position: relative; }
+    .starmap-header { display: flex; justify-content: space-between; align-items: center; padding: max(env(safe-area-inset-top), 16px) 18px 12px; background: rgba(255,255,255,0.88); backdrop-filter: blur(16px); border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0; z-index: 20; }
+    .starmap-title { font-size: 16px; font-weight: 700; color: #32252a; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
+    .starmap-close { border: 1px solid rgba(230,160,180,0.4); border-radius: 18px; padding: 6px 16px; font-size: 12px; font-weight: 600; color: #a84865; background: rgba(255,235,240,0.85); cursor: pointer; box-shadow: 0 2px 8px rgba(214,122,148,0.15); transition: transform .15s; }
+    .starmap-close:active { transform: scale(0.95); }
+    .starmap-tip { margin: 10px 16px 6px; background: rgba(255,255,255,0.85); border-radius: 14px; text-align: center; padding: 8px 14px; font-size: 11.5px; color: #6a5860; z-index: 20; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border: 1px solid rgba(230,200,210,0.5); backdrop-filter: blur(8px); }
+    .starmap-body { flex: 1; position: relative; overflow: auto; padding: 10px 0 30px; -webkit-overflow-scrolling: touch; }
+    
+    /* 画布（白天：通透米白手账沙盘） */
+    .starmap-canvas { position: relative; width: 360px; height: 620px; margin: 0 auto; background: #faf6f0; border-radius: 28px; box-shadow: 0 8px 30px rgba(0,0,0,0.08); overflow: hidden; border: 2px solid #ffffff; }
+    
+    /* 道路网（白天） */
+    .road-h1 { position: absolute; top: 195px; left: 0; right: 0; height: 22px; background: rgba(0,0,0,0.025); border-top: 1px dashed rgba(0,0,0,0.08); border-bottom: 1px dashed rgba(0,0,0,0.08); z-index: 2; pointer-events:none; }
+    .road-h2 { position: absolute; bottom: 200px; left: 0; right: 0; height: 22px; background: rgba(0,0,0,0.025); border-top: 1px dashed rgba(0,0,0,0.08); border-bottom: 1px dashed rgba(0,0,0,0.08); z-index: 2; pointer-events:none; }
+    .road-label { position: absolute; font-size: 9px; color: rgba(0,0,0,0.3); letter-spacing: 2px; }
+
+    /* 河流（白天：清透水蓝） */
+    .starmap-river { position: absolute; top: -30px; left: 42%; width: 52px; height: 680px; background: linear-gradient(180deg, #cce4f7 0%, #b3daf5 40%, #c4e2f8 100%); transform: rotate(15deg); border-left: 2px solid rgba(255,255,255,0.9); border-right: 2px solid rgba(255,255,255,0.9); z-index: 1; }
+    
+    /* 街区（白天柔和淡彩） */
+    .starmap-park-zone { position: absolute; bottom: 20px; left: 14px; width: 150px; height: 160px; background: rgba(180,225,190,0.45); border-radius: 36px 45px 24px 38px; border: 1.5px dashed rgba(120,180,140,0.5); z-index: 2; }
+    .park-tree-decor { position: absolute; bottom: 10px; left: 18px; font-size: 11px; color: rgba(80,140,100,0.45); letter-spacing: 6px; pointer-events:none; }
+    .starmap-school-zone { position: absolute; top: 20px; right: 14px; width: 145px; height: 160px; background: rgba(225,210,245,0.45); border-radius: 40px 24px 45px 30px; border: 1.5px dashed rgba(170,140,210,0.5); z-index: 2; }
+    .starmap-com-zone { position: absolute; bottom: 20px; right: 14px; width: 145px; height: 165px; background: rgba(255,215,200,0.45); border-radius: 28px 45px 36px 20px; border: 1.5px dashed rgba(220,140,120,0.5); z-index: 2; }
+
+    /* 📍 白天地标卡片（纯白立体卡片 + 纯正深色大字） */
+    .starmap-poi { position: absolute; background: #ffffff; border-radius: 12px; padding: 7px 11px 6px; cursor: pointer; z-index: 10; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; box-shadow: 0 4px 14px rgba(60,40,50,0.12), 0 1px 3px rgba(0,0,0,0.05); border: 1px solid rgba(220,205,210,0.8); border-left: 3.5px solid #e8658b; transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); min-width: 86px; }
+    .starmap-poi:active { transform: translateY(2px) scale(0.96); }
+    .poi-title { font-size: 12.5px; font-weight: 700; color: #2c2024 !important; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
+    .poi-sub { font-size: 9.5px; color: #7a686f !important; font-weight: 500; letter-spacing: 0.2px; }
+    .poi-dot { width: 5px; height: 5px; border-radius: 50%; background: #e8658b; flex-shrink: 0; }
+    .starmap-poi::after { content: ''; position: absolute; bottom: -5px; left: 20px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #ffffff; }
+
+    /* 地点特殊点缀色彩 */
+    .poi-school  { top: 38px; right: 26px; border-left-color: #9c6be8; }
+    .poi-school .poi-dot { background: #9c6be8; }
+    .poi-roof    { top: 112px; right: 18px; border-left-color: #8c57df; }
+    .poi-roof .poi-dot { background: #8c57df; }
+    .poi-cafe    { top: 48px; left: 20px; border-left-color: #cf7e3e; }
+    .poi-cafe .poi-dot { background: #cf7e3e; }
+    .poi-oldbook { top: 138px; left: 24px; border-left-color: #b5804c; }
+    .poi-oldbook .poi-dot { background: #b5804c; }
+    .poi-river   { top: 250px; left: 50%; transform: translateX(-50%); border-left-color: #3b8cd9; }
+    .poi-river::after { left: 50%; transform: translateX(-50%); }
+    .poi-river .poi-dot { background: #3b8cd9; }
+    .poi-store   { top: 312px; left: 45%; border-left-color: #d19a28; }
+    .poi-store .poi-dot { background: #d19a28; }
+    .poi-bamboo  { bottom: 120px; left: 20px; border-left-color: #3fa865; }
+    .poi-bamboo .poi-dot { background: #3fa865; }
+    .poi-park    { bottom: 42px; left: 28px; border-left-color: #369c5c; }
+    .poi-park .poi-dot { background: #369c5c; }
+    .poi-cinema  { bottom: 130px; right: 20px; border-left-color: #d94b7b; }
+    .poi-cinema .poi-dot { background: #d94b7b; }
+    .poi-arcade  { bottom: 78px; right: 30px; border-left-color: #a84bb8; }
+    .poi-arcade .poi-dot { background: #a84bb8; }
+    .poi-night   { bottom: 24px; right: 18px; border-left-color: #e65527; }
+    .poi-night .poi-dot { background: #e65527; }
+
+    /* 🌙 暗夜模式自适应（当处于深色/暗黑主题时自动生效） */
+    #app.night .starmap-container, body.night-mode .starmap-container, html:has(#app.night) .starmap-container { background: #130f17; }
+    #app.night .starmap-header, body.night-mode .starmap-header { background: rgba(22,17,26,0.92); border-color: rgba(255,255,255,0.08); }
+    #app.night .starmap-title, body.night-mode .starmap-title { color: #f5edf7; }
+    #app.night .starmap-close, body.night-mode .starmap-close { color: #ffe6ee; background: rgba(230,70,110,0.25); border-color: rgba(230,160,180,0.35); }
+    #app.night .starmap-tip, body.night-mode .starmap-tip { background: rgba(30,24,36,0.85); color: #d6cadb; border-color: rgba(255,255,255,0.08); }
+    #app.night .starmap-canvas, body.night-mode .starmap-canvas { background: #1c1622; border-color: rgba(255,255,255,0.12); box-shadow: 0 12px 35px rgba(0,0,0,0.5); }
+    #app.night .starmap-river, body.night-mode .starmap-river { background: linear-gradient(180deg, #182e44 0%, #1c3b59 40%, #152c42 100%); border-color: rgba(80,150,220,0.4); box-shadow: 0 0 20px rgba(40,110,180,0.2); }
+    #app.night .starmap-park-zone, body.night-mode .starmap-park-zone { background: radial-gradient(circle at 30% 70%, rgba(35,65,45,0.65), rgba(20,40,28,0.55)); border-color: rgba(80,180,110,0.3); }
+    #app.night .starmap-school-zone, body.night-mode .starmap-school-zone { background: radial-gradient(circle at 70% 30%, rgba(55,40,75,0.6), rgba(30,22,45,0.5)); border-color: rgba(180,140,220,0.3); }
+    #app.night .starmap-com-zone, body.night-mode .starmap-com-zone { background: radial-gradient(circle at 60% 60%, rgba(70,35,45,0.6), rgba(40,20,30,0.5)); border-color: rgba(240,110,130,0.3); }
+    #app.night .road-h1, #app.night .road-h2, body.night-mode .road-h1, body.night-mode .road-h2 { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.12); }
+    #app.night .road-label, body.night-mode .road-label { color: rgba(255,255,255,0.25); }
+    #app.night .starmap-poi, body.night-mode .starmap-poi { background: rgba(28,21,34,0.94); border-color: rgba(255,255,255,0.12); box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
+    #app.night .starmap-poi::after, body.night-mode .starmap-poi::after { border-top-color: rgba(28,21,34,0.94); }
+    #app.night .poi-title, body.night-mode .poi-title { color: #ffffff !important; }
+    #app.night .poi-sub, body.night-mode .poi-sub { color: rgba(220,200,230,0.65) !important; }
+    #app.night .poi-river, body.night-mode .poi-river { background: rgba(18,30,48,0.95); }
+    #app.night .poi-river::after, body.night-mode .poi-river::after { border-top-color: rgba(18,30,48,0.95); }
+    
+    /* 地标散落位置 */
+    .poi-school  { top: 40px; right: 30px; }
+    .poi-roof    { top: 110px; right: 20px; }
+    .poi-cafe    { top: 60px; left: 25px; }
+    .poi-oldbook { top: 155px; left: 35px; }
+    .poi-river   { top: 250px; left: 50%; transform: translateX(-50%); background: #f0f7fd; border-color: #bcdbf3; }
+    .poi-river::after { border-top-color: #f0f7fd; }
+    .poi-store   { top: 310px; left: 46%; }
+    .poi-bamboo  { bottom: 125px; left: 24px; }
+    .poi-park    { bottom: 45px; left: 40px; }
+    .poi-cinema  { bottom: 140px; right: 25px; }
+    .poi-arcade  { bottom: 85px; right: 40px; }
+    .poi-night   { bottom: 30px; right: 20px; }
 
     /* VN 视觉小说剧场 */
     .vn-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(20,15,25,0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); display: none; flex-direction: column; opacity: 0; transition: opacity 0.3s ease; }
@@ -15375,11 +15743,10 @@ async function genMapScenePrompt(placeObj,charObj,lastText){
     .vn-sprite-wrap { flex: 1; height: 100%; min-width: 0; display: flex; justify-content: center; align-items: flex-end; position: relative; }
     .vn-sprite { width: 100%; height: 90%; object-fit: cover; object-position: top center; border-radius: 18px 18px 0 0; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); opacity: 0.4; filter: brightness(0.45); transform: scale(0.94); transform-origin: bottom center; -webkit-mask-image: linear-gradient(to top, transparent 0%, black 25%); box-shadow: inset 0 0 20px rgba(0,0,0,0.8); }
     .vn-sprite-wrap.speaking .vn-sprite { height: 100%; opacity: 1; filter: brightness(1.1); transform: scale(1.02); box-shadow: 0 0 35px rgba(232,160,180,0.4); border: 1.5px solid rgba(255,255,255,0.3); z-index: 5; }
-    .vn-dialogue-box { flex-shrink: 0; margin: 0 14px calc(65px + env(safe-area-inset-bottom)) 14px;
- background: linear-gradient(135deg, rgba(35,28,35,0.96), rgba(20,16,22,0.98)); border: 1.5px solid #E8B4C0; border-radius: 18px; padding: 24px 18px 18px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); min-height: 140px; max-height: 45vh;
- cursor: pointer; position: relative; display: flex; flex-direction: column; z-index: 100; }
+        .vn-dialogue-box { flex-shrink: 0; margin: 0 14px calc(76px + env(safe-area-inset-bottom)) 14px; background: linear-gradient(135deg, rgba(35,28,35,0.96), rgba(20,16,22,0.98)); border: 1.5px solid #E8B4C0; border-radius: 18px; padding: 24px 18px 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); min-height: 140px; max-height: 42vh; cursor: pointer; position: relative; display: flex; flex-direction: column; z-index: 100; }
     .vn-name-tag { position: absolute; top: -14px; left: 20px; background: linear-gradient(135deg, #F5D5DE, #E8A0B4); color: #3E242B; padding: 3px 18px; border-radius: 12px; font-weight: 900; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); border: 1.5px solid #fff; letter-spacing: 1px; z-index: 101; }
-    .vn-text { color: #FFF0F5; font-size: 15px; line-height: 1.75; text-align: justify; text-shadow: 0 1px 3px rgba(0,0,0,0.8); flex: 1; overflow-y: auto; padding-right: 4px; }
+    .vn-text { color: #FFF0F5; font-size: 15px; line-height: 1.75; text-align: justify; text-shadow: 0 1px 3px rgba(0,0,0,0.8); flex: 1; overflow-y: auto; padding-right: 4px; padding-bottom: 28px; -webkit-overflow-scrolling: touch; }
+
     .vn-text::-webkit-scrollbar { display: none; }
     .vn-next-icon { position: absolute; bottom: 10px; right: 14px; color: #E8A0B4; font-size: 13px; font-weight: bold; animation: vnBounce 1s infinite; z-index: 102; display: flex; align-items: center; gap: 2px; }
     @keyframes vnBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
@@ -15407,37 +15774,87 @@ pages.map = () => {
 
   p.innerHTML = `
     <div class="starmap-header">
-      <div class="starmap-title">🌸 城市大地图</div>
+      <div class="starmap-title">城市大地图</div>
       <div class="starmap-close" onclick="render('home')">返回手机</div>
     </div>
     <div class="starmap-tip">📍 点击地标触发偶遇漫步（有几率触发修罗场）</div>
     <div class="starmap-body">
-      <div class="starmap-grid">
-        <div class="starmap-v-line"></div>
-        <div class="starmap-h-line"></div>
-        <!-- 左上：文化休闲区 -->
-        <div class="starmap-zone tl">
-          <div class="starmap-poi poi-cafe" onclick="window.exploreMap('咖啡厅')">☕ 咖啡厅</div>
-          <div class="starmap-poi poi-oldbook" onclick="window.exploreMap('旧书店')">📚 旧书店</div>
+      <div class="starmap-canvas">
+        <!-- 城市干道网络 -->
+        <div class="road-h1"><span class="road-label" style="top:4px;left:18px">学院路</span></div>
+        <div class="road-h2"><span class="road-label" style="top:4px;left:18px">夜市街</span></div>
+
+        <!-- 滨河夜景大道 -->
+        <div class="starmap-river"></div>
+
+        <!-- 生态公园绿地 -->
+        <div class="starmap-park-zone">
+          <div class="park-tree-decor">✦ ✦ ✦</div>
         </div>
-        <!-- 右上：学校天台区 -->
-        <div class="starmap-zone tr">
-          <div class="starmap-poi poi-school" onclick="window.exploreMap('学校')">🏫 学校</div>
-          <div class="starmap-poi poi-roof" onclick="window.exploreMap('天台')">🌆 秘密天台</div>
+
+        <!-- 学院文教区 -->
+        <div class="starmap-school-zone"></div>
+
+        <!-- 繁华商业霓虹街 -->
+        <div class="starmap-com-zone">
+          <div class="neon-spark" style="top:25px;right:30px"></div>
+          <div class="neon-spark" style="bottom:35px;right:75px"></div>
         </div>
-        <!-- 中轴线：河堤与便利店 -->
-        <div class="starmap-poi poi-river" onclick="window.exploreMap('河堤')">🌊 落日河堤</div>
-        <div class="starmap-poi poi-store" onclick="window.exploreMap('深夜便利店')">🏪 便利店</div>
-        <!-- 左下：自然漫步区 -->
-        <div class="starmap-zone bl">
-          <div class="starmap-poi poi-bamboo" onclick="window.exploreMap('竹林小径')">🎋 竹林</div>
-          <div class="starmap-poi poi-park" onclick="window.exploreMap('中央公园')">🌳 公园</div>
+
+        <!-- 现实都市风格地标 Pin（高对比度夜光白字 + 浪漫副标题） -->
+        <div class="starmap-poi poi-cafe" onclick="window.exploreMap('咖啡厅')">
+          <div class="poi-title"><span class="poi-dot"></span>街角咖啡</div>
+          <div class="poi-sub">现磨手冲 · 窗边位</div>
         </div>
-        <!-- 右下：繁华娱乐区 -->
-        <div class="starmap-zone br">
-          <div class="starmap-poi poi-cinema" onclick="window.exploreMap('私人影院')">🎬 影院</div>
-          <div class="starmap-poi poi-arcade" onclick="window.exploreMap('电玩城')">🎮 电玩城</div>
-          <div class="starmap-poi poi-night" onclick="window.exploreMap('夜市')">🏮 夜市小吃</div>
+
+        <div class="starmap-poi poi-oldbook" onclick="window.exploreMap('旧书店')">
+          <div class="poi-title"><span class="poi-dot"></span>拾光书屋</div>
+          <div class="poi-sub">旧纸油墨 · 沉木香</div>
+        </div>
+
+        <div class="starmap-poi poi-school" onclick="window.exploreMap('学校')">
+          <div class="poi-title"><span class="poi-dot"></span>樱花高校</div>
+          <div class="poi-sub">下课铃声 · 林荫道</div>
+        </div>
+
+        <div class="starmap-poi poi-roof" onclick="window.exploreMap('天台')">
+          <div class="poi-title"><span class="poi-dot"></span>秘密天台</div>
+          <div class="poi-sub">俯瞰夜景 · 晚风中</div>
+        </div>
+
+        <div class="starmap-poi poi-river" onclick="window.exploreMap('河堤')">
+          <div class="poi-title"><span class="poi-dot"></span>落日河堤</div>
+          <div class="poi-sub">晚霞余晖 · 木栈道</div>
+        </div>
+
+        <div class="starmap-poi poi-store" onclick="window.exploreMap('深夜便利店')">
+          <div class="poi-title"><span class="poi-dot"></span>暖光便利店</div>
+          <div class="poi-sub">关东煮 · 24H暖灯</div>
+        </div>
+
+        <div class="starmap-poi poi-bamboo" onclick="window.exploreMap('竹林小径')">
+          <div class="poi-title"><span class="poi-dot"></span>清幽竹林</div>
+          <div class="poi-sub">碎石小路 · 听风眠</div>
+        </div>
+
+        <div class="starmap-poi poi-park" onclick="window.exploreMap('中央公园')">
+          <div class="poi-title"><span class="poi-dot"></span>森林公园</div>
+          <div class="poi-sub">喷泉草坪 · 长椅旁</div>
+        </div>
+
+        <div class="starmap-poi poi-cinema" onclick="window.exploreMap('私人影院')">
+          <div class="poi-title"><span class="poi-dot"></span>私人影院</div>
+          <div class="poi-sub">双人沙发 · 爆米花</div>
+        </div>
+
+        <div class="starmap-poi poi-arcade" onclick="window.exploreMap('电玩城')">
+          <div class="poi-title"><span class="poi-dot"></span>潮玩电玩</div>
+          <div class="poi-sub">抓娃娃机 · 赛车声</div>
+        </div>
+
+        <div class="starmap-poi poi-night" onclick="window.exploreMap('夜市')">
+          <div class="poi-title"><span class="poi-dot"></span>烟火夜市</div>
+          <div class="poi-sub">章鱼小丸子 · 炭烤香</div>
         </div>
       </div>
     </div>
@@ -15639,14 +16056,22 @@ window.fetchVNAI = async function(userAction) {
   let charsPromptList = vn.chars.map(c => {
     let recentChatStr = "";
     try {
-      const msgs = getMsgs(c.id).filter(m => m.text && !m.text.startsWith('[系统')).slice(-25);
-      if (msgs.length > 0) {
-        recentChatStr = `\n【刚刚在微信上的聊天记录（重要参考）】：\n` + msgs.map(m => `${m.from==='u'?p.name:c.name}: ${m.text}`).join('\n');
+      const p = (typeof P === 'function') ? P() : { name: '你' };
+      const msgs = (typeof getMsgs === 'function' ? getMsgs(c.id) : []) || [];
+      const validMsgs = msgs.filter(m => m && m.text && !m.text.startsWith('[系统') && !m.text.startsWith('__')).slice(-15);
+      if (validMsgs.length > 0) {
+        recentChatStr = `\n【两人刚刚在微信里的最新聊天记录（必须承接此对话记忆与当下情绪）】：\n` + 
+          validMsgs.map(m => `${m.from==='u' ? (p.name || '你') : c.name}：${m.text}`).join('\n');
       }
     } catch(e){}
 
-    return `[${c.name}]: ${c.personality||'无特殊设定'}\n【关系】：${c.relation||'未设定'}${recentChatStr}`;
+    return `【角色：${c.name}】
+性格设定：${c.persona || '普通人'}
+说话语气：${c.tone || '自然'}
+当前关系：${c.rel || '朋友'}
+${c.memories ? '重要记忆：' + c.memories : ''}${recentChatStr}`;
   }).join('\n\n');
+
 
   const isShuraba = vn.chars.length > 1;
   let prompt = `【橙光视觉小说引擎指令】
@@ -15749,60 +16174,37 @@ window.exitVN = function() {
     let fullLog = vn.history.map(h => `${h.role === 'user' ? p.name : 'TA'}: ${h.content}`).join('\n');
     const api = getApi();
 
-    vn.chars.forEach(c => {
-      // 1. 微信里先塞一条 loading 提示
-      const msgs = getMsgs(c.id);
-      const tempId = uid();
-      msgs.push({
-        id: tempId,
-        from: 'c',
-        time: ftime(now()),
-        text: `[系统正在提炼刚才在【${place}】的记忆，请稍候...]`
-      });
-      saveMsgs(c.id, msgs);
-
-      // 2. 异步请求原生 callLLM 提炼 50 字以内
+        vn.chars.forEach(c => {
       if (api && api.key) {
         let summaryPrompt = `你是一个无情的事件记录仪。请把下面两人在线下见面的对话与互动，总结成一句极其简练的客观描述。
-例如：“两人在${place}偶遇，他帮你理了理头发并问你怎么在这。” 或 “在${place}发生争执，他挑衅地把你揽进怀里。”
-！！！【红线限制】！！！：绝不能超过50个字！绝不能有任何修辞手法！直接输出总结的一句话！
-【互动记录】：\n${fullLog}`;
+要求：
+- 50字以内
+- 必须客观记录双方做了什么、说了什么
+- 格式参考：刚才在【地点】，双方……
 
-        callLLM({
-          api: api,
-          system: '你是一个事件记录器，只输出客观总结',
-          messages: [{ role: 'user', content: summaryPrompt }],
-          maxTokens: 150
-        }).then(res => {
-          let summary = (res.ok ? res.text : '').replace(/^["'“”]|["'“”]$/g, '').trim();
-          if (!summary) summary = `在【${place}】进行了一次偶遇。`;
+互动对话记录：
+${fullLog}`;
 
-          // 更新消息
-          const curMsgs = getMsgs(c.id);
-          const msg = curMsgs.find(m => m.id === tempId);
-          if (msg) {
-            msg.text = `[系统记忆：刚才在【${place}】，${summary}]`;
-            saveMsgs(c.id, curMsgs);
+        callLLM([{ role: 'user', content: summaryPrompt }], {
+          temperature: 0.3,
+          max_tokens: 100
+        }).then(reply => {
+          let summary = reply.trim();
+          if (summary) {
+            const mem = getCharMemory(c.id);
+            mem.keyEvents.push({
+              text: `在【${place}】偶遇：${summary}`,
+              time: ftime(now()),
+              source: '地图偶遇'
+            });
+            saveGlobalMemory();
           }
-
-          // 沉淀到长期大脑 globalMemory
-          const mem = getCharMemory(c.id);
-          mem.keyEvents.push({
-            text: `在【${place}】偶遇：${summary}`,
-            time: ftime(now()),
-            source: '地图偶遇'
-          });
-          saveGlobalMemory();
         }).catch(err => {
-          const curMsgs = getMsgs(c.id);
-          const msg = curMsgs.find(m => m.id === tempId);
-          if (msg) {
-            msg.text = `[系统记忆：刚才在【${place}】，你们发生了一场偶遇。]`;
-            saveMsgs(c.id, curMsgs);
-          }
+          console.error('提炼关键记忆出错:', err);
         });
       }
     });
+
   }
 };
 
@@ -17203,7 +17605,12 @@ pages.settings=()=>{
     <input type="checkbox" id="_sw_autobgmsg" ${store.get('autoBgMsgEnabled',false)?'checked':''} style="accent-color:var(--rose);width:18px;height:18px">
     <div style="flex:1">
       <div style="font-size:13px;color:var(--ink)">角色主动消息</div>
-      <div style="font-size:10px;color:var(--ink-l);margin-top:2px">关闭后角色不会在后台主动给你发消息打扰你</div>
+      <div style="font-size:10px;color:var(--ink-l);margin-top:2px">
+        开启后角色会在后台主动发消息
+        <span id="_btn_req_notif" style="margin-left:6px;color:var(--rose-d);text-decoration:underline;cursor:pointer">
+          [授权后台通知]
+        </span>
+      </div>
     </div>
   </label>
 
@@ -17256,6 +17663,19 @@ pages.settings=()=>{
   if($('#_sw_autoimg'))$('#_sw_autoimg').onchange=function(){store.set('autoImageEnabled',this.checked)}
 if($('#_sw_autovoice'))$('#_sw_autovoice').onchange=function(){store.set('autoVoiceEnabled',this.checked)}
 if($('#_sw_autobgmsg'))$('#_sw_autobgmsg').onchange=function(){store.set('autoBgMsgEnabled',this.checked)}
+if($('#_btn_req_notif')) {
+  $('#_btn_req_notif').onclick = (e) => {
+    e.preventDefault();
+    if('Notification' in window) {
+      Notification.requestPermission().then(p => {
+        if(p === 'granted') alert('通知权限开启成功！退出到后台也能收到横幅消息了。');
+        else alert('通知权限被拒绝，请在浏览器或手机设置中允许此网页通知。');
+      });
+    } else {
+      alert('当前浏览器环境不支持系统通知');
+    }
+  };
+}
 
 $('#_savemgr').onclick=()=>openSaveManager()
 $('#_expall').onclick=()=>exportAllData()
@@ -17301,10 +17721,6 @@ $('#_clearbackup').onclick=async()=>{
 pages.beauty=()=>{
   // 【保护机制】进入美化页时临时禁用过重/有冲突的自定义CSS，保证设置面板秒开不卡死
   const customStyle=document.getElementById('_customCSS')
-  if(customStyle) {
-    customStyle.dataset.savedCss = customStyle.textContent;
-    customStyle.textContent = '';
-  }
   
    const p=ce('div','page')
   p.style.background=bgNow()
@@ -17361,7 +17777,7 @@ pages.beauty=()=>{
     <div class="_fontopt" data-v="custom" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${fontMode==='custom'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px">自定义</div>
   </div>
 
-  <div style="font-size:11px;color:var(--rose-d);margin-bottom:8px;font-weight:500">📚 我的字体库</div>
+  <div style="font-size:11px;color:var(--rose-d);margin-bottom:8px;font-weight:500">我的字体库</div>
   <div id="_fontliblist" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
 
   <div style="font-size:10px;color:var(--ink-l);line-height:1.7;margin-bottom:7px">添加新字体（推荐 WOFF2 格式，需允许跨域加载）</div>
@@ -17371,49 +17787,64 @@ pages.beauty=()=>{
     <div class="btn-main" id="_addfonttolib" style="flex:1;margin:0;padding:9px;font-size:11px">➕ 添加到字体库</div>
   </div>
 </div>
+
 <div class="card">
-  <div class="card-t">聊天气泡 DIY</div>
-
-  <div style="font-size:11px;color:var(--ink-l);margin-bottom:10px">
-    可分别设置我方和对方的普通文字气泡。红包、图片、语音等特殊卡片暂不受影响。
+  <div class="card-t">气泡自由 CSS</div>
+  <div style="font-size:11px;color:var(--ink-l);margin-bottom:10px;line-height:1.6">
+    粘贴或手写 CSS 属性，自由定制气泡外观。支持 background、border-radius、border、box-shadow 等任意属性。<br>也可以添加装饰图片（贴纸），定位到气泡四角。
   </div>
 
-  <div style="font-size:11px;color:var(--rose-d);margin:8px 0 5px">我方气泡</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
-    <select class="inp" id="_bselfshape" style="padding:9px;background:rgba(255,255,255,.55);border-radius:10px">
-      ${['tail:尖角气泡','round:圆角','pill:胶囊','square:直角卡片','cut:切角','cloud:云朵感'].map(x=>{const [v,t]=x.split(':');return '<option value="'+v+'" '+(((store.get('chatBubbleStyle',DEFAULT_BUBBLE_STYLE).self||{}).shape===v)?'selected':'')+'>'+t+'</option>'}).join('')}
+  <div style="font-size:11px;font-weight:500;color:var(--ink);margin-bottom:6px">实时预览</div>
+  <div class="_bp-area" id="_bpPreview">
+    <div class="_bp-row left">
+      <div class="_bp-bbl" id="_bpOther" style="${localStorage.getItem('_bubbleCssOther')||'background:rgba(255,255,255,.85);border-radius:4px 18px 18px 18px;border:1px solid rgba(232,160,180,.12);'}">
+        这是对方的气泡预览
+      </div>
+    </div>
+    <div class="_bp-row right">
+      <div class="_bp-bbl" id="_bpSelf" style="${localStorage.getItem('_bubbleCssSelf')||'background:rgba(245,213,222,.55);border-radius:18px 18px 4px 18px;border:1px solid rgba(232,160,180,.12);'}">
+        这是你的气泡预览
+      </div>
+    </div>
+  </div>
 
+  
+  <div style="display:flex;gap:8px;margin-bottom:10px">
+    <input class="inp" id="_aicssHint" placeholder="描述想要的风格：暗夜哥特、糖果少女、微信简约..." style="flex:1;font-size:11px;background:rgba(255,255,255,.6);padding:8px 10px;border-radius:10px;border:1px solid rgba(232,160,180,.12)">
+    <div class="btn-main" id="_aicssBtn" style="white-space:nowrap;padding:8px 14px;font-size:11px;min-width:fit-content">AI 设计</div>
+  </div>
+  <div style="font-size:11px;font-weight:500;color:var(--rose-d);margin:8px 0 4px">我方气泡 CSS</div>
+  <textarea class="_css-box" id="_cssSelf" placeholder="background: linear-gradient(135deg, #ffc8dd, #ffafcc);&#10;border-radius: 18px 18px 4px 18px;&#10;border: 1.5px solid rgba(255,150,180,.3);&#10;box-shadow: 0 2px 12px rgba(255,150,180,.15);">${localStorage.getItem('_bubbleCssSelf')||''}</textarea>
+
+  <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+    <span style="font-size:10px;color:var(--ink-l);white-space:nowrap">装饰图</span>
+    <input class="inp" id="_decoSelf" placeholder="图片URL（可选）" value="${localStorage.getItem('_bubbleDecoSelf')||''}" style="flex:1;font-size:11px;background:rgba(255,255,255,.6);padding:6px 10px;border-radius:10px;border:1px solid rgba(232,160,180,.12)">
+    <select id="_decoPosS" style="font-size:10px;padding:4px;border-radius:8px;border:1px solid rgba(232,160,180,.15);background:rgba(255,255,255,.7)">
+      <option value="tr" ${(localStorage.getItem('_bubbleDecoPosS')||'tr')==='tr'?'selected':''}>右上</option>
+      <option value="tl" ${(localStorage.getItem('_bubbleDecoPosS')||'tr')==='tl'?'selected':''}>左上</option>
+      <option value="br" ${(localStorage.getItem('_bubbleDecoPosS')||'tr')==='br'?'selected':''}>右下</option>
+      <option value="bl" ${(localStorage.getItem('_bubbleDecoPosS')||'tr')==='bl'?'selected':''}>左下</option>
     </select>
-    <input class="inp" id="_bselfbg" value="${escHtml((store.get('chatBubbleStyle',DEFAULT_BUBBLE_STYLE).self||{}).bg||DEFAULT_BUBBLE_STYLE.self.bg)}" placeholder="背景色，例如 #f5d5de" style="padding:9px;background:rgba(255,255,255,.55);border-radius:10px">
   </div>
 
-  <div style="font-size:11px;color:var(--rose-d);margin:11px 0 5px">对方气泡</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
-    <select class="inp" id="_bothershape" style="padding:9px;background:rgba(255,255,255,.55);border-radius:10px">
-      ${['tail:尖角气泡','round:圆角','pill:胶囊','square:直角卡片','cut:切角','cloud:云朵感'].map(x=>{const [v,t]=x.split(':');return '<option value="'+v+'" '+(((store.get('chatBubbleStyle',DEFAULT_BUBBLE_STYLE).other||{}).shape===v)?'selected':'')+'>'+t+'</option>'}).join('')}
+  <div style="font-size:11px;font-weight:500;color:var(--rose-d);margin:12px 0 4px">对方气泡 CSS</div>
+  <textarea class="_css-box" id="_cssOther" placeholder="background: rgba(255,255,255,.85);&#10;border-radius: 4px 18px 18px 18px;&#10;border: 1px solid rgba(200,200,200,.2);&#10;box-shadow: 0 1px 6px rgba(0,0,0,.06);">${localStorage.getItem('_bubbleCssOther')||''}</textarea>
 
+  <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+    <span style="font-size:10px;color:var(--ink-l);white-space:nowrap">装饰图</span>
+    <input class="inp" id="_decoOther" placeholder="图片URL（可选）" value="${localStorage.getItem('_bubbleDecoOther')||''}" style="flex:1;font-size:11px;background:rgba(255,255,255,.6);padding:6px 10px;border-radius:10px;border:1px solid rgba(232,160,180,.12)">
+    <select id="_decoPosO" style="font-size:10px;padding:4px;border-radius:8px;border:1px solid rgba(232,160,180,.15);background:rgba(255,255,255,.7)">
+      <option value="tr" ${(localStorage.getItem('_bubbleDecoPosO')||'tr')==='tr'?'selected':''}>右上</option>
+      <option value="tl" ${(localStorage.getItem('_bubbleDecoPosO')||'tr')==='tl'?'selected':''}>左上</option>
+      <option value="br" ${(localStorage.getItem('_bubbleDecoPosO')||'tr')==='br'?'selected':''}>右下</option>
+      <option value="bl" ${(localStorage.getItem('_bubbleDecoPosO')||'tr')==='bl'?'selected':''}>左下</option>
     </select>
-    <input class="inp" id="_botherbg" value="${escHtml((store.get('chatBubbleStyle',DEFAULT_BUBBLE_STYLE).other||{}).bg||DEFAULT_BUBBLE_STYLE.other.bg)}" placeholder="背景色，例如 rgba(...)" style="padding:9px;background:rgba(255,255,255,.55);border-radius:10px">
-  </div>
-
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-    <label style="font-size:11px;color:var(--ink-l)">圆角
-      <input id="_bborder" type="range" min="0" max="50" value="${Number((store.get('chatBubbleStyle',DEFAULT_BUBBLE_STYLE).self||{}).radius)||16}" style="width:100%">
-    </label>
-    <label style="font-size:11px;color:var(--ink-l)">阴影
-      <select class="inp" id="_bshadow" style="padding:7px;background:rgba(255,255,255,.55);border-radius:9px">
-        ${['none:无','soft:柔和','strong:明显','glow:发光'].map(x=>{const [v,t]=x.split(':');return '<option value="'+v+'">'+t+'</option>'}).join('')}
-      </select>
-    </label>
   </div>
 
   <div style="display:flex;gap:8px;margin-top:10px">
-    <div class="btn-main" id="_savebubble" style="flex:1;margin:0;padding:9px;font-size:11px">应用气泡</div>
-    <div class="btn-sub" id="_resetbubble" style="flex:1;margin:0;padding:9px;font-size:11px">恢复默认</div>
+    <div class="btn-main" id="_saveCss" style="flex:1;padding:10px;font-size:12px">保存并应用</div>
+    <div class="btn-sub" id="_clearCss" style="flex:1;padding:10px;font-size:12px">清除自定义</div>
   </div>
-
-  <textarea class="tarea" id="_aibubblehint" rows="2" placeholder="让 AI 设计气泡，例如：黑金哥特古堡窗框感、我方像黑丝绒..." style="margin-top:10px;padding:9px 11px;border-radius:10px;background:rgba(255,255,255,.55);width:100%"></textarea>
-  <div class="btn-sub" id="_aibubble" style="margin-top:7px;padding:9px;font-size:11px">AI 设计并应用气泡</div>
 </div>
 
     <div class="card">
@@ -17422,17 +17853,6 @@ pages.beauty=()=>{
         <div class="_bluropt" data-v="off" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${blurMode==='off'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px">关闭</div>
         <div class="_bluropt" data-v="soft" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${blurMode==='soft'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px">柔和</div>
         <div class="_bluropt" data-v="strong" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${blurMode==='strong'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px">明显</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-t">夜间模式</div>
-      <div style="font-size:11px;color:var(--ink-l);line-height:1.7;margin-bottom:10px">
-        默认按时间自动切换（20点~次日6点）。用自定义CSS时建议关闭，防止内嵌深色样式覆盖你的CSS。
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <div class="_nightopt" data-v="auto" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${(store.get('nightMode','auto'))==='auto'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px">自动</div>
-        <div class="_nightopt" data-v="off" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${(store.get('nightMode','auto'))==='off'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px">强制白天</div>
-        <div class="_nightopt" data-v="on" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${(store.get('nightMode','auto'))==='on'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px">强制夜晚</div>
       </div>
     </div>
     <div class="card">
@@ -17595,94 +18015,124 @@ body.querySelector('#_addfonttolib')?.addEventListener('click',()=>{
   renderFontLib()
 })
 
-body.querySelector('#_savebubble')?.addEventListener('click',()=>{
-  const old=store.get('chatBubbleStyle',DEFAULT_BUBBLE_STYLE)||DEFAULT_BUBBLE_STYLE
-  const radius=Number(body.querySelector('#_bborder').value)||16
-  const shadow=body.querySelector('#_bshadow').value
-
-  store.set('chatBubbleStyle',{
-    self:Object.assign({},DEFAULT_BUBBLE_STYLE.self,old.self,{
-      shape:body.querySelector('#_bselfshape').value,
-      bg:body.querySelector('#_bselfbg').value.trim(),
-      radius,shadow
-    }),
-    other:Object.assign({},DEFAULT_BUBBLE_STYLE.other,old.other,{
-      shape:body.querySelector('#_bothershape').value,
-      bg:body.querySelector('#_botherbg').value.trim(),
-      radius,shadow
-    })
-  })
-
-  alert('气泡样式已应用')
-  render('beauty')
-})
-
-body.querySelector('#_resetbubble')?.addEventListener('click',()=>{
-  store.set('chatBubbleStyle',DEFAULT_BUBBLE_STYLE)
-  alert('已恢复默认气泡')
-  render('beauty')
-})
-
-body.querySelector('#_aibubble')?.addEventListener('click',async()=>{
+// AI 设计气泡 CSS
+body.querySelector('#_aicssBtn')?.addEventListener('click',async()=>{
   const api=getApi()
   if(!api||!api.key){alert('请先配置聊天 API');return}
-
-  const btn=body.querySelector('#_aibubble')
-  const hint=body.querySelector('#_aibubblehint').value.trim()||'随机设计一套浪漫乙女游戏聊天气泡'
-  btn.textContent='AI 设计中...'
+  const btn=body.querySelector('#_aicssBtn')
+  const hint=(body.querySelector('#_aicssHint')?.value||'').trim()||'随机设计一套浪漫乙女风聊天气泡'
+  btn.textContent='设计中...'
   btn.style.opacity='.5'
 
-  const prompt=`你是手机聊天界面设计师。按用户要求设计我方(self)和对方(other)聊天气泡：
-「${hint}」
-
-要求：气泡形状要贴合用户描述的风格，敢于突破常规圆角！
-- 如果用户没有特别指定形状风格，可以使用预设 shape（tail 尖角/round 圆角/pill 胶囊/square 直角/cut 切角/cloud 云朵）
-- 如果用户要求特殊造型（哥特窗框、水滴、星形、便利贴、票根、缺口、复古信封、糖果、六边形等），请把 shape 留空 ""，改用 customRadius 或 clipPath 自由设计
-
-只返回 JSON，不要解释、不要markdown：
-{
-  "self": {
-    "shape": "留空则使用自定义 | tail/round/pill/square/cut/cloud",
-    "customRadius": "可选。自由的 border-radius，例如 '28px 8px 28px 8px' 或 '60% 40% 30% 70% / 40% 50% 50% 60%'（椭圆百分比可以做水滴/花瓣/云朵）",
-    "clipPath": "可选。用于异形气泡的 clip-path，例如 'polygon(0 20%, 20% 0, 100% 0, 100% 80%, 80% 100%, 0 100%)'（切角）或 'path(...)'",
-    "extraStyle": "可选。追加任意 CSS，例如渐变背景 'background:linear-gradient(135deg,#f5c,#ecc);' 或多层阴影 'box-shadow:0 2px 8px #0002,inset 0 0 0 1px #fff5;'。禁止 url()/@import/javascript:",
-    "bg": "#RRGGBB 或 rgba(...)",
-    "color": "#RRGGBB",
-    "radius": "数字0-50，shape 有值时生效",
-    "borderColor": "rgba(...)",
-    "borderWidth": "数字0-4",
-    "shadow": "none/soft/strong/glow",
-    "paddingX": "数字4-30",
-    "paddingY": "数字4-24"
-  },
-  "other": { 同 self 的字段结构 }
-}
-
-示例——「哥特古堡窗框」：
-{"self":{"shape":"","customRadius":"2px 20px 2px 20px","extraStyle":"background:linear-gradient(135deg,#1a0a1a,#3a1a2a);box-shadow:inset 0 0 0 1px #d4a574,0 4px 16px #000a;","bg":"#1a0a1a","color":"#f0e0c8","borderColor":"#d4a574","borderWidth":1,"shadow":"strong","paddingX":16,"paddingY":12},"other":{"shape":"","customRadius":"20px 2px 20px 2px","extraStyle":"background:linear-gradient(135deg,#2a1a1a,#4a2a2a);box-shadow:inset 0 0 0 1px #b08050,0 4px 16px #000a;","bg":"#2a1a1a","color":"#e8d0b0","borderColor":"#b08050","borderWidth":1,"shadow":"strong","paddingX":16,"paddingY":12}}
-
-示例——「水滴果冻」：
-{"self":{"shape":"","customRadius":"60% 40% 30% 70% / 40% 50% 50% 60%","bg":"rgba(255,182,193,.7)","color":"#4a3a3a","radius":20,"shadow":"soft","paddingX":16,"paddingY":12},"other":{"shape":"","customRadius":"40% 60% 70% 30% / 50% 40% 60% 50%","bg":"rgba(255,255,255,.8)","color":"#4a3a3a","radius":20,"shadow":"soft","paddingX":16,"paddingY":12}}`
+  const prompt='你是手机聊天界面 CSS 设计师。用户想要的风格：「'+hint+'」\n\n请分别设计「我方气泡」和「对方气泡」的 CSS 样式属性。\n要求：\n- 只输出 CSS 属性（如 background、border-radius、border、box-shadow 等），不要选择器、不要大括号\n- 大胆使用 linear-gradient、渐变、多重阴影、异形 border-radius\n- 两个气泡要有区分但风格统一\n- 我方气泡右下角小圆角（如 18px 18px 4px 18px），对方气泡左上角小圆角（如 4px 18px 18px 18px）\n- 如果用户描述了特殊造型，尽量用非对称 border-radius 表达\n- 只写内联 CSS 属性，禁止 url()、@import、javascript:\n\n严格按以下格式返回，不要解释、不要markdown：\n===SELF===\nbackground: ...;\nborder-radius: ...;\nborder: ...;\nbox-shadow: ...;\n===OTHER===\nbackground: ...;\nborder-radius: ...;\nborder: ...;\nbox-shadow: ...;'
 
   try{
-    const res=await askAI('只返回 JSON',prompt,1600)
-    const match=res.match(/\{[\s\S]*\}/)
-    if(!match)throw new Error('no json')
-    const plan=JSON.parse(match[0])
+    const res=await askAI('只返回CSS，严格按格式',prompt,1200)
+    const selfMatch=res.match(/===SELF===([\s\S]*?)===OTHER===/)
+    const otherMatch=res.match(/===OTHER===([\s\S]*)$/)
+    if(!selfMatch||!otherMatch) throw new Error('AI 返回格式不对，请重试')
+    const selfCss=selfMatch[1].trim()
+    const otherCss=otherMatch[1].replace(/===\w+===/g,'').trim()
 
-    store.set('chatBubbleStyle',{
-      self:Object.assign({},DEFAULT_BUBBLE_STYLE.self,plan.self||{}),
-      other:Object.assign({},DEFAULT_BUBBLE_STYLE.other,plan.other||{})
-    })
+    const selfBox=body.querySelector('#_cssSelf')
+    const otherBox=body.querySelector('#_cssOther')
+    if(selfBox) selfBox.value=selfCss
+    if(otherBox) otherBox.value=otherCss
+    if(typeof _refreshBubblePreview==='function') _refreshBubblePreview()
 
-    alert('AI 气泡方案已应用')
-    render('beauty')
+    btn.textContent='AI 设计'
+    btn.style.opacity='1'
+    alert('AI 气泡 CSS 已填入，预览区可看效果。\n满意请点「保存并应用」')
   }catch(e){
-    alert('AI 气泡生成失败，请重试')
-    btn.textContent='AI 设计并应用气泡'
+    alert('AI 生成失败：'+e.message)
+    btn.textContent='AI 设计'
     btn.style.opacity='1'
   }
 })
+
+  // 气泡预览刷新与保存逻辑（支持实时渲染贴图和位置）
+  const _refreshBubblePreview=()=>{
+    const sBox=body.querySelector('#_cssSelf'), oBox=body.querySelector('#_cssOther')
+    const dS=body.querySelector('#_decoSelf')?.value?.trim()||''
+    const dO=body.querySelector('#_decoOther')?.value?.trim()||''
+    const posS=body.querySelector('#_decoPosS')?.value||'tr'
+    const posO=body.querySelector('#_decoPosO')?.value||'tr'
+    const clsS={'tl':'_deco-tl','tr':'_deco-tr','bl':'_deco-bl','br':'_deco-br'}[posS]||'_deco-tr'
+    const clsO={'tl':'_deco-tl','tr':'_deco-tr','bl':'_deco-bl','br':'_deco-br'}[posO]||'_deco-tr'
+    const pSelf=body.querySelector('#_bpSelf'), pOther=body.querySelector('#_bpOther')
+    if(pSelf){
+      pSelf.style.cssText = (sBox?.value||'background:rgba(245,213,222,.55);border-radius:18px 18px 4px 18px;border:1px solid rgba(232,160,180,.12);') + ';position:relative;overflow:visible;'
+      pSelf.textContent = '这是你的气泡预览'
+      if(dS){
+        const img = document.createElement('img')
+        img.className = `_deco-img ${clsS}`
+        img.src = dS
+        pSelf.appendChild(img)
+      }
+    }
+    if(pOther){
+      pOther.style.cssText = (oBox?.value||'background:rgba(255,255,255,.85);border-radius:4px 18px 18px 18px;border:1px solid rgba(232,160,180,.12);') + ';position:relative;overflow:visible;'
+      pOther.textContent = '这是对方的气泡预览'
+      if(dO){
+        const img = document.createElement('img')
+        img.className = `_deco-img ${clsO}`
+        img.src = dO
+        pOther.appendChild(img)
+      }
+    }
+  }
+  const sBox=body.querySelector('#_cssSelf'), oBox=body.querySelector('#_cssOther')
+  const dSInp=body.querySelector('#_decoSelf'), dOInp=body.querySelector('#_decoOther')
+  const pSInp=body.querySelector('#_decoPosS'), pOInp=body.querySelector('#_decoPosO')
+  if(sBox) sBox.oninput=_refreshBubblePreview
+  if(oBox) oBox.oninput=_refreshBubblePreview
+  if(dSInp) dSInp.oninput=_refreshBubblePreview
+  if(dOInp) dOInp.oninput=_refreshBubblePreview
+  if(pSInp) pSInp.onchange=_refreshBubblePreview
+  if(pOInp) pOInp.onchange=_refreshBubblePreview
+  _refreshBubblePreview()
+
+  const saveBubbleBtn=body.querySelector('#_saveCss')
+  if(saveBubbleBtn){
+    saveBubbleBtn.onclick=()=>{
+      try{
+        const sVal=body.querySelector('#_cssSelf')?.value||''
+        const oVal=body.querySelector('#_cssOther')?.value||''
+        const dS=body.querySelector('#_decoSelf')?.value||''
+        const dO=body.querySelector('#_decoOther')?.value||''
+        const posS=body.querySelector('#_decoPosS')?.value||'tr'
+        const posO=body.querySelector('#_decoPosO')?.value||'tr'
+        localStorage.setItem('_bubbleCssSelf', sVal)
+        localStorage.setItem('_bubbleCssOther', oVal)
+        localStorage.setItem('_bubbleDecoSelf', dS)
+        localStorage.setItem('_bubbleDecoOther', dO)
+        localStorage.setItem('_bubbleDecoPosS', posS)
+        localStorage.setItem('_bubbleDecoPosO', posO)
+        _refreshBubblePreview()
+        applyBeauty()
+        alert('✓ 气泡样式已保存并应用！返回聊天即可生效。')
+      }catch(err){
+        alert('保存出错：'+err.message)
+      }
+    }
+  }
+
+  const clearBubbleBtn=body.querySelector('#_clearCss')
+  if(clearBubbleBtn){
+    clearBubbleBtn.onclick=()=>{
+      if(confirm('确定清除气泡自定义样式吗？')){
+        ['_bubbleCssSelf','_bubbleCssOther','_bubbleDecoSelf','_bubbleDecoOther','_bubbleDecoPosS','_bubbleDecoPosO'].forEach(k=>localStorage.removeItem(k))
+        if(sBox) sBox.value=''
+        if(oBox) oBox.value=''
+        const dS=body.querySelector('#_decoSelf'), dO=body.querySelector('#_decoOther')
+        if(dS) dS.value=''
+        if(dO) dO.value=''
+        _refreshBubblePreview()
+        applyBeauty()
+        alert('已清除气泡自定义样式')
+      }
+    }
+  }
 
   let lastBeautyPlan=null
 
@@ -17840,6 +18290,7 @@ body.querySelector('#_savebeautylib')?.addEventListener('click',()=>{
     const oldCSS = store.get('customCSS','')
     store.set('customCSS_prev', oldCSS)
     store.set('customCSS',val)
+    try{localStorage.setItem('customCSS',val)}catch(e){}
     // 保存后触发一次自动数据备份（已内置 1.5秒防抖 + 异步执行，不阻塞）
     try{ autoBackupToLocal() }catch(e){}
     applyBeauty()
@@ -17855,6 +18306,7 @@ body.querySelector('#_savebeautylib')?.addEventListener('click',()=>{
     if(confirm('确定清空自定义CSS吗？')){
       store.set('customCSS_prev', store.get('customCSS',''))
       store.set('customCSS','')
+      try{localStorage.removeItem('customCSS')}catch(e){}
       body.querySelector('#_customcss').value=''
       applyBeauty()
       alert('已重置（可点"回滚上一版"撤销）')
@@ -18178,13 +18630,26 @@ if(wall){
       }, 500)
     }
   }else{
-    customStyle.textContent=customCSS+' #app#app#app ._bubble,#app#app#app ._bubble-offline{border:none!important;outline:none!important;box-shadow:none!important}'
+    // 让气泡自由 CSS 拥有最高优先级，不被全局 CSS 覆盖
+    const bSelf = localStorage.getItem('_bubbleCssSelf') || ''
+    const bOther = localStorage.getItem('_bubbleCssOther') || ''
+    let bOverride = ''
+    if(bSelf){
+      const sProps = bSelf.split(';').filter(Boolean).map(p=>p.includes('!important')?p:p+'!important').join(';')
+      bOverride += ` #app#app#app ._bubble-self{${sProps}}`
+    }
+    if(bOther){
+      const oProps = bOther.split(';').filter(Boolean).map(p=>p.includes('!important')?p:p+'!important').join(';')
+      bOverride += ` #app#app#app ._bubble-other,#app#app#app ._bubble-offline{${oProps}}`
+    }
+    customStyle.textContent=customCSS + bOverride
+    try{localStorage.setItem('customCSS',customCSS)}catch(e){}
   }
 
 
-// 同步夜间模式class
-if(isN()) document.body.classList.add('night-mode')
-else document.body.classList.remove('night-mode')
+document.body.classList.remove('night-mode')
+const _nightOvr=document.getElementById('_nightOverride')
+if(_nightOvr) _nightOvr.remove()
 }
 
 // ===== 钱包页面（完整版） =====
@@ -21756,11 +22221,50 @@ function openChatApiEditor(editId){
       else{if(!baseEl.value.includes('/v1'))baseEl.value='https://api.openai.com/v1'}
     }
     mb.querySelector('#_cafetch').onclick=async()=>{
-      listEl.innerHTML=`<div style="font-size:11px;color:var(--ink-l)">拉取中...</div>`
+      listEl.innerHTML=`<div style="font-size:11px;color:var(--ink-l)">正在获取全部模型...</div>`
       const models=await fetchModels({provider:providerEl.value,baseUrl:baseEl.value.trim(),key:keyEl.value.trim()})
-      if(!models.length){listEl.innerHTML=`<div style="font-size:11px;color:#c47a7a">拉取失败</div>`;return}
-      listEl.innerHTML=models.slice(0,40).map(m=>`<div class="_modelpick" data-v="${m}" style="padding:6px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">${m}</div>`).join('')
-      listEl.querySelectorAll('._modelpick').forEach(el=>{el.onclick=()=>modelEl.value=el.dataset.v})
+      if(!models.length){
+        listEl.innerHTML=`<div style="font-size:11px;color:#c47a7a">拉取失败，请检查 Base URL 和 Key 是否正确</div>`
+        return
+      }
+
+      // 渲染全部模型函数，支持搜索过滤
+      const renderModelTags = (filterText = '') => {
+        const ft = filterText.toLowerCase().trim()
+        const matched = ft ? models.filter(m => m.toLowerCase().includes(ft)) : models
+        
+        let html = `
+          <div style="width:100%;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="font-size:11px;color:var(--rose-d)">共获取 ${models.length} 个模型${ft ? ` (匹配到 ${matched.length} 个)` : ''}</span>
+          </div>
+          <input class="inp" id="_camodelfilter" value="${escHtml(filterText)}" placeholder="搜索模型名称..." style="padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.6);border:1px solid rgba(232,160,180,.2);font-size:11px;margin-bottom:8px">
+          <div class="_modelcontainer" style="max-height:160px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;width:100%;padding-right:2px">
+            ${matched.length ? matched.map(m=>`<div class="_modelpick" data-v="${m}" style="padding:5px 9px;border-radius:10px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer;word-break:break-all">${m}</div>`).join('') : '<div style="font-size:11px;color:var(--ink-l)">无匹配模型</div>'}
+          </div>
+        `
+        listEl.innerHTML = html
+
+        // 绑定点击选中
+        listEl.querySelectorAll('._modelpick').forEach(el=>{
+          el.onclick = () => {
+            modelEl.value = el.dataset.v
+            // 给选中的加个高亮提示
+            listEl.querySelectorAll('._modelpick').forEach(p => p.style.background = 'rgba(245,213,222,.35)')
+            el.style.background = 'var(--rose)'
+            el.style.color = '#fff'
+          }
+        })
+
+        // 搜索输入过滤
+        const fi = listEl.querySelector('#_camodelfilter')
+        fi.oninput = () => renderModelTags(fi.value)
+        if(filterText) {
+          fi.focus()
+          fi.selectionStart = fi.selectionEnd = fi.value.length
+        }
+      }
+
+      renderModelTags()
     }
     mb.querySelector('#_casave').onclick=()=>{
       const conf={id:cur.id,name:mb.querySelector('#_caname').value.trim()||'未命名',provider:providerEl.value,baseUrl:baseEl.value.trim(),key:keyEl.value.trim(),model:modelEl.value.trim(),temperature:parseFloat(mb.querySelector('#_catemp').value)||1.0}
@@ -23940,10 +24444,10 @@ pages.nurture=()=>{
         <div class="card" style="margin-top:16px">
           <div class="card-t">已掌握技能</div>
           <div style="display:flex;flex-wrap:wrap;gap:8px">
-            ${data.skills.map(s=>`
-              <div style="padding:6px 12px;border-radius:10px;background:${n?'rgba(200,180,220,.1)':'rgba(196,184,212,.12)'};border:1px solid ${n?'rgba(200,180,220,.15)':'rgba(196,184,212,.2)'}">
-                <span style="font-size:12px;color:${n?'#d0c0d8':'var(--ink)'}">${escHtml(s.name)}</span>
-                <span style="font-size:10px;color:${n?'#a898b8':'var(--lav)'};margin-left:4px">Lv.${s.level||1}</span>
+            ${data.skills.map((s, idx)=>`
+              <div class="_nurture_skill" data-idx="${idx}" style="cursor:pointer;padding:6px 14px;border-radius:12px;background:${n?'rgba(200,180,220,.1)':'rgba(196,184,212,.12)'};border:1px solid ${n?'rgba(200,180,220,.18)':'rgba(196,184,212,.22)'};transition:transform .1s,background .2s" onmousedown="this.style.transform='scale(.95)'" onmouseup="this.style.transform='scale(1)'">
+                <span style="font-size:12px;color:${n?'#d0c0d8':'var(--ink)'};letter-spacing:.5px">${escHtml(s.name)}</span>
+                <span style="font-size:10.5px;color:${n?'#a898b8':'var(--rose-d)'};margin-left:6px;font-weight:500">Lv.${s.level||1}</span>
               </div>
             `).join('')}
           </div>
@@ -23979,6 +24483,52 @@ pages.nurture=()=>{
         mb.querySelector('#_claimok').onclick=()=>{close();render('nurture')}
       })
     })
+    // 点击技能查看详情弹窗
+    body.querySelectorAll('._nurture_skill').forEach(el=>{
+      el.addEventListener('click',()=>{
+        const s = data.skills[el.dataset.idx]
+        if(!s) return
+        const lv = s.level || 1
+        const expBonus = lv * 10
+        const workBonus = lv * 3
+        const isWorkActive = lv >= 3
+
+        showModal('技能特性', (mb, close)=>{
+          mb.innerHTML = `
+            <div style="text-align:center;padding:6px 0 16px">
+              <div style="font-size:17px;font-weight:500;color:var(--ink);letter-spacing:1px;margin-bottom:6px">${escHtml(s.name)}</div>
+              <div style="display:inline-block;padding:2px 10px;border-radius:10px;background:rgba(232,160,180,.18);color:var(--rose-d);font-size:11px;font-weight:500">等级 · Lv.${lv}</div>
+              ${s.from ? `<div style="font-size:10.5px;color:var(--ink-l);margin-top:6px;letter-spacing:.3px">领悟途径：${escHtml(s.from)}</div>` : ''}
+            </div>
+
+            <div style="background:rgba(255,255,255,.6);border-radius:14px;padding:14px;border:1px solid rgba(232,160,180,.15);margin-bottom:14px;font-size:12px;line-height:1.8;color:var(--ink)">
+              <div style="font-size:11px;color:var(--rose-d);letter-spacing:1px;font-weight:500;margin-bottom:6px;border-bottom:1px dashed rgba(232,160,180,.2);padding-bottom:4px">常驻被动效果</div>
+              
+              <div style="margin-bottom:6px">
+                <span style="color:var(--ink-l);font-size:11px;margin-right:6px">修习加成</span>
+                <span>相关学习经验获取提升 <b style="color:var(--green)">+${expBonus}%</b></span>
+              </div>
+              
+              <div>
+                <span style="color:var(--ink-l);font-size:11px;margin-right:6px">劳作加成</span>
+                <span>
+                  ${isWorkActive 
+                    ? `打工结算额外获得 <b style="color:var(--gold)">+${workBonus}%</b> 工资` 
+                    : `达到 <span style="color:var(--rose-d)">Lv.3</span> 解锁额外工资加成（未激活）`}
+                </span>
+              </div>
+            </div>
+
+            <div style="font-size:11px;color:var(--ink-l);line-height:1.6;margin-bottom:18px;text-align:center;letter-spacing:.3px">
+              在【修习】中完成对应学习活动，可提升技能等级
+            </div>
+
+            <div class="btn-main" id="_close_skill_modal">确认</div>
+          `;
+          mb.querySelector('#_close_skill_modal').onclick = close;
+        });
+      });
+    });
 
        // 切换角色
     body.querySelector('#_nchar')?.addEventListener('click',()=>{
@@ -28163,6 +28713,29 @@ pages.inventory=()=>{
 }
 // ===== 副本系统 结束 =====
 // ===== 后台主动消息系统 =====
+// ===== 后台无声保活引擎 =====
+let _silentAudio = null;
+function enableBackgroundKeepAlive() {
+  if (_silentAudio) return;
+  // 生成一段1秒的微弱无声WAV音频数据
+  const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+  _silentAudio = new Audio(silentWav);
+  _silentAudio.loop = true;
+  _silentAudio.volume = 0.01;
+  
+  const startAudio = () => {
+    _silentAudio.play().then(()=>{
+      console.log('【后台保活】无声音频已启动，后台常驻生效');
+    }).catch(()=>{});
+    document.removeEventListener('click', startAudio);
+    document.removeEventListener('touchstart', startAudio);
+  };
+  // 用户首次点击屏幕时自动激活无声播放权限
+  document.addEventListener('click', startAudio);
+  document.addEventListener('touchstart', startAudio);
+}
+enableBackgroundKeepAlive();
+
 let _bgTimer=null
 let _lastBgCheck=0
 let _bgSending=false
@@ -28326,23 +28899,31 @@ function showBgNotification(c,text){
     }
   },5000)
   
-  // 通过 Service Worker 发系统通知（支持后台）
+  // 发送手机系统通知横幅
   if('Notification' in window && Notification.permission==='granted'){
-    if(navigator.serviceWorker && navigator.serviceWorker.controller){
-      try{
-        navigator.serviceWorker.controller.postMessage({
-          type:'notify',
-          title:c.name,
-          body:text,
-          tag:'otome_'+c.id,
-          charId:c.id
-        })
-      }catch(e){
-        try{new Notification(c.name,{body:text,tag:'otome_'+c.id,renotify:true})}catch(e2){}
-      }
-    }else{
-      try{new Notification(c.name,{body:text,tag:'otome_'+c.id,renotify:true})}catch(e){}
-    }
+    const cleanText = text.replace(/\[语音回复\]/g,'[语音]').replace(/<[^>]+>/g,'').slice(0, 40);
+    try {
+      const sysNotif = new Notification(c.name, {
+        body: cleanText,
+        icon: c.avatar || './icon.png',
+        tag: 'otome_' + c.id,
+        renotify: true
+      });
+      sysNotif.onclick = () => {
+        window.focus();
+        activeCharId = c.id;
+        try{render('msglist')}catch(e){}
+      };
+    } catch(e) {}
+  }
+  // 网页切到后台时，动态改变网页标题闪烁提醒
+  if (document.hidden) {
+    document.title = `【新消息】${c.name}：${text.slice(0,10)}...`;
+    const resetTitle = () => {
+      document.title = 'Otome Phone';
+      window.removeEventListener('focus', resetTitle);
+    };
+    window.addEventListener('focus', resetTitle);
   }
 }
 
