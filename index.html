@@ -4228,18 +4228,21 @@ function showNiceConfirm(text, onOk, onCancel){
 }
 // 全局劫持 confirm() → 自动转为莫兰迪粉白弹窗
 (function(){
-  var _el=null,_pass=0,_seen=0
+  var _el=null,_pass=0,_seen=0,_pending=false
   document.addEventListener('click',function(e){
     _seen=0
-    if(!e._r){_el=e.target;_pass=0}
+    if(!e._r && !_pending){_el=e.target;_pass=0}
   },true)
   window.confirm=function(msg){
     _seen++
     if(_seen<=_pass)return true
     var n=_seen
+    _pending=true
     showNiceConfirm(msg.replace(/^⚠️\s*/,'').replace(/^👀\s*/,'').replace(/^🚑\s*/,''),function(){
-      _pass=n;_seen=0
+      _pass=n;_seen=0;_pending=false
       if(_el){var ev=new MouseEvent('click',{bubbles:true,cancelable:true});ev._r=true;_el.dispatchEvent(ev)}
+    },function(){
+      _pending=false
     })
     return false
   }
