@@ -4207,6 +4207,25 @@ function topBar(title,backTo,forceBack){
   b.querySelector('#_bk').onclick=()=> forceBack ? render(backTo||'home') : goBack(backTo||'home')
   return b
 }
+function showNiceConfirm(text, onOk, onCancel){
+  const mask = ce('div', 'modal-mask');
+  mask.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);backdrop-filter:blur(4px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;animation:fadeIn .2s';
+  const n = isN();
+  const box = ce('div');
+  box.style.cssText = `width:100%;max-width:320px;background:${n?'#2a2035':'#fef8f4'};border-radius:20px;padding:22px 20px 18px;border:1px solid ${n?'rgba(200,180,220,.1)':'rgba(232,160,180,.2)'};box-shadow:0 12px 36px rgba(0,0,0,.15);text-align:center;font-family:'Noto Serif SC',serif;`;
+  
+  box.innerHTML = `
+    <div style="font-size:14px;color:${n?'#e0d0e8':'var(--ink)'};line-height:1.7;letter-spacing:1px;white-space:pre-wrap;margin-bottom:20px">${escHtml(text)}</div>
+    <div style="display:flex;gap:12px">
+      <div id="_nc_cancel" style="flex:1;padding:10px;border-radius:16px;background:${n?'rgba(255,255,255,.05)':'rgba(255,255,255,.6)'};border:1px solid ${n?'rgba(200,180,220,.15)':'rgba(232,160,180,.25)'};color:${n?'#c0b0c8':'var(--ink-l)'};font-size:12.5px;letter-spacing:1px;cursor:pointer">取消</div>
+      <div id="_nc_ok" style="flex:1;padding:10px;border-radius:16px;background:linear-gradient(135deg,var(--rose-l),#f0c8d4);color:var(--ink);font-size:12.5px;font-weight:500;letter-spacing:1px;cursor:pointer;box-shadow:0 2px 8px rgba(232,160,180,.25)">确定</div>
+    </div>
+  `;
+  mask.appendChild(box);
+  app.appendChild(mask);
+  box.querySelector('#_nc_cancel').onclick = () => { mask.remove(); if(onCancel) onCancel(); };
+  box.querySelector('#_nc_ok').onclick = () => { mask.remove(); if(onOk) onOk(); };
+}
 function showModal(title,buildFn){
   const mask=ce('div','modal-mask'),box=ce('div','modal-box'),n=isN()
   if(n){
@@ -11453,7 +11472,6 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
           <div class="btn-sub" id="_lp_cancel" style="margin-top:10px">取消</div>
         `
         mb.querySelector('#_lp_del').onclick=()=>{
-          if(!confirm('确定删除这条消息？')) return
           const a=getMsgs()
           const dm=a[idx]
           if(dm&&dm.from==='c'){
@@ -11468,20 +11486,21 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
         }
         mb.querySelector('#_lp_delafter').onclick=()=>{
           const cnt=arr.length-idx
-          if(!confirm(`确定删除从第 ${idx+1} 条开始的 ${cnt} 条消息？`)) return
-          const a=getMsgs()
-          const mem=getCharMemory(activeCharId)
-          for(let i=a.length-1;i>=idx;i--){
-            const dm=a[i]
-            if(dm&&dm.from==='c'){
-              const snip=(dm.text||'').slice(0,25)
-              mem.keyEvents=mem.keyEvents.filter(ev=>!ev.text.includes(snip))
+          showNiceConfirm(`确定删除从第 ${idx+1} 条开始的 ${cnt} 条消息？`, ()=>{
+            const a=getMsgs()
+            const mem=getCharMemory(activeCharId)
+            for(let i=a.length-1;i>=idx;i--){
+              const dm=a[i]
+              if(dm&&dm.from==='c'){
+                const snip=(dm.text||'').slice(0,25)
+                mem.keyEvents=mem.keyEvents.filter(ev=>!ev.text.includes(snip))
+              }
             }
-          }
-          mem.lastUpdate=Date.now()
-          saveGlobalMemory()
-          a.splice(idx)
-          saveMsgs(activeCharId,a);close();render('chat')
+            mem.lastUpdate=Date.now()
+            saveGlobalMemory()
+            a.splice(idx)
+            saveMsgs(activeCharId,a);close();render('chat')
+          })
         }
         mb.querySelector('#_lp_select').onclick=()=>{close();enterSelectMode()}
         mb.querySelector('#_lp_cancel').onclick=close
