@@ -220,8 +220,8 @@ const escHtml=s=>{if(!s)return'';const d=document.createElement('div');d.textCon
 const now=()=>new Date(),pad=n=>(n<10?'0':'')+n,ftime=d=>pad(d.getHours())+':'+pad(d.getMinutes())
 const fdate=d=>{const w='日一二三四五六'[d.getDay()];return(d.getMonth()+1)+'月'+d.getDate()+'日 星期'+w}
 const greet=()=>{const h=now().getHours();return h<6?'夜深了':h<9?'早安':h<12?'上午好':h<14?'午安':h<18?'下午好':h<21?'晚上好':'夜深了'}
-const tod=()=>'day'
-const isN=()=>false
+const tod=()=>{const h=new Date().getHours();return h<6?'night':h<8?'dawn':h<17?'day':h<19?'dusk':'night'}
+const isN=()=>document.getElementById('app')?.classList.contains('night')||false
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6)// ===== 酒馆卡解析与一机一码激活系统 =====
 function calcActivationCode(mc) {
     let hash = 0;
@@ -7374,7 +7374,8 @@ window.getSmartChatReply = async (userTexts, c) => {
       let cleanText = m.text.replace(/[(（]([^:：()]+)[:：]https?:\/\/[^()]+[)）]/g, '[发了一个表情包：$1]');
       // 历史消息剥离 <status> 块，避免浪费上下文
       cleanText = cleanText
-        .replace(/<(?:status|ztl|plot|StatusBar)\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar)>/gi, '')
+        .replace(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status)>/gi, '')
+        .replace(/<(?:review|思维链cot|cot|thinking|思考)\b[^>]*?>[\s\S]*?<\/(?:review|思维链cot|cot|thinking|思考)>/gi, '')
         .replace(/<details\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar)[\s\S]*?<\/details>/gi, '')
         .trim();
       return { role: m.from==='u'?'user':'assistant', content: q + cleanText };
@@ -7407,9 +7408,11 @@ window.getSmartChatReply = async (userTexts, c) => {
       } else if (c.isTavernCard) {
         // 酒馆卡有自己的格式指令（<status>块 + 特殊消息格式），不要用forcedTag覆盖
         // 只做最轻量的提示，不干涉输出格式
-        forcedTag = `\n\n（【系统提示】：当前是线上模式。${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：线下见面已经结束，现在回到线上聊天。' : ''}请严格按照你的角色设定中规定的格式输出回复，不要改变输出格式。）`;
+        forcedTag = `\n\n（【系统提示】：当前是线上模式。${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：线下剧情模式已结束，现在回到线上聊天。' : ''}
+请严格按照你的角色设定中规定的格式输出回复，不要改变输出格式。）`;
       } else {
-        forcedTag = `\n\n（【系统强制指令】：当前是手机微信聊天模式！${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：之前的小说体/线下描写已经结束了，你们现在分开了，改为线上打字聊天！' : ''}只输出发送在屏幕上的聊天文字，绝对不要包含环境描写、动作描写、心理旁白！不要写小说！就像真人用手机打字发消息一样，简短、口语化。\n*特殊权限*：如果你极度生气，或者在对话里同意要"删除/拉黑"对方，请在正文里包含 [拉黑] 两个字，系统会赋予你真实删除对方的权限！\n回复完聊天文字后，必须另起一行附加：\n[状态:此刻现实中的动作|心情:当前心情|心声:你打字时心里真正翻腾的念头，那些打死也不会发出去的真心话。可以是口是心非、暗暗在意、强装不在乎下的小慌乱、或者被戳中后的逞强，写出表里反差的张力]）`;
+        forcedTag = `\n\n（【系统强制指令】：当前是手机微信聊天模式！${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：之前的小说体/线下剧情模式已经结束了，现在改为线上打字聊天！' : ''}
+只输出发送在屏幕上的聊天文字，绝对不要包含环境描写、动作描写、心理旁白！不要写小说！就像真人用手机打字发消息一样，简短、口语化。\n*特殊权限*：如果你极度生气，或者在对话里同意要"删除/拉黑"对方，请在正文里包含 [拉黑] 两个字，系统会赋予你真实删除对方的权限！\n回复完聊天文字后，必须另起一行附加：\n[状态:此刻现实中的动作|心情:当前心情|心声:你打字时心里真正翻腾的念头，那些打死也不会发出去的真心话。可以是口是心非、暗暗在意、强装不在乎下的小慌乱、或者被戳中后的逞强，写出表里反差的张力]）`;
       }
     }
 
@@ -7525,6 +7528,19 @@ window.getSmartChatReply = async (userTexts, c) => {
     }
     
     let thoughts = '', newStatus = '', newMood = '';
+// 剥离思维链/COT标签（<review>、<思维链cot> 等），提取首段作为 thoughts
+{
+  const _cotRe = /<(?:review|思维链cot|cot|thinking|思考)\b[^>]*?>([\s\S]*?)<\/(?:review|思维链cot|cot|thinking|思考)>/gi;
+  if(_cotRe.test(text)){
+    _cotRe.lastIndex = 0;
+    const _cm = _cotRe.exec(text);
+    if(_cm && !thoughts){
+      thoughts = _cm[1].replace(/<[^>]*>/g,'').replace(/[\n\r]+/g,' ').trim().slice(0,100);
+    }
+    _cotRe.lastIndex = 0;
+    text = text.replace(_cotRe, '').trim();
+  }
+}
 
 let isBlocking = false;
 if(text.includes('[拉黑]')){
@@ -7536,7 +7552,7 @@ if(text.includes('[拉黑]')){
 
 // 判断这次回复是不是酒馆世界书的 <status> 状态栏
 // 扩展识别：<status> / <ztl> / <plot> / 带"状态栏"标题的 <details>
-const _tavernStatusRe = /<(?:status|ztl|plot|StatusBar)\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar)>/i;
+const _tavernStatusRe = /<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status)>/i;
 const _tavernDetailsRe = /<details\b[^>]*>[\s\S]*?<summary\b[^>]*>[\s\S]*?(?:状态栏|状态面板|角色状态|state\s*bar|status\s*bar)[\s\S]*?<\/summary>[\s\S]*?<\/details>/i;
 const _backtickStatusRe = /```[\s\S]*?(?:的状态|当前状态|状态栏|状态面板|角色状态|的内心[:：]|\[(?:场所|地点|服装|穿着|情绪|心情|性欲|好感|理智|体力|精神|位置)[:：])[\s\S]*?```/i;
 const _hasTavernStatus = _tavernStatusRe.test(text) || _tavernDetailsRe.test(text) || _backtickStatusRe.test(text);
@@ -7617,7 +7633,7 @@ if(!_hasTavernStatus){
   // 尝试从 <status> 里提取状态/心情/心声
   
   // 优先匹配 <status>/<ztl>/<plot>；否则匹配带"状态栏"标题的 <details>
-let statusContentMatch = text.match(/<(?:status|ztl|plot|StatusBar)\b[^>]*>([\s\S]*?)<\/(?:status|ztl|plot|StatusBar)>/i);
+let statusContentMatch = text.match(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>([\s\S]*?)<\/(?:status|ztl|plot|StatusBar|novel_status)>/i);
 if(!statusContentMatch){
   statusContentMatch = text.match(/<details\b[^>]*>[\s\S]*?<summary\b[^>]*>[\s\S]*?(?:状态栏|状态面板|角色状态|state\s*bar|status\s*bar)[\s\S]*?<\/summary>([\\s\\S]*?)<\/details>/i);
 }
@@ -8026,7 +8042,7 @@ const radius=bubbleVisual.borderRadius
         let _offset = 0
 
         // 如果开头有状态栏（<status> 或 <details>），先跳过它再找卡片
-        const _stSkip = _t.match(/^[\s\S]*?<\/(?:status|ztl|plot|StatusBar|details)>\s*/i)
+        const _stSkip = _t.match(/^[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status|details)>\s*/i)
         if(_stSkip && _stSkip[0].length < _t.length - 50){
           _offset = _stSkip[0].length
           _cardSearchText = _t.slice(_offset)
@@ -9084,7 +9100,9 @@ let _mainText = txt
 
 if(!isU){
   // 依次尝试：<status|ztl|plot|StatusBar>，再兜底匹配带"状态栏"标题的 <details>
-  let _statusMatch = txt.match(/<(?:status|ztl|plot|StatusBar)\b[^>]*>([\s\S]*?)<\/(?:status|ztl|plot|StatusBar)>/i)
+  // 先剥离思维链COT
+  txt = txt.replace(/<(?:review|思维链cot|cot|thinking|思考)\b[^>]*?>[\s\S]*?<\/(?:review|思维链cot|cot|thinking|思考)>/gi, '').trim()
+  let _statusMatch = txt.match(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>([\s\S]*?)<\/(?:status|ztl|plot|StatusBar|novel_status)>/i)
   let _statusFullMatch = _statusMatch && _statusMatch[0]
 
   if(!_statusMatch){
@@ -10836,12 +10854,13 @@ ${hint}
         // 自动注入切换记忆，防止AI位置错乱
         const _modeArr = getMsgs(activeCharId);
         if(c.offlineMode) {
-          addMemoryEvent(activeCharId, `我们现在在线下见面了（面对面状态）。`, '模式切换');
-          _modeArr.push({from:'system', text:'—— 已切换到线下模式（小说体） ——', time:ftime(now()), isSystem:true, mode:'offline'});
-        } else {
-          addMemoryEvent(activeCharId, `我们刚刚结束了线下见面，现在分开了，改用手机线上聊天。`, '模式切换');
-          _modeArr.push({from:'system', text:'—— 已切换到线上模式（微信聊天） ——', time:ftime(now()), isSystem:true, mode:'online'});
-        }
+  addMemoryEvent(activeCharId, `现在切换到线下剧情模式（小说体叙事）。`, '模式切换');
+  _modeArr.push({from:'system', text:'—— 已切换到线下模式（小说体） ——', time:ftime(now()), isSystem:true, mode:'offline'});
+} else {
+  addMemoryEvent(activeCharId, `线下剧情模式结束，现在改用手机线上聊天。`, '模式切换');
+  _modeArr.push({from:'system', text:'—— 已切换到线上模式（微信聊天） ——', time:ftime(now()), isSystem:true, mode:'online'});
+}
+
         saveMsgs(activeCharId, _modeArr);
         saveCharList()
         close()
@@ -19529,8 +19548,9 @@ function showTransfer(){
     const item=ce('div')
     item.style.cssText='display:flex;align-items:center;gap:12px;padding:12px;margin-bottom:6px;border-radius:12px;background:rgba(255,255,255,.5);border:1px solid rgba(232,160,180,.08)'
     
+    const avIsUrl=c.avatar&&(c.avatar.startsWith('http')||c.avatar.startsWith('data:'))
     item.innerHTML=`
-      <div style="width:36px;height:36px;border-radius:50%;background:${c.color||'var(--rose-l)'};display:flex;align-items:center;justify-content:center;font-size:16px">${c.avatar||c.name[0]}</div>
+      <div style="width:36px;height:36px;border-radius:50%;background:${c.color||'var(--rose-l)'};display:flex;align-items:center;justify-content:center;font-size:16px;overflow:hidden;flex-shrink:0">${avIsUrl?`<img src="${escHtml(c.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`:escHtml(c.avatar||c.name[0])}</div>
       <div style="flex:1">
         <div style="font-size:13px;color:${n?'#d8c8e8':'var(--ink)'}">${escHtml(c.name)}</div>
         <div style="font-size:11px;color:${n?'#b8a8c8':'var(--ink-l)'}">余额：¥${w.balance.toFixed(0)}</div>
@@ -19661,7 +19681,9 @@ function showCharWalletDetail(char){
     const shopCard=ce('div')
     shopCard.style.cssText='padding:14px;border-radius:12px;background:rgba(255,255,255,.5);border:1px solid rgba(232,160,180,.1);margin-bottom:12px'
     
-    const shopType=shopTypes.find(s=>s.id===w.shop.type)
+    let shopType=shopTypes.find(s=>s.id===w.shop.type)
+    if(!shopType && window._customShops) shopType = window._customShops[w.shop.type]
+    if(!shopType) shopType = { name:w.shop.name||'店铺', invest:0, minIncome:100, maxIncome:300, upgradeCost:3000 }
     const currentLevel=w.shop.level||1
     const canUpgrade=currentLevel<5
     const levelBonus=1+(currentLevel-1)*0.2
@@ -19770,7 +19792,7 @@ function showCharWalletDetail(char){
 
 // 显示开店界面
 async function showOpenShop(char){
-  const n=isNight()
+  const n=isN()
   const mask=ce('div','modal-mask')
   const box=ce('div','modal-box')
   box.style.maxHeight='85vh'
