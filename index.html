@@ -2365,7 +2365,7 @@ function getMemoryPromptText(charId) {
   if (!mem || (!mem.summary && mem.keyEvents.length === 0 && !tableText)) return '';
   let text = '';
   if (tableText) text += tableText + '\n';
-  if (mem.summary) text += `【长期记忆摘要】\n${mem.summary.slice(0,2500)}\n`;
+  if (mem.summary) text += `【长期记忆摘要】\n${mem.summary.slice(0,8000)}\n`;
   if (mem.keyEvents && mem.keyEvents.length > 0) {
     text += `【近期关键事件】\n${mem.keyEvents.slice(-10).map(e => e.text).join('；')}`;
   }
@@ -2497,7 +2497,7 @@ function addMemoryEvent(charId,text,source){
   const _evtTime = (_chr && _chr.storyTimeline) ? _chr.storyTimeline : new Date().toLocaleString()
   const evt = {id:uid(), text:text.slice(0,1000), time:_evtTime, source:source||'chat'}
   mem.keyEvents.push(evt)
-  if(mem.keyEvents.length>100) mem.keyEvents=mem.keyEvents.slice(-100)
+  if(mem.keyEvents.length>100) mem.keyEvents=mem.keyEvents.slice(-1000)
   mem.lastUpdate=Date.now()
   saveGlobalMemory()
   storeMemoryVec(charId, text, source||'chat')
@@ -2638,7 +2638,7 @@ async function autoSummarizeMemory(charId, force = false){
   if(!force && (Date.now()-(mem.lastSummaryTime||0)<1800000)) return false
   const oldSummary = mem.summary || '无'
   // 将时间显式前置，方便 AI 准确定位时间发生顺序
-  const events = mem.keyEvents.slice(-100).map(e => `[时间: ${e.time || '未知时间'} | 场景: ${e.source || '互动'}] ${e.text}`).join('\n') || '无'
+  const events = mem.keyEvents.slice(-1000).map(e => `[时间: ${e.time || '未知时间'} | 场景: ${e.source || '互动'}] ${e.text}`).join('\n') || '无'
   const c = charList.find(x => x.id === charId) || {name: '角色'}
   const prompt = `你是角色「${c.name}」的记忆档案管理员。请将【旧的长期记忆】与【近期新事件】合并提炼，生成一份【带有具体时间线】的完整长期记忆档案。
 
