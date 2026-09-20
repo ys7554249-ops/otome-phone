@@ -216,6 +216,42 @@ setTimeout(()=>{
 // ===== 工具 =====
 const $=s=>document.querySelector(s),ce=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h)e.innerHTML=h;return e}
 const escHtml=s=>{if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+const _safeInlineHtml = (s) => {
+  if(!s) return '';
+  // 快速检测：如果根本没有 HTML 标签，直接走 escHtml（性能优化）
+  if(!/<[a-z/!]/i.test(s)) return escHtml(s);
+  const allowTag = /^(?:div|span|p|br|hr|em|strong|b|i|u|s|del|ins|sub|sup|blockquote|pre|code|mark|small|center|font|details|summary|section|article|aside|header|footer|nav|main|figure|figcaption|ul|ol|li|dl|dt|dd|table|thead|tbody|tfoot|tr|td|th|caption|colgroup|col|h[1-6]|ruby|rt|rp|abbr|time|a|img|svg|path|circle|rect|line|polyline|polygon|ellipse|text|g|defs|use|symbol|clippath|mask|pattern|lineargradient|radialgradient|stop|style|label|fieldset|legend|data|wbr|bdi|bdo|q|cite|dfn|kbd|samp|var|picture|source|audio|video)$/i;
+  const dangerTag = /^(?:script|iframe|object|embed|form|input|button|select|textarea|link|meta|base|applet|frame|frameset|noscript)$/i;
+  const dangerAttr = /^on/i;
+  const dangerVal = /^\s*javascript\s*:/i;
+  try {
+    const doc = new DOMParser().parseFromString('<body>' + s + '</body>', 'text/html');
+    const clean = (node) => {
+      for(const ch of [...node.childNodes]) {
+        if(ch.nodeType === 3) continue;
+        if(ch.nodeType === 8) { ch.remove(); continue; }
+        if(ch.nodeType !== 1) { ch.remove(); continue; }
+        const tag = ch.tagName.toLowerCase();
+        if(dangerTag.test(tag)) { ch.remove(); continue; }
+        if(!allowTag.test(tag)) {
+          while(ch.firstChild) ch.parentNode.insertBefore(ch.firstChild, ch);
+          ch.remove(); continue;
+        }
+        for(const a of [...ch.attributes]) {
+          if(dangerAttr.test(a.name)) { ch.removeAttribute(a.name); continue; }
+          if(/^(?:href|src|action|xlink:href|formaction|data|poster|background)$/i.test(a.name) && dangerVal.test(a.value)) {
+            ch.removeAttribute(a.name);
+          }
+        }
+        clean(ch);
+      }
+    };
+    clean(doc.body);
+    return doc.body.innerHTML;
+  } catch(e) {
+    return escHtml(s);
+  }
+};
 
 const now=()=>new Date(),pad=n=>(n<10?'0':'')+n,ftime=d=>pad(d.getHours())+':'+pad(d.getMinutes())
 const fdate=d=>{const w='日一二三四五六'[d.getDay()];return(d.getMonth()+1)+'月'+d.getDate()+'日 星期'+w}
@@ -1515,7 +1551,8 @@ function settleShop(charId){
   if(!d.wallet.shop)return{success:false,msg:'没有店铺'}
   
   const shop=d.wallet.shop
-  const shopType=shopTypes.find(s=>s.id===shop.type)
+  let shopType=shopTypes.find(s=>s.id===shop.type)
+  if(!shopType && window._customShops) shopType = window._customShops[shop.type]
   if(!shopType)return{success:false,msg:'店铺类型错误'}
   
   const now=Date.now()
@@ -1566,7 +1603,8 @@ function upgradeShop(charId){
   if(!d.wallet.shop)return{success:false,msg:'没有店铺'}
   
   const shop=d.wallet.shop
-  const shopType=shopTypes.find(s=>s.id===shop.type)
+  let shopType=shopTypes.find(s=>s.id===shop.type)
+  if(!shopType && window._customShops) shopType = window._customShops[shop.type]
   if(!shopType)return{success:false,msg:'店铺类型错误'}
   
   const level=shop.level||1
@@ -7375,7 +7413,6 @@ window.getSmartChatReply = async (userTexts, c) => {
       // 历史消息剥离 <status> 块，避免浪费上下文
       cleanText = cleanText
         .replace(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status)>/gi, '')
-        .replace(/<(?:review|思维链cot|cot|thinking|思考)\b[^>]*?>[\s\S]*?<\/(?:review|思维链cot|cot|thinking|思考)>/gi, '')
         .replace(/<details\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar)[\s\S]*?<\/details>/gi, '')
         .trim();
       return { role: m.from==='u'?'user':'assistant', content: q + cleanText };
@@ -7406,11 +7443,11 @@ window.getSmartChatReply = async (userTexts, c) => {
       if (c.offlineMode) {
       forcedTag = `\n\n（【系统强制指令】：当前是线下小说剧情模式。请在小说正文彻底写完之后，必须另起一行附加：\n[状态:当前动作|心情:当前心情|剧情时间:当前剧情里是什么时候（例如：第二天早上/一个月后的某个夜晚/三年后的春天）|心声:你此刻心里真正在想、却绝不会说出口的真心话。越是和你表面言行相反越好——嘴上嫌弃心里在意、表面冷漠暗自心疼、明明慌乱却强装镇定，把这种藏起来的情绪写出来]）`;
       } else if (c.isTavernCard) {
-        // 酒馆卡有自己的格式指令（<status>块 + 特殊消息格式），不要用forcedTag覆盖
-        // 只做最轻量的提示，不干涉输出格式
         forcedTag = `\n\n（【系统提示】：当前是线上模式。${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：线下剧情模式已结束，现在回到线上聊天。' : ''}
-请严格按照你的角色设定中规定的格式输出回复，不要改变输出格式。）`;
+请严格按照你的角色设定中规定的格式输出回复，不要改变输出格式。
+额外要求：在回复的最末尾另起一行附加 [心声:此刻内心真实的想法，不会显示给对方看] ，此行仅供系统内部读取，不影响你的正文格式。）`;
       } else {
+
         forcedTag = `\n\n（【系统强制指令】：当前是手机微信聊天模式！${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：之前的小说体/线下剧情模式已经结束了，现在改为线上打字聊天！' : ''}
 只输出发送在屏幕上的聊天文字，绝对不要包含环境描写、动作描写、心理旁白！不要写小说！就像真人用手机打字发消息一样，简短、口语化。\n*特殊权限*：如果你极度生气，或者在对话里同意要"删除/拉黑"对方，请在正文里包含 [拉黑] 两个字，系统会赋予你真实删除对方的权限！\n回复完聊天文字后，必须另起一行附加：\n[状态:此刻现实中的动作|心情:当前心情|心声:你打字时心里真正翻腾的念头，那些打死也不会发出去的真心话。可以是口是心非、暗暗在意、强装不在乎下的小慌乱、或者被戳中后的逞强，写出表里反差的张力]）`;
       }
@@ -7438,10 +7475,23 @@ window.getSmartChatReply = async (userTexts, c) => {
     let _charAvUrl = null;
     try {
       if (c.avatar) {
-        if (/^https?:\/\//i.test(c.avatar) || c.avatar.startsWith('data:image')) {
+        if (c.avatar.startsWith('data:image')) {
           _charAvUrl = c.avatar;
-        } else if (c.avatar.startsWith('img_')) {
-          _charAvUrl = await imgDB.load(c.avatar);
+        } else {
+          let _blobUrl = c.avatar;
+          if (c.avatar.startsWith('img_')) {
+            _blobUrl = await imgDB.load(c.avatar);
+          }
+          if (_blobUrl) {
+            const _tmpImg = new Image();
+            await new Promise((res, rej) => { _tmpImg.onload = res; _tmpImg.onerror = rej; _tmpImg.src = _blobUrl; });
+            const _sc = Math.min(1, 1024 / _tmpImg.naturalWidth, 1024 / _tmpImg.naturalHeight);
+            const _cv = document.createElement('canvas');
+            _cv.width = Math.max(1, Math.round(_tmpImg.naturalWidth * _sc));
+            _cv.height = Math.max(1, Math.round(_tmpImg.naturalHeight * _sc));
+            _cv.getContext('2d').drawImage(_tmpImg, 0, 0, _cv.width, _cv.height);
+            _charAvUrl = _cv.toDataURL('image/jpeg', 0.85);
+          }
         }
       }
     } catch(e){}
@@ -7522,25 +7572,21 @@ window.getSmartChatReply = async (userTexts, c) => {
     const _rawTrim = text.trim()
     const _isCardReply = /^\s*(?:```html\s*)?(?:<style|<div\b|<!DOCTYPE|<html)/i.test(_rawTrim)
     if(_isCardReply && !c.offlineMode){
-      // 只清掉代码块标记，保留完整HTML结构
-      let cleanCard = _rawTrim.replace(/^```html\s*/gi,'').replace(/```\s*$/g,'').trim()
-      return { text: cleanCard, thoughts: '' }
+      // 返回前先尝试提取心声
+      let _cardThoughts = '';
+      const _ctMatch = text.match(/\[心声[:：]\s*([^\]\n]+)\]/i) 
+                     || text.match(/心声[:：]\s*([^|｜\n\]]+)/i)
+                     || text.match(/\[InnerThoughts\|([^\]]+)\]/i);
+      if(_ctMatch) _cardThoughts = _ctMatch[1].trim().slice(0, 100);
+      // 清掉心声标签和代码块标记，保留完整HTML结构
+      let cleanCard = _rawTrim
+        .replace(/\n?\s*\[心声[:：][^\]\n]*\]/gi, '')
+        .replace(/\n?\s*心声[:：][^\n]*/gi, '')
+        .replace(/^```html\s*/gi,'').replace(/```\s*$/g,'').trim()
+      return { text: cleanCard, thoughts: _cardThoughts }
     }
     
     let thoughts = '', newStatus = '', newMood = '';
-// 剥离思维链/COT标签（<review>、<思维链cot> 等），提取首段作为 thoughts
-{
-  const _cotRe = /<(?:review|思维链cot|cot|thinking|思考)\b[^>]*?>([\s\S]*?)<\/(?:review|思维链cot|cot|thinking|思考)>/gi;
-  if(_cotRe.test(text)){
-    _cotRe.lastIndex = 0;
-    const _cm = _cotRe.exec(text);
-    if(_cm && !thoughts){
-      thoughts = _cm[1].replace(/<[^>]*>/g,'').replace(/[\n\r]+/g,' ').trim().slice(0,100);
-    }
-    _cotRe.lastIndex = 0;
-    text = text.replace(_cotRe, '').trim();
-  }
-}
 
 let isBlocking = false;
 if(text.includes('[拉黑]')){
@@ -7627,7 +7673,11 @@ if(!_hasTavernStatus){
     .replace(/状态[:：].*?心声[:：].*?(\n|$)/g, '')
     .trim();
 
+  // 清除独立的 [心声:...] 标签
+  text = text.replace(/\n?\s*\[?心声[:：][^\n\]]*\]?/gi, '').trim();
+
 }else{
+
 
   // <status> 是酒馆世界书自己的状态栏格式
   // 尝试从 <status> 里提取状态/心情/心声
@@ -7644,8 +7694,19 @@ if(!statusContentMatch && _backtickStatusRe.test(text)){
 }
   if(statusContentMatch){
     const statusContent = statusContentMatch[1];
-    
-    // 提取心情（常见格式：心情、mood、feeling）
+        // ===== novel_status 专属格式解析 =====
+    const _nsStatusLine = statusContent.match(/\[Status\|([^\]]+)\]/i);
+    if(_nsStatusLine){
+      const _sp = _nsStatusLine[1].split('|').map(s=>s.trim());
+      // _sp: [时间, 日期, 星期, 天气, 位置, 衣着, 姿势]
+      if(_sp[6] && !newStatus) newStatus = _sp[6].slice(0,30);
+      if(_sp[3] && !newMood) newMood = _sp[3].slice(0,20);
+    }
+    const _nsInner = statusContent.match(/\[InnerThoughts\|([^\]]+)\]/i);
+    if(_nsInner && !thoughts){
+      thoughts = _nsInner[1].trim().slice(0,100);
+    }
+   // 提取心情（常见格式：心情、mood、feeling）
     const moodInStatus = statusContent.match(/(?:心情|mood|feeling)[:：\s]*([^<|\n]+)/i);
 if(moodInStatus){
   newMood = moodInStatus[1].replace(/<[^>]*>/g, '').trim();
@@ -7738,6 +7799,8 @@ if(statusInStatus){
   text = text
     .replace(/状态[:：].*?心声[:：].*?(\n|$)/g, '')
     .trim();
+  // 清除独立的 [心声:...] 标签（酒馆卡片模式也要清）
+  text = text.replace(/\n?\s*\[?心声[:：][^\n\]]*\]?/gi, '').trim();
 }
 
 
@@ -9100,8 +9163,6 @@ let _mainText = txt
 
 if(!isU){
   // 依次尝试：<status|ztl|plot|StatusBar>，再兜底匹配带"状态栏"标题的 <details>
-  // 先剥离思维链COT
-  txt = txt.replace(/<(?:review|思维链cot|cot|thinking|思考)\b[^>]*?>[\s\S]*?<\/(?:review|思维链cot|cot|thinking|思考)>/gi, '').trim()
   let _statusMatch = txt.match(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>([\s\S]*?)<\/(?:status|ztl|plot|StatusBar|novel_status)>/i)
   let _statusFullMatch = _statusMatch && _statusMatch[0]
 
@@ -9551,14 +9612,21 @@ if(_htmlCardHit){
   .replace(/^#{1,6}\s*/gm, '')
   .replace(/^\s*[-*]\s+/gm, '')
 
+        // 检测是否含有 HTML 块级结构（小剧场/排版标签），如果有则跳过引号拆分
+        const _hasHtmlBlocks = /<(?:div|p|section|article|table|style|h[1-6])\b/i.test(_raw);
+
         // 判断一个旁白片段是否"只有标点没有内容"（要丢掉的垃圾段）
         const _isJunk = s => {
           const stripped = String(s)
             .replace(/[\s。，、；：？！,.;:?!…·"'"'「」『』（）()\[\]【】~～\-—_*#>]/g, '')
           return stripped === ''
         }
-                const _parts = []
-               const _re = /「([^」]*)」|『([^』]*)』|“([^”]*)”|"([^"]+)"/g
+                                const _parts = []
+        if(_hasHtmlBlocks){
+          // 含 HTML 结构的小剧场/排版内容：不拆分，整段保留
+          _parts.push({t:'h', v:_raw})
+        } else {
+               const _re = /「([^」]*)」|『([^』]*)』|"([^"]*)"|"([^"]+)"/g
 
         let _last = 0, _mt
         while((_mt = _re.exec(_raw)) !== null){
@@ -9581,6 +9649,8 @@ if(_htmlCardHit){
           if(_tl && !_isJunk(_tl)) _parts.push({t:'n', v:_tl})
         }
         if(!_parts.length) _parts.push({t:'n', v:_raw})
+        }
+
         const _merged=[]
         for(const pt of _parts){
           if(pt.t==='n'&&_merged.length&&_merged[_merged.length-1].t==='n'){
@@ -9708,7 +9778,23 @@ if(_htmlCardHit){
           ">` +
           _chapterCard +
           _statusPanel +
-          _parts.map(pt => {
+                    _parts.map(pt => {
+            if(pt.t === 'h'){
+              // HTML 小剧场/排版内容：用 _safeInlineHtml，不用 pre-wrap
+              return `
+                <div class="_offline-narration _offline-html" style="
+                  width:100%;
+                  margin:0;
+                  padding:0 6px;
+                  box-sizing:border-box;
+                  color:${n?'#d8c8e0':'var(--ink)'};
+                  font-size:13px;
+                  line-height:1.8;
+                  letter-spacing:.4px;
+                  word-break:break-word;
+                ">${_restoreMediaTags(escHtml(pt.v))}</div>
+              `
+            }
             if(pt.t === 'n'){
               return `
                 <div class="_offline-narration" style="
@@ -9725,9 +9811,11 @@ if(_htmlCardHit){
                   white-space:pre-wrap;
                   word-break:break-word;
                   text-align:justify;
-                ">${_restoreMediaTags(escHtml(pt.v))}</div>
+                               ">${_restoreMediaTags(escHtml(pt.v))}</div>
+
               `
             }
+
 
             return `
               <div class="_offline-row" style="
@@ -9763,7 +9851,9 @@ if(_htmlCardHit){
                   overflow-wrap:anywhere;
                   word-break:break-word;
                   padding:10px 14px;
-                ">${_restoreMediaTags(escHtml(pt.v))}</div>
+                                ">${_restoreMediaTags(escHtml(pt.v))}</div>
+
+
              </div>
             `
           }).join('') +
@@ -9921,11 +10011,13 @@ txt = '\u2063BLMX_RENDERED\u2063';
           let isOnlySticker = textWithoutStickers === '';
           const _isCardOnly = /^\s*(\u2063(?:CHATCARD|MIPHONE|CNSTATUS|FORUMPOST|GAMETXT|BRKGAME|MEDIA)\d+\u2063\s*)+$/.test(txt);
           // 先处理 <bqb> 标签（在 escHtml 之前），转成好看的表情占位符
+          // 兜底清理可能泄漏的心声标签
+          if(!isU) txt = (txt||'').replace(/\n?\s*\[?心声[:：][^\n\]]*\]?/gi, '').trim();
           let _bqbProcessed = (txt || '').replace(/<bqb\b[^>]*>([\s\S]*?)<\/bqb>/gi, (m, desc) => {
               const label = desc.trim().replace(/\.[a-z]{2,4}$/i, '').replace(/[a-z0-9]{5,}$/i, '').trim() || '表情';
               return `\u2063BQB:${label}\u2063`;
           }).replace(/<bqb\b[^>]*\/>/gi, '\u2063BQB:表情\u2063');
-          let parsedText = _restoreMediaTags(escHtml(_bqbProcessed).replace(/[(（]([^:：()]+)[:：](https?:\/\/[^()]+)[)）]/g, (match, meaning, url) => {
+          let parsedText = _restoreMediaTags((isU ? escHtml(_bqbProcessed) : _safeInlineHtml(_bqbProcessed)).replace(/[(（]([^:：()]+)[:：](https?:\/\/[^()]+)[)）]/g, (match, meaning, url) => {
               return `<img src="${url}" style="max-width:140px; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
           }).replace(/\u2063BQB:(.*?)\u2063/g, (m, label) => {
               return `<div style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:12px;background:${n?'rgba(255,255,255,.06)':'rgba(232,160,180,.08)'};border:1px dashed ${n?'rgba(200,180,220,.15)':'rgba(232,160,180,.2)'};margin:2px 0"><span style="font-size:22px">😸</span><span style="font-size:12px;color:${n?'#c0b0c8':'#8a7a7a'};font-style:italic">${label}</span></div>`;
@@ -12225,7 +12317,7 @@ let bubbleStyle = isOnlySticker
       let textWithoutStickers = text.replace(/[(（][^:：()]+[:：]https?:\/\/[^()]+[)）]/g, '').trim();
       let isOnlySticker = textWithoutStickers === '';
 
-      let parsedText = escHtml(text).replace(/[(（]([^:：()]+)[:：](https?:\/\/[^()]+)[)）]/g, (match, meaning, url) => {
+      let parsedText = _safeInlineHtml(text).replace(/[(（]([^:：()]+)[:：](https?:\/\/[^()]+)[)）]/g, (match, meaning, url) => {
           return `<img src="${url}" style="max-width:140px; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
       });
 
@@ -18086,25 +18178,7 @@ pages.beauty=()=>{
         🚑 <b>紧急救援</b>：如果保存CSS后卡死，请在地址栏URL后加 <code style="background:rgba(0,0,0,.05);padding:1px 4px;border-radius:3px">?safe</code> 重新打开，即可跳过CSS加载
       </div>
     </div>
-    <div class="card">
-      <div class="card-t">AI 美化</div>
-      <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">描述你想要的风格，AI帮你生成完整方案</div>
-      <textarea class="tarea" id="_aibeautyhint" rows="3" style="padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.55);border:1px solid rgba(232,160,180,.15);width:100%" placeholder="例如：冷淡高级感、樱花少女风、暗夜神秘系..."></textarea>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <div class="_beautytag" data-t="甜蜜粉嫩少女风" style="padding:6px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">甜蜜粉嫩</div>
-        <div class="_beautytag" data-t="冷淡高级暗色系" style="padding:6px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">冷淡暗系</div>
-        <div class="_beautytag" data-t="清新自然森林系" style="padding:6px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">清新森林</div>
-        <div class="_beautytag" data-t="梦幻星空夜晚感" style="padding:6px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">梦幻星空</div>
-        <div class="_beautytag" data-t="复古奶油温柔风" style="padding:6px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">复古奶油</div>
-        <div class="_beautytag" data-t="深海神秘蓝紫系" style="padding:6px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">深海蓝紫</div>
-      </div>
-      <div class="btn-main" id="_aibeauty" style="margin-top:10px">生成美化方案</div>
-      <div id="_aibeautyout" style="display:none;margin-top:12px">
-        <div class="card" style="margin-bottom:8px"><div class="card-t">方案预览</div><div id="_aibeautytxt" style="font-size:12px;color:var(--ink);line-height:1.9;white-space:pre-wrap"></div></div>
-        <div class="btn-main" id="_aibeautyapply" style="margin:0">应用这个方案</div>
-        <div class="btn-sub" id="_aibeautyredo" style="margin-top:8px">重新生成</div>
-      </div>
-    </div>
+    
     <div class="card">
       <div class="card-t">💾 我的美化方案库</div>
       <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">保存当前美化设置为方案，随时一键切换</div>
@@ -18153,7 +18227,6 @@ pages.beauty=()=>{
   body.querySelectorAll('._bluropt').forEach(el=>{el.onclick=()=>{store.set('blurMode',el.dataset.v);applyBeauty();render('beauty')}})
   body.querySelectorAll('._nightopt').forEach(el=>{el.onclick=()=>{store.set('nightMode',el.dataset.v);applyBeauty();render('beauty')}})
   body.querySelectorAll('._themeopt').forEach(el=>{el.onclick=()=>{curTheme=el.dataset.v;store.set('theme',curTheme);applyBeauty();render('beauty')}})
-  body.querySelectorAll('._beautytag').forEach(el=>{el.onclick=()=>{body.querySelector('#_aibeautyhint').value=el.dataset.t}})
 // 字体库功能
 const fontLib=store.get('fontLibrary',[])
 const renderFontLib=()=>{
@@ -18342,52 +18415,7 @@ body.querySelector('#_aicssBtn')?.addEventListener('click',async()=>{
     }
   }
 
-  let lastBeautyPlan=null
-
-  const doGenBeauty=async()=>{
-    const api=getApi();if(!api||!api.key){alert('请先配置聊天API');return}
-    const hint=body.querySelector('#_aibeautyhint').value.trim()||'随机生成一个好看的风格'
-    const out=body.querySelector('#_aibeautyout'),txt=body.querySelector('#_aibeautytxt'),btn=body.querySelector('#_aibeauty')
-    out.style.display='block';txt.textContent='生成中...';btn.textContent='生成中...';btn.style.opacity='0.5'
-
-    const themeList=Object.entries(themes).map(([k,v])=>`${k}（${v.name}）`).join('、')
-    const prompt=`你是乙女游戏UI设计师。用户想要：「${hint}」
-请生成美化方案，严格按JSON返回：
-{"theme":"从${themeList}选key","font":"serif/sans/cute","blur":"off/soft/strong","wallpaperPrompt":"英文壁纸prompt","description":"中文氛围描述"}
-只返回JSON。`
-
-    const res=await askAI('只返回JSON',prompt,800)
-    btn.textContent='生成美化方案';btn.style.opacity='1'
-
-    try{
-      const m=res.match(/\{[\s\S]*\}/)
-      if(m){
-        lastBeautyPlan=JSON.parse(m[0])
-        const themeObj=themes[lastBeautyPlan.theme]||themes.sakura
-        const fontMap={serif:'衬线典雅',sans:'无衬线简洁',cute:'柔和可爱'}
-        const blurMap={off:'无毛玻璃',soft:'轻柔毛玻璃',strong:'明显毛玻璃'}
-        txt.innerHTML=`<div style="line-height:2"><b>主题色：</b>${themeObj.name}<br><b>字体：</b>${fontMap[lastBeautyPlan.font]||lastBeautyPlan.font}<br><b>毛玻璃：</b>${blurMap[lastBeautyPlan.blur]||lastBeautyPlan.blur}<br><b>壁纸：</b>${imgApi?.key?'会自动生成':'未配置生图API，跳过'}<br><b>氛围：</b>${escHtml(lastBeautyPlan.description||'')}</div>`
-      }else{txt.textContent='生成失败，请重试';lastBeautyPlan=null}
-    }catch(e){txt.textContent='解析失败，请重试';lastBeautyPlan=null}
-  }
-
-  body.querySelector('#_aibeauty').onclick=doGenBeauty
-
-  body.querySelector('#_aibeautyapply')?.addEventListener('click',async()=>{
-    if(!lastBeautyPlan){alert('没有可应用的方案');return}
-    const btn=body.querySelector('#_aibeautyapply')
-    if(lastBeautyPlan.theme&&themes[lastBeautyPlan.theme]){curTheme=lastBeautyPlan.theme;store.set('theme',curTheme)}
-    if(['serif','sans','cute'].includes(lastBeautyPlan.font))store.set('fontMode',lastBeautyPlan.font)
-    if(['off','soft','strong'].includes(lastBeautyPlan.blur))store.set('blurMode',lastBeautyPlan.blur)
-    applyBeauty()
-    if(lastBeautyPlan.wallpaperPrompt&&imgApi?.key){
-      btn.textContent='生成壁纸中...';btn.style.opacity='0.5'
-      const url=await genImage(lastBeautyPlan.wallpaperPrompt)
-      if(url){store.set('wallpaper',url);applyBeauty()}else alert('壁纸生成失败，其他设置已应用')
-      btn.textContent='应用这个方案';btn.style.opacity='1'
-    }
-    alert('美化方案已应用！');render('beauty')
-  })
+  
 
   body.querySelector('#_aibeautyredo')?.addEventListener('click',()=>{
     lastBeautyPlan=null;body.querySelector('#_aibeautyout').style.display='none';doGenBeauty()
@@ -18532,8 +18560,8 @@ body.querySelector('#_savebeautylib')?.addEventListener('click',()=>{
 
   body.querySelector('#_gencss').onclick=async()=>{
   const api=getApi();if(!api||!api.key){alert('请先配置聊天API');return}
-  const hint=(body.querySelector('#_aibeautyhint').value.trim())||(body.querySelector('#_customcss').value.trim())
-  if(!hint){alert('请先在上方"AI 美化"输入框里写下你想要的风格');return}
+  const hint=body.querySelector('#_customcss').value.trim()
+  if(!hint){alert('请先在CSS输入框里写下你想要的风格');return}
   const btn=body.querySelector('#_gencss');btn.textContent='生成中...';btn.style.opacity='.5'
   const cssPrompt=`你是前端CSS专家。为乙女游戏手机界面写CSS：「${hint}」
 
@@ -19869,7 +19897,7 @@ async function showOpenShop(char){
 
     try {
       const res = await askAIJson('只返回JSON数组', prompt, 1000)
-      const list = Array.isArray(res) ? res : (res.shops || [])
+      const list = Array.isArray(res) ? res : (res && res.shops ? res.shops : [])
       
       if(!list || !list.length) throw new Error('未能获取有效方案')
 
