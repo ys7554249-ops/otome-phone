@@ -15290,9 +15290,8 @@ body.querySelectorAll('._wbview').forEach(el=>{
         const importGroupId='import_'+uid()
         const importGroupName=file.name.replace(/\.json$/i,'')
         for(const entry of entries){
-          if(entry.disable===true||entry.enabled===false) continue
           const title=entry.comment||entry.name||entry.title||'未命名条目'
-          const content=entry.content||''
+          const content=entry.content||entry.text||''
           if(!content.trim()) continue
           const keys=[...(Array.isArray(entry.keys)?entry.keys:[]),...(Array.isArray(entry.key)?entry.key:[]),...(Array.isArray(entry.keysecondary)?entry.keysecondary:[])]
           const fullContent=[keys.length?'触发词：'+keys.join('、'):'',content].filter(Boolean).join('\n')
