@@ -3303,7 +3303,7 @@ ${store.get('autoVoiceEnabled', true) ? `6. 【语音消息功能】（极其重
    撤回后对方会看到"对方撤回了一条消息"。一次回复最多撤回一条，别滥用。适合口是心非/说漏嘴/发错人的场景。
 
 绝对不要做的事：
-- 你可以在聊天中自然使用emoji（如😊❤️🥺😭✨💕🌸😤😘💖😏🙈😂🥰等），但要克制不要堆砌，一条消息最多1-3个，根据性格决定用量
+- 不要使用emoji表情，用文字表达情绪
 - 不要说"作为AI"、不要讲大道理、不要客服腔。
 - 回复里不要加角色名标签，直接说话。
 - 标点该有的一定要有：问句必带"？"，情绪句必带"！"，别整段都是没标点的短句堆。
@@ -3461,7 +3461,7 @@ ${card.template}
   const _dt  = (_now.getMonth()+1)+'月'+_now.getDate()+'日 星期'+'日一二三四五六'[_now.getDay()]
   const _hh  = _now.getHours()
   const _tod = _hh<6?'凌晨':_hh<9?'早上':_hh<12?'上午':_hh<14?'中午':_hh<18?'下午':_hh<21?'晚上':'深夜'
-  let _extra = `[当前时间：${_dt} ${_tod} ${_cur}]${stickers.length ? '\n[可用表情包：'+stickers.map(s=>`(${s.meaning}:${s.url})`).join('，')+']' : ''}\n[你可以自然地使用emoji表情如😊❤️🥺😤✨💕😘🎉等来表达情绪]`
+  let _extra = `[当前时间：${_dt} ${_tod} ${_cur}]${stickers.length ? '\n[可用表情包：'+stickers.map(s=>`(${s.meaning}:${s.url})`).join('，')+']' : ''}\n[禁止使用emoji，用文字表达情绪]`
   const _recentMsgs = getMsgs(activeCharId).slice(-30)
   for(let i=_recentMsgs.length-1;i>=0;i--){
     const rm = _recentMsgs[i]
@@ -3545,7 +3545,7 @@ ${card.template}
     }
   }
 
-  const _sysText=sysPrompt()+cardPrompt+'\n\n再次强调：回复要符合角色性格，可以适当用emoji和颜文字增加表现力。'
+  const _sysText=sysPrompt()+cardPrompt+'\n\n再次强调：回复要符合角色性格，禁止使用emoji。'
   const r=await callLLM({
     system:_sysText,
     messages:hist,
@@ -9796,6 +9796,12 @@ if(_htmlCardHit){
               `
             }
             if(pt.t === 'n'){
+              let _nHtml = _restoreMediaTags(escHtml(pt.v))
+              const _dlgC = n ? '#f5b8cf' : '#c04070'
+              _nHtml = _nHtml.replace(
+                /([「『\u201c""])([^」』\u201d""]*?)([」』\u201d""])/g,
+                (f, open, inner, close) => `<span style="font-style:normal!important;font-weight:600!important;color:${_dlgC}!important;opacity:1!important">${open}${inner}${close}</span>`
+              )
               return `
                 <div class="_offline-narration" style="
                   width:100%;
@@ -9811,50 +9817,29 @@ if(_htmlCardHit){
                   white-space:pre-wrap;
                   word-break:break-word;
                   text-align:justify;
-                               ">${_restoreMediaTags(escHtml(pt.v))}</div>
-
+                ">${_nHtml}</div>
               `
             }
 
 
+            // 对话不再用气泡，统一为旁白样式+高亮
+            const _dlgC2 = n ? '#f5b8cf' : '#c04070'
             return `
-              <div class="_offline-row" style="
-                display:flex;
-                align-items:flex-start;
-                gap:6px;
+              <div class="_offline-narration" style="
                 width:100%;
-                margin:2px 0;
-                padding:0;
-              ">
-   <div style="
-  flex:0 0 30px;
-  width:30px;
-  height:30px;
-">
-
-                  ${avatarEl(c.avatar,26)}
-                </div>
-
-                                <div class="_bubble _bubble-offline" style="
-                  flex:0 1 auto;
-                  width:auto;
-                  max-width:88%;
-                  min-width:0;
-                  box-sizing:border-box;
-                  margin:0;
-                  padding:7px 12px;
-                  ${(_getCustomBubbleCss(false) || `border-radius:16px 16px 16px 4px; background:${n ? 'rgba(255,255,255,.08)' : 'rgba(255,255,255,.45)'}; border:none; backdrop-filter:var(--glass-blur, blur(8px));`)}
-                  font-size:13px;
-                  line-height:1.7;
-                  text-align:left;
-                  white-space:pre-wrap;
-                  overflow-wrap:anywhere;
-                  word-break:break-word;
-                  padding:10px 14px;
-                                ">${_restoreMediaTags(escHtml(pt.v))}</div>
-
-
-             </div>
+                margin:0;
+                padding:0 6px;
+                box-sizing:border-box;
+                color:${n?'#d8c8e0':'var(--ink)'};
+                font-size:13px;
+                font-style:italic;
+                line-height:1.8;
+                letter-spacing:.4px;
+                opacity:.92;
+                white-space:pre-wrap;
+                word-break:break-word;
+                text-align:justify;
+              "><span style="font-style:normal!important;font-weight:600!important;color:${_dlgC2}!important;opacity:1!important">\u201c${_restoreMediaTags(escHtml(pt.v))}\u201d</span></div>
             `
           }).join('') +
           _homeBtnHtml +
