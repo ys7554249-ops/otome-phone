@@ -1553,7 +1553,8 @@ function settleShop(charId){
   const shop=d.wallet.shop
   let shopType=shopTypes.find(s=>s.id===shop.type)
   if(!shopType && window._customShops) shopType = window._customShops[shop.type]
-  if(!shopType)return{success:false,msg:'店铺类型错误'}
+  // 🌟 修复：对自定义店铺给予自适应保底收益，不再报错“店铺类型错误”
+  if(!shopType) shopType = { name:shop.name||'店铺', invest:0, minIncome:100, maxIncome:300, upgradeCost:1500 }
   
   const now=Date.now()
   const lastSettle=shop.lastSettle||now
@@ -1605,7 +1606,8 @@ function upgradeShop(charId){
   const shop=d.wallet.shop
   let shopType=shopTypes.find(s=>s.id===shop.type)
   if(!shopType && window._customShops) shopType = window._customShops[shop.type]
-  if(!shopType)return{success:false,msg:'店铺类型错误'}
+  // 🌟 修复：对自定义店铺给予升级保底
+  if(!shopType) shopType = { name:shop.name||'店铺', invest:0, minIncome:100, maxIncome:300, upgradeCost:1500 }
   
   const level=shop.level||1
   if(level>=5)return{success:false,msg:'店铺已经满级了（Lv5）'}
@@ -9780,7 +9782,8 @@ if(_htmlCardHit){
           _statusPanel +
                     _parts.map(pt => {
             if(pt.t === 'h'){
-              // HTML 小剧场/排版内容：用 _safeInlineHtml，不用 pre-wrap
+              // HTML 小剧场/排版内容：直接渲染真实的卡片 HTML，绝不转义成文本代码
+              let cleanHtml = pt.v.replace(/```html?/gi, '').replace(/```/g, '')
               return `
                 <div class="_offline-narration _offline-html" style="
                   width:100%;
@@ -9792,7 +9795,7 @@ if(_htmlCardHit){
                   line-height:1.8;
                   letter-spacing:.4px;
                   word-break:break-word;
-                ">${_restoreMediaTags(escHtml(pt.v))}</div>
+                ">${cleanHtml}</div>
               `
             }
             if(pt.t === 'n'){
@@ -17351,18 +17354,24 @@ store.set('generatedImages',imgs)
     el.onclick=()=>{body.querySelector('#_gaihint').value=el.dataset.t}
   })
 
-  body.querySelector('#_gai').onclick=async()=>{
-    const api=getApi();if(!api||!api.key){alert('请先配置聊天API');return}
-    const btn=body.querySelector('#_gai');btn.textContent='AI思考中...';btn.style.opacity='.5'
-    const userHint=body.querySelector('#_gaihint').value.trim()
-    const charInfo=`角色：${C().name}，${C().personality?C().personality.slice(0,120):'未设定'}`
+    body.querySelector('#_gai').onclick=async()=>{
+    const api=getApi();if(!api||!api.key){showToast('请先配置聊天API');return}
+    const btn=body.querySelector('#_gai')
+    btn.textContent='AI思考中...';btn.style.opacity='.5'
+    const userHint=body.querySelector('#_gaihint')?.value?.trim()||''
+    
+    // 安全获取角色信息
+    let curC = C()
+    if(!curC){
+      const myChars = getMyChars().filter(x=>!x.isDeleted)
+      curC = myChars[0] || {name:'角色', personality:''}
+    }
+    const charInfo=`角色：${curC.name}，${curC.personality?curC.personality.slice(0,120):'未设定'}`
 
     let aiPrompt
     if(isNAI){
-      aiPrompt=`你是顶级NovelAI提示词专家。请根据以下信息生成一段高质量的NAI生图提示词。
-
+      aiPrompt=`根据以下角色信息和用户要求，生成NovelAI生图tag：
 ${charInfo}
-
 ${userHint?`【用户的要求】${userHint}\n`:'【没有特殊要求，请根据角色人设自由发挥一张好看的图】'}
 
 要求：
@@ -17382,11 +17391,27 @@ ${userHint?'用户要求：'+userHint:'自由发挥'}
 要求：一段自然语言描述，包含人物外貌、场景、光影、风格。画面要精美。只输出英文描述。`
     }
 
-    const res=await askAI('你是专业生图提示词专家。只输出提示词，不要任何解释、中文、markdown格式',aiPrompt,500)
-    btn.textContent='AI帮我写提示词';btn.style.opacity='1'
-    if(res){
-      const clean=res.replace(/```/g,'').replace(/^(prompt|Prompt|PROMPT)[:：]\s*/i,'').trim()
-      body.querySelector('#_gprompt').value=clean
+    try {
+      const res=await askAI('你是专业生图提示词专家。只输出提示词，不要任何解释、中文、markdown格式',aiPrompt,500)
+      if(res){
+        const clean=res.replace(/```[a-z]*\n?/gi,'').replace(/```/g,'').replace(/^(prompt|Prompt|PROMPT)[:：]\s*/i,'').trim()
+        const promptInput = body.querySelector('#_gprompt')
+        if(promptInput){
+          promptInput.value=clean
+          store.set('lastGenPrompt', clean)
+          // 🌟 自动平滑滚动回顶部的提示词区域，并弹出明显提示
+          promptInput.scrollIntoView({behavior:'smooth', block:'center'})
+          showToast('✨ 提示词已生成并填入顶部输入框！')
+        }
+      } else {
+        showToast('生成返回为空，请重试')
+      }
+    } catch(err) {
+      console.error(err)
+      showToast('生成出错：' + (err.message||'请检查API'))
+    } finally {
+      btn.textContent=isNAI?'AI帮我写提示词':'AI帮我写'
+      btn.style.opacity='1'
     }
   }
 
@@ -25036,7 +25061,14 @@ const snoopIcons={
   lock:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/><circle cx="12" cy="16" r="1"/></svg>`,
   eye:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
   alert:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>`,
-  spy:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>`
+  spy:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>`,
+  alipay:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M2 10h20"/><path d="M6 15h.01M10 15h4"/></svg>`,
+  redbook:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/><path d="M8 7h8M8 11h5"/></svg>`,
+  location:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+  browser:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>`,
+  bookshelf:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/><path d="M12 6v7l2.5-1.5L17 13V6"/></svg>`,
+  music:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,
+  forum2:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>`
 }
 
 // 生成角色手机内容（AI批量生成，减少API调用）
@@ -25087,19 +25119,96 @@ ${recentChat.slice(-15000) || '暂无最近聊天'}
 
 请严格按JSON格式返回，不要包含任何额外解释或Markdown标记：
 {
-  "searchHistory": ["最近5条搜索记录，完全符合你的世界观背景、身份特点以及最新聊天里提到的事情"],
-  "memo": "一篇私人备忘录（写给自己看的心里话/吐槽/秘密/对对方的情感），50-100字",
+  "searchHistory": ["最近5条搜索记录，完全符合你的世界观背景、身份特点以及暗戳戳搜关于对方（${pe.name||'对方'}）的事情"],
+  "memos": [
+    {"title":"关于TA的喜好与禁忌","content":"记下的关于对方的小习惯、口味、雷区或碰触底线的细节","date":"昨天"},
+    {"title":"不能让TA知道的心事","content":"对TA的占有欲、吃醋记录或深夜胡思乱想的心声","date":"3天前"},
+    {"title":"某次见面的备忘","content":"和对方在一起时的真实感触、细节复盘","date":"上周"}
+  ],
+  "photos": [
+    {"title":"偷拍的照片","desc":"趁对方不注意时拍下的侧脸/睡颜/走在前面的背影","time":"昨天 16:20"},
+    {"title":"某次约会留存","desc":"两只奶茶杯/电影票根/一起看过的风景","time":"前天 21:05"},
+    {"title":"专属私藏","desc":"对方送的小物件/随手画的纸条/对方遗留的随身物品","time":"上周 11:30"},
+    {"title":"深夜的工作台","desc":"凌乱的桌面，旁边放着给对方准备的礼物包装盒","time":"深夜 02:14"},
+    {"title":"随手抓拍","desc":"阳光照在对方常坐的那个位置，显得很安静","time":"4天前 15:40"},
+    {"title":"私密合照","desc":"遮遮掩掩但舍不得删的同框倒影或衣角","time":"更早"}
+  ],
   "drafts": ["2-3条打好了却犹豫着删掉、没有发给对方的消息"],
   "contactName": "你在通讯录里给对方设置的专属特别备注名",
   "alarms": [{"time":"07:30","note":"闹钟备注（契合你的作息习惯与世界观）"}],
   "secretChat": {"with":"聊天对象名字（来自世界书/人设或世界观下的合理身份）","msgs":["对方：话语1","你：话语2","对方：话语3"]},
-  "recentPhoto": "相册最新照片的描述（契合你的世界环境与近期对话经历）",
+  "recentPhoto": "相册最新照片的描述",
   "lockScreenText": "锁屏签名或密语",
   "batteryPct": 76,
-  "unreadCount": 2
+  "unreadCount": 2,
+  "alipay": {
+    "balance": "余额数字如3842.50",
+    "monthSpend": "本月支出如1205.30",
+    "bills": [
+      {"item":"给对方买的奶茶/礼物/开销","amount":"-58.00","time":"昨天 14:22"},
+      {"item":"消费项目2","amount":"-299.00","time":"3天前 09:15"},
+      {"item":"收入项","amount":"+5200.00","time":"5天前 10:00"}
+    ],
+    "fund": "理财产品名和金额，如余额宝 ¥12580"
+  },
+  "redbook": [
+    {
+      "author": "TA的小号名字",
+      "title": "暗戳戳的恋爱吐槽或心动小作文标题",
+      "content": "小红书正文长篇小作文！写对某个人（对方）又爱又恨、被拿捏、买礼物求助或吃醋发疯的细腻心境，100-150字！",
+      "likes": 862,
+      "tag": "#恋爱日常 #心动瞬间",
+      "comments": ["网友辣评1：楼主这还不冲？对方绝对也喜欢你！","网友2：满屏的占有欲都要溢出来了，快去告白！","网友3：磕死我了，后续速速更新！"]
+    },
+    {
+      "author": "匿名路人号",
+      "title": "另一篇日常或送礼攻略向帖子标题",
+      "content": "关于送某人礼物、挑选对方喜欢的餐厅、或者某次被对方气笑的经历记录，细腻自然，100字左右",
+      "likes": 340,
+      "tag": "#送礼灵感 #树洞",
+      "comments": ["网友1：实用！我也去买这个给对象。","网友2：哈哈哈哈感觉对方好可爱啊。","网友3：太懂这种被拿捏的感觉了。"]
+    }
+  ],
+  "location": {
+    "place":"当前定位地点名",
+    "addr":"详细地址",
+    "time":"定位时间如3分钟前",
+    "history":[
+      {"place":"去过的地方1","time":"今天 14:30","duration":"停留42分钟"},
+      {"place":"去过的地方2","time":"今天 11:00","duration":"停留2小时"}
+    ]
+  },
+  "browser": [
+    {"title":"无痕浏览记录1","url":"简短域名","time":"凌晨2:13"},
+    {"title":"浏览记录2","url":"域名","time":"昨天23:40"}
+  ],
+  "bookshelf": [
+    {"title":"正在看的书名","progress":"读到第几章","lastRead":"最近阅读时间","highlight":"划线的一句话"},
+    {"title":"第二本书","progress":"进度","lastRead":"时间","highlight":"划线句子"}
+  ],
+  "smartHome": {
+    "place": "私宅/公寓/别院",
+    "devices": [
+      {"name":"卧室温控","status":"24℃ 舒适"},
+      {"name":"智能门锁","status":"已锁定"},
+      {"name":"环境灯光","status":"暖光 30%"}
+    ]
+  },
+  "music": {
+    "playing":"正在播放歌名 - 歌手",
+    "playlist":"歌单名称",
+    "recent":["最近播放1 - 歌手","歌曲2 - 歌手","歌曲3 - 歌手"],
+    "loopSong":"单曲循环的歌",
+    "lyrics":"最触动的一句歌词"
+  },
+  "forum2": {
+    "username":"论坛马甲名",
+    "posts":[{"title":"发帖标题","content":"帖子正文80字","replies":23,"board":"板块"}],
+    "browseHistory":["浏览过的帖子标题1","帖子2"]
+  }
 }`
 
-  return await askAIJson('只返回JSON，不要多余文字',prompt,8000)
+  return await askAIJson('只返回JSON，不要多余文字',prompt,12000)
 }
 
 
@@ -25382,12 +25491,22 @@ pages.snoopphone=()=>{
        }
     });
 
-    const [pd,chatRes]=await Promise.all([
-      genPhoneContent(charId),
-      (async()=>{
-        if(!api||!api.key)return null
+    // 🌟 移植自时空机：本地秒开缓存，无需每次等待
+    let cachedData = null
+    try {
+      cachedData = JSON.parse(localStorage.getItem('_snoop_phone_cache_' + charId) || 'null')
+    } catch(e){}
 
-        return await askAIJson('只返回JSON',`你是「${c.name}」。
+    let pd = cachedData ? cachedData.pd : null
+    let chatRes = cachedData ? cachedData.chatRes : null
+
+    if(!pd || !chatRes){
+      const resPair = await Promise.all([
+        genPhoneContent(charId),
+        (async()=>{
+          if(!api||!api.key)return null
+
+          return await askAIJson('只返回JSON',`你是「${c.name}」。
 ${worldBookText ? worldBookText + '\n\n' : ''}【你的完整人设】：
 ${c.personality||'暂无'}
 
@@ -25420,8 +25539,14 @@ ${recognizedContext ? '\n【你所知晓的关联情报】：\n' + recognizedCon
 ]}`,3000)
       })()
     ])
+      pd = resPair[0]
+      chatRes = resPair[1]
+    }
 
     phoneData=pd
+    if(phoneData && chatRes){
+      try{ localStorage.setItem('_snoop_phone_cache_' + charId, JSON.stringify({pd, chatRes})) }catch(e){}
+    }
     if(!phoneData){
       const lk=$('#_snooplock')
       if(lk)lk.innerHTML=`<div style="color:#c47a7a;font-size:14px;margin-top:20px">解锁失败（需配置API）</div><div onclick="_navSkipPush=true;render('snoop')" style="margin-top:20px;padding:10px 24px;border-radius:16px;background:rgba(255,255,255,.1);font-size:12px;color:#c8a8d0;cursor:pointer">返回</div>`
@@ -25448,12 +25573,19 @@ ${recognizedContext ? '\n【你所知晓的关联情报】：\n' + recognizedCon
 
     phoneData.allChats = [realUserChat, ...(chatRes?.chats || [])]
 
-    setTimeout(()=>{
-      const lk=$('#_snooplock'),dk=$('#_phonedesktop')
-      if(lk){lk.style.transition='opacity .5s';lk.style.opacity='0';setTimeout(()=>lk.style.display='none',500)}
-      if(dk)dk.style.display='block'
+    // 🌟 有缓存直接 0 延迟秒开，无缓存平滑淡入
+    const lk=$('#_snooplock'), dk=$('#_phonedesktop')
+    if(cachedData){
+      if(lk) lk.style.display='none'
+      if(dk) dk.style.display='block'
       buildDesktop()
-    },1800)
+    } else {
+      setTimeout(()=>{
+        if(lk){ lk.style.transition='opacity .3s'; lk.style.opacity='0'; setTimeout(()=>lk.style.display='none',300) }
+        if(dk) dk.style.display='block'
+        buildDesktop()
+      }, 400)
+    }
   })()
 
   function buildDesktop(){
@@ -25474,14 +25606,22 @@ ${recognizedContext ? '\n【你所知晓的关联情报】：\n' + recognizedCon
       {k:'alarms',n:'闹钟',cl:'rgba(180,140,255,.7)',ic:snoopIcons.alarm},
       {k:'album',n:'相册',cl:'rgba(100,220,180,.7)',ic:snoopIcons.album},
       {k:'contact',n:'通讯录',cl:'rgba(255,150,200,.7)',ic:snoopIcons.contact},
-      {k:'unread',n:'未读'+(unread||''),cl:'rgba(100,255,150,.7)',ic:snoopIcons.phone}
+      {k:'alipay',n:'支付宝',cl:'rgba(22,119,255,.7)',ic:snoopIcons.alipay},
+      {k:'redbook',n:'小红书',cl:'rgba(255,36,66,.7)',ic:snoopIcons.redbook},
+      {k:'location',n:'地图',cl:'rgba(76,175,80,.7)',ic:snoopIcons.location},
+      {k:'bookshelf',n:'书架',cl:'rgba(250,173,20,.7)',ic:snoopIcons.bookshelf},
+      {k:'smarthome',n:'家居',cl:'rgba(200,100,220,.7)',ic:(c='var(--rose)',s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`}
     ]
+
     dk.innerHTML=`
       <div style="position:absolute;inset:0;background:${bg};filter:blur(20px) brightness(0.3);z-index:0"></div>
       <div style="position:absolute;inset:0;background:rgba(0,0,0,.4);z-index:1"></div>
       <div style="position:relative;z-index:2;min-height:100%">
         <div style="display:flex;justify-content:space-between;padding:8px 20px;padding-top:max(8px,env(safe-area-inset-top));font-size:11px;color:rgba(255,255,255,.5)"><span>${hr}:${mn}</span><span style="color:rgba(255,255,255,.7)">${escHtml(c.name)}的手机</span><span>${bat}%</span></div>
-        <div id="_sneakout" style="position:absolute;top:max(36px,calc(env(safe-area-inset-top)+28px));right:16px;padding:6px 12px;border-radius:12px;background:rgba(255,255,255,.08);cursor:pointer;font-size:10px;color:rgba(255,255,255,.4);z-index:5">✕ 退出</div>
+        <div style="position:absolute;top:max(36px,calc(env(safe-area-inset-top)+28px));right:16px;display:flex;gap:8px;z-index:5">
+          <div id="_snoopRefresh" style="padding:6px 12px;border-radius:12px;background:rgba(255,255,255,.1);cursor:pointer;font-size:10px;color:rgba(255,255,255,.7)">↻ 重新生成</div>
+          <div id="_sneakout" style="padding:6px 12px;border-radius:12px;background:rgba(255,255,255,.08);cursor:pointer;font-size:10px;color:rgba(255,255,255,.4)">✕ 退出</div>
+        </div>
         <div style="text-align:center;padding:16px 0 6px">
           <div style="font-size:52px;font-weight:200;color:rgba(255,255,255,.9);letter-spacing:4px;font-family:system-ui">${hr}:${mn}</div>
           <div style="font-size:11px;color:rgba(255,255,255,.35);margin-top:4px">${fdate(now())}</div>
@@ -25504,6 +25644,13 @@ ${recognizedContext ? '\n【你所知晓的关联情报】：\n' + recognizedCon
         <div style="text-align:center;padding:10px 0 20px;padding-bottom:max(20px,env(safe-area-inset-bottom));font-size:9px;color:rgba(255,255,255,.12)">被发现概率 30%</div>
       </div>`
     setTimeout(()=>{
+      const rf=$('#_snoopRefresh')
+      if(rf)rf.onclick=()=>{
+        try{ localStorage.removeItem('_snoop_phone_cache_' + charId) }catch(e){}
+        showToast('正在重新生成TA的手机数据...')
+        render('snoopphone')
+      }
+
       const sb=$('#_sneakout');if(sb)sb.onclick=async()=>{
   if(!caught&&Math.random()<0.4){
     caught=true;
@@ -25535,28 +25682,283 @@ ${recognizedContext ? '\n【你所知晓的关联情报】：\n' + recognizedCon
     setTimeout(()=>{ov.querySelector('#_apcl').onclick=()=>{ov.style.transition='transform .25s ease-in';ov.style.transform='translateX(100%)';setTimeout(()=>{ov.style.display='none';ov.style.transition='';ov.style.transform=''},260)}},30)
 
     if(key==='search'){tl.textContent='搜索记录';ct.innerHTML=(phoneData.searchHistory||[]).map(s=>'<div style="display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.06)">'+snoopIcons.search('rgba(255,255,255,.2)',16)+'<div style="flex:1;font-size:14px;color:'+tx+'">'+escHtml(s)+'</div><div style="font-size:10px;color:'+dm+'">'+Math.floor(Math.random()*23)+':'+String(Math.floor(Math.random()*60)).padStart(2,'0')+'</div></div>').join('')||'<div style="text-align:center;color:'+dm+';padding:40px">空</div>'}
-    else if(key==='memo'){tl.textContent='备忘录';ct.innerHTML='<div style="padding:20px;border-radius:16px;background:'+cb+'"><div style="font-size:10px;color:'+dm+';margin-bottom:14px">'+new Date().toLocaleDateString()+'</div><div style="font-size:14px;color:'+tx+';line-height:2.2;white-space:pre-wrap">'+escHtml(phoneData.memo||'（空白）')+'</div></div>'}
+        else if(key==='memo'){
+      tl.textContent='备忘录'
+      const memos = Array.isArray(phoneData.memos) && phoneData.memos.length ? phoneData.memos : [
+        {title:'私人备忘', content: phoneData.memo||'（暂无内容）', date: new Date().toLocaleDateString()}
+      ]
+      ct.innerHTML = memos.map((m, idx)=>`
+        <div style="padding:16px;border-radius:16px;background:${cb};margin-bottom:12px;border-left:4px solid rgba(255,200,100,.6);position:relative">
+          <div style="display:flex;align-items:center;margin-bottom:8px">
+            <div style="font-size:13px;font-weight:600;color:${tx}">${escHtml(m.title||'备忘')}</div>
+            <div style="font-size:10px;color:${dm};margin-left:8px">${escHtml(m.date||'')}</div>
+            <div class="_tamperNoteBtn" data-idx="${idx}" style="margin-left:auto;font-size:11px;padding:3px 10px;border-radius:10px;background:rgba(250,140,22,.15);border:1px solid rgba(250,140,22,.3);color:#ffc069;cursor:pointer">篡改</div>
+          </div>
+          <div style="font-size:13px;color:${tx};line-height:1.9;white-space:pre-wrap;opacity:.9">${escHtml(m.content||'')}</div>
+        </div>
+      `).join('')
+      setTimeout(()=>{
+        ct.querySelectorAll('._tamperNoteBtn').forEach(btn=>{
+          btn.onclick = () => {
+            const idx = parseInt(btn.dataset.idx)
+            const curNote = memos[idx]
+            const newTxt = prompt(`篡改备忘录【${curNote.title}】：`, curNote.content)
+            if(newTxt !== null && newTxt.trim() !== ''){
+              curNote.content = newTxt
+              showApp('memo')
+              _snoopAction('editMemo', charId, newTxt)
+
+            }
+          }
+        })
+      }, 30)
+    }
     else if(key==='drafts'){tl.textContent='草稿箱';ct.innerHTML='<div style="font-size:12px;color:'+dm+';margin-bottom:16px;text-align:center;font-style:italic">打了又删的消息...</div>'+(phoneData.drafts||[]).map(d=>'<div style="padding:16px;margin-bottom:10px;border-radius:14px;background:'+cb+';border-left:3px solid rgba(255,100,100,.4)"><div style="font-size:10px;color:rgba(255,130,130,.6);margin-bottom:8px">未发送·已删除</div><div style="font-size:14px;color:'+tx+';line-height:1.8;text-decoration:line-through;opacity:.6">'+escHtml(d)+'</div></div>').join('')}
     else if(key==='contact'){tl.textContent='通讯录';ct.innerHTML='<div style="text-align:center;padding:30px;border-radius:20px;background:'+cb+'">'+avatarEl(P().avatar,72,I.mirror('#c8a8d0',28))+'<div style="font-size:11px;color:'+dm+';margin:16px 0 8px">他给你的备注名</div><div style="font-size:24px;font-weight:600;color:#c8a8d0;letter-spacing:3px">'+escHtml(phoneData.contactName||P().name||'未设')+'</div><div style="font-size:10px;color:'+dm+';margin-top:16px">微聊号：'+(P().wechatId||'---')+'</div></div>'}
     else if(key==='alarms'){tl.textContent='闹钟';ct.innerHTML=(phoneData.alarms||[]).map(a=>'<div style="display:flex;align-items:center;gap:16px;padding:20px 16px;margin-bottom:10px;border-radius:16px;background:'+cb+'"><div style="font-size:36px;font-weight:200;color:'+tx+';font-family:system-ui;min-width:80px">'+escHtml(a.time||'07:00')+'</div><div style="flex:1;font-size:13px;color:rgba(255,255,255,.6)">'+escHtml(a.note||'')+'</div></div>').join('')||'<div style="text-align:center;color:'+dm+';padding:40px">没有闹钟</div>'}
     else if(key==='album'){
-  // 🌟 修复：严格遵守自动生图开关
-  const canGenImg = imgApi?.key && store.get('autoImageEnabled', true);
-  tl.textContent='相册';
-  ct.innerHTML='<div style="padding:20px;border-radius:16px;background:'+cb+';text-align:center"><div style="font-size:12px;color:'+dm+';margin-bottom:16px">最新一张照片</div><div id="_albimg" style="width:100%;aspect-ratio:1;border-radius:12px;background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center;overflow:hidden"><div style="font-size:12px;color:'+dm+'">'+(canGenImg?'生成中...':'（未开启自动生图）')+'</div></div><div style="font-size:13px;color:'+tx+';margin-top:14px;font-style:italic">'+escHtml(phoneData.recentPhoto||'一张照片')+'</div></div>';
-  if(canGenImg){
-    setTimeout(async()=>{
-      try{
-        const pr=await genSmartImagePrompt(c.id);
-        if(pr?.prompt){
-          const url=await genImage(pr.prompt+', phone photo, selfie');
-          if(url){const el=$('#_albimg');if(el)el.innerHTML='<img src="'+url+'" style="width:100%;height:100%;object-fit:cover;border-radius:12px">'}
-        }
-      }catch(e){const el=$('#_albimg');if(el)el.innerHTML='<div style="color:'+dm+'">生成失败</div>'}
-    },100)
-  }
-}
+      tl.textContent='相册'
+      const photos = Array.isArray(phoneData.photos) && phoneData.photos.length ? phoneData.photos : [
+        {title:'照片1', desc: phoneData.recentPhoto||'一张照片', time:'刚刚'},
+        {title:'照片2', desc:'偷拍的照片', time:'昨天'},
+        {title:'照片3', desc:'某次见面的留存', time:'3天前'}
+      ]
+      ct.innerHTML=`
+        <div style="font-size:12px;color:${dm};margin-bottom:12px">共 ${photos.length} 张回忆</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${photos.map((p, idx)=>`
+            <div class="_albumCard" data-idx="${idx}" style="background:${cb};border-radius:14px;padding:12px;cursor:pointer;border:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;justify-content:space-between;min-height:120px">
+              <div style="width:100%;height:65px;border-radius:8px;background:linear-gradient(135deg,rgba(232,160,180,.15),rgba(197,184,212,.15));display:flex;align-items:center;justify-content:center">
+                ${snoopIcons.album('rgba(232,160,180,.6)',24)}
+              </div>
+              <div style="font-size:12px;font-weight:600;color:${tx};margin-top:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escHtml(p.title)}</div>
+              <div style="font-size:10px;color:${dm};margin-top:2px">${escHtml(p.time||'')}</div>
+            </div>
+          `).join('')}
+        </div>
+      `
+      setTimeout(()=>{
+        ct.querySelectorAll('._albumCard').forEach(card=>{
+          card.onclick=()=>{
+            const p = photos[parseInt(card.dataset.idx)]
+            alert(`【${p.title}】\n\n拍摄时间：${p.time||'未知'}\n画面细节：\n${p.desc}`)
+          }
+        })
+      },30)
+    }
     else if(key==='unread'){tl.textContent='未读消息';ct.innerHTML='<div style="padding:30px;border-radius:16px;background:'+cb+';text-align:center"><div style="font-size:48px;font-weight:600;color:#c8a8d0;margin:12px 0">'+(phoneData.unreadCount||0)+'</div><div style="font-size:12px;color:'+dm+';line-height:1.8">条未读消息</div></div>'}
+    else if(key==='alipay'){
+      tl.textContent='支付宝'
+      const ap=phoneData.alipay||{},bills=ap.bills||[]
+      ct.innerHTML=`
+        <div style="background:linear-gradient(135deg,rgba(22,119,255,.25),rgba(9,88,217,.15));border:1px solid rgba(22,119,255,.3);border-radius:16px;padding:20px;color:#fff;margin-bottom:14px">
+          <div style="font-size:11px;opacity:.7;margin-bottom:4px">总资产(元)</div>
+          <div style="font-size:28px;font-weight:700;letter-spacing:1px">${escHtml(ap.balance||'0.00')}</div>
+          <div style="display:flex;justify-content:space-between;margin-top:14px">
+            <div style="text-align:center;flex:1"><div style="font-size:10px;opacity:.6">本月支出</div><div style="font-size:14px;font-weight:600;margin-top:2px">¥${escHtml(ap.monthSpend||'0')}</div></div>
+            <div style="text-align:center;flex:1"><div style="font-size:10px;opacity:.6">理财</div><div style="font-size:11px;margin-top:2px;opacity:.9">${escHtml(ap.fund||'暂无')}</div></div>
+          </div>
+        </div>
+        <div style="font-size:12px;font-weight:600;color:${tx};margin-bottom:8px">账单明细</div>
+        ${bills.map(b=>`
+          <div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)">
+            <div style="width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;flex-shrink:0">${snoopIcons.alipay('rgba(255,255,255,.6)',18)}</div>
+            <div style="flex:1;margin-left:10px">
+              <div style="font-size:13px;color:${tx}">${escHtml(b.item)}</div>
+              <div style="font-size:10px;color:${dm};margin-top:2px">${escHtml(b.time)}</div>
+            </div>
+            <div style="font-size:14px;font-weight:600;color:${String(b.amount).startsWith('+')?'#52c41a':'#ff7875'}">${escHtml(b.amount)}</div>
+          </div>
+        `).join('')}
+        <div style="text-align:center;margin-top:16px">
+          <div id="_stealBtn" style="display:inline-block;padding:10px 28px;border-radius:20px;background:rgba(255,77,79,.2);border:1px solid rgba(255,77,79,.4);color:#ff7875;font-size:13px;font-weight:600;cursor:pointer">偷偷转账</div>
+        </div>`
+      setTimeout(()=>{const b=$('#_stealBtn');if(b)b.onclick=()=>_snoopAction('steal',charId)},30)
+    }
+    else if(key==='redbook'){
+      tl.textContent='小红书'
+      const rb=phoneData.redbook||[]
+      ct.innerHTML=`
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          ${snoopIcons.redbook('rgba(255,77,79,.8)',18)}
+          <div style="font-size:14px;font-weight:600;color:${tx}">动态发现</div>
+          <div style="margin-left:auto;font-size:11px;color:${dm}">Ta的主页</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
+          ${rb.map((p, idx)=>`
+            <div class="_redCard" data-idx="${idx}" style="background:${cb};border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.06);cursor:pointer">
+              <div style="width:100%;height:100px;background:linear-gradient(135deg,rgba(255,36,66,.2),rgba(255,100,100,.08));display:flex;align-items:center;justify-content:center;padding:10px;text-align:center">
+                <div style="font-size:11px;color:#ff7875;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${escHtml(p.title)}</div>
+              </div>
+              <div style="padding:10px">
+                <div style="font-size:12px;font-weight:600;color:${tx};display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:6px">${escHtml(p.title)}</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:${dm}">
+                  <span>${escHtml(p.author||c.name)}</span>
+                  <span style="color:#ff7875">赞 ${p.likes||120}</span>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="text-align:center;margin-top:16px">
+          <div id="_fakePostBtn" style="display:inline-block;padding:10px 28px;border-radius:20px;background:rgba(255,77,79,.2);border:1px solid rgba(255,77,79,.4);color:#ff7875;font-size:13px;font-weight:600;cursor:pointer">冒充发布动态</div>
+        </div>`
+      setTimeout(()=>{
+        const b=$('#_fakePostBtn')
+        if(b) b.onclick=()=>_snoopAction('fakeRedbook',charId)
+                ct.querySelectorAll('._redCard').forEach(card=>{
+          card.onclick=()=>{
+            const p = rb[parseInt(card.dataset.idx)]
+            const cmts = Array.isArray(p.comments) ? p.comments : ['暂无评论']
+            const pop = document.createElement('div')
+            pop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);backdrop-filter:blur(10px);z-index:9999;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn .2s'
+            pop.innerHTML = `
+              <div style="width:100%;max-width:420px;max-height:85vh;background:#1a1224;border-radius:24px 24px 0 0;padding:24px 20px;overflow-y:auto;color:#fff;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <div style="font-size:12px;color:rgba(255,255,255,.5)">@${escHtml(p.author||c.name)} 的私密动态</div>
+                  <div id="_closeRedPop" style="font-size:13px;padding:4px 12px;border-radius:12px;background:rgba(255,255,255,.1);color:#ff7875;cursor:pointer">关闭</div>
+                </div>
+                <div style="font-size:16px;font-weight:700;color:#fff;line-height:1.4">${escHtml(p.title)}</div>
+                <div style="font-size:13px;color:rgba(255,255,255,.85);line-height:1.9;white-space:pre-wrap;background:rgba(255,255,255,.04);padding:14px;border-radius:14px">${escHtml(p.content||p.preview||'')}</div>
+                <div style="font-size:11px;color:#ff7875;font-weight:600">热评互动</div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  ${cmts.map(cmt=>`
+                    <div style="font-size:12px;color:rgba(255,255,255,.7);background:rgba(255,255,255,.03);padding:10px 12px;border-radius:10px;line-height:1.5">${escHtml(cmt)}</div>
+                  `).join('')}
+                </div>
+              </div>
+            `
+            document.body.appendChild(pop)
+            pop.querySelector('#_closeRedPop').onclick = () => pop.remove()
+            pop.onclick = (e) => { if(e.target === pop) pop.remove() }
+          }
+        })
+      },30)
+    }
+
+    else if(key==='location'){
+      tl.textContent='地图定位'
+      const loc=phoneData.location||{},hist=loc.history||[]
+      ct.innerHTML=`
+        <style>@keyframes _radarPulse{0%{transform:translate(-50%,-50%) scale(.3);opacity:.6}100%{transform:translate(-50%,-50%) scale(1.2);opacity:0}}</style>
+        <div style="position:relative;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.2);border-radius:16px;padding:20px;margin-bottom:14px;overflow:hidden;min-height:180px">
+          <div style="position:absolute;top:50%;left:50%;width:120px;height:120px;border-radius:50%;border:2px solid rgba(76,175,80,.4);animation:_radarPulse 2s ease-out infinite"></div>
+          <div style="position:absolute;top:50%;left:50%;width:60px;height:60px;border-radius:50%;border:2px solid rgba(76,175,80,.5);animation:_radarPulse 2s ease-out infinite .5s"></div>
+          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:50%;background:#4caf50;box-shadow:0 0 12px #4caf50"></div>
+          <div style="position:relative;z-index:1;text-align:center;margin-top:110px">
+            <div style="font-size:15px;font-weight:700;color:#8bc34a">${escHtml(loc.place||'未知位置')}</div>
+            <div style="font-size:11px;color:${dm};margin-top:4px">${escHtml(loc.addr||'')}</div>
+            <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">${escHtml(loc.time||'刚刚')} 定位</div>
+          </div>
+        </div>
+        <div style="font-size:12px;font-weight:600;color:${tx};margin-bottom:8px">今日轨迹</div>
+        ${hist.map((h,i)=>`
+          <div style="display:flex;align-items:flex-start;padding:8px 0;border-left:2px solid rgba(76,175,80,.3);margin-left:8px;padding-left:14px;position:relative">
+            <div style="position:absolute;left:-5px;top:12px;width:8px;height:8px;border-radius:50%;background:${i===0?'#4caf50':'#555'}"></div>
+            <div style="flex:1">
+              <div style="font-size:13px;color:${tx}">${escHtml(h.place)}</div>
+              <div style="font-size:10px;color:${dm};margin-top:2px">${escHtml(h.time)} · ${escHtml(h.duration)}</div>
+            </div>
+          </div>
+        `).join('')}`
+    }
+
+    else if(key==='bookshelf'){
+      tl.textContent='书架'
+      const books=phoneData.bookshelf||[]
+      ct.innerHTML=`
+        <div style="font-size:14px;font-weight:600;color:${tx};margin-bottom:12px">阅读书目</div>
+        ${books.length?books.map(b=>`
+          <div style="background:${cb};border-radius:14px;padding:14px;margin-bottom:10px;border-left:4px solid rgba(250,173,20,.6)">
+            <div style="font-size:14px;font-weight:600;color:${tx};margin-bottom:4px">${escHtml(b.title)}</div>
+            <div style="font-size:11px;color:${dm};margin-bottom:6px">${escHtml(b.progress)} · 上次阅读：${escHtml(b.lastRead)}</div>
+            ${b.highlight?`<div style="font-size:12px;color:rgba(250,173,20,.8);font-style:italic;padding:8px 10px;background:rgba(250,173,20,.06);border-radius:8px;line-height:1.6">"${escHtml(b.highlight)}"</div>`:''}
+          </div>
+        `).join(''):'<div style="text-align:center;color:'+dm+';padding:30px">书架空空</div>'}`
+    }
+    else if(key==='smarthome'){
+      tl.textContent='智能家居'
+      const sh=phoneData.smartHome||{}, devs=sh.devices||[
+        {name:'卧室温控',status:'24℃'},
+        {name:'智能门锁',status:'已锁定'},
+        {name:'主灯照明',status:'开启'}
+      ]
+      ct.innerHTML=`
+        <div style="background:${cb};border-radius:16px;padding:20px;text-align:center;margin-bottom:14px;border:1px solid rgba(255,255,255,.06)">
+          <div style="font-size:15px;font-weight:600;color:${tx};margin-bottom:4px">${escHtml(sh.place||c.name+'的私宅')}</div>
+          <div style="font-size:11px;color:#52c41a;margin-bottom:16px">安防系统已被连接</div>
+          <div style="display:flex;gap:10px;justify-content:center">
+            <div id="_prankBed" style="padding:10px 16px;border-radius:12px;background:rgba(255,77,79,.15);border:1px solid rgba(255,77,79,.3);color:#ff7875;font-size:12px;font-weight:600;cursor:pointer">弄乱TA的床</div>
+            <div id="_prankLight" style="padding:10px 16px;border-radius:12px;background:rgba(100,180,255,.15);border:1px solid rgba(100,180,255,.3);color:#64b4ff;font-size:12px;font-weight:600;cursor:pointer">远程关灯</div>
+          </div>
+        </div>
+        <div style="font-size:12px;font-weight:600;color:${tx};margin-bottom:8px">已连接设备状态</div>
+        ${devs.map(d=>`
+          <div style="display:flex;align-items:center;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px">
+            <span style="color:${tx}">${escHtml(d.name)}</span>
+            <span style="margin-left:auto;color:${dm}">${escHtml(d.status)}</span>
+          </div>
+        `).join('')}
+      `
+      setTimeout(()=>{
+        const b1=$('#_prankBed'), b2=$('#_prankLight')
+        if(b1) b1.onclick=()=>_snoopAction('prankBed',charId)
+        if(b2) b2.onclick=()=>_snoopAction('prankLight',charId)
+      },30)
+    }
+
+    else if(key==='music'){
+      tl.textContent='音乐'
+      const mu=phoneData.music||{},recent=mu.recent||[]
+      ct.innerHTML=`
+        <style>@keyframes _discSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
+        <div style="background:linear-gradient(135deg,rgba(200,100,220,.15),rgba(100,150,255,.1));border-radius:16px;padding:20px;margin-bottom:14px;text-align:center">
+          <div style="width:80px;height:80px;margin:0 auto 12px;border-radius:50%;background:#222;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,0,0,.3);animation:_discSpin 4s linear infinite">
+            <div style="width:24px;height:24px;border-radius:50%;background:#111;border:3px solid #555"></div>
+          </div>
+          <div style="font-size:14px;font-weight:700;color:${tx}">${escHtml(mu.playing||'未在播放')}</div>
+          <div style="font-size:11px;color:${dm};margin-top:4px">${escHtml(mu.playlist||'')}</div>
+          ${mu.loopSong?`<div style="margin-top:8px;font-size:10px;padding:4px 10px;border-radius:10px;background:rgba(255,255,255,.06);color:#c8a8d0;display:inline-block">单曲循环：${escHtml(mu.loopSong)}</div>`:''}
+          ${mu.lyrics?`<div style="margin-top:10px;font-size:12px;font-style:italic;color:rgba(200,168,208,.7);line-height:1.7">"${escHtml(mu.lyrics)}"</div>`:''}
+        </div>
+        <div style="font-size:12px;font-weight:600;color:${tx};margin-bottom:8px">最近播放</div>
+        ${recent.map((s,i)=>`
+          <div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;color:${dm};display:flex;align-items:center">
+            <span style="color:rgba(255,255,255,.2);margin-right:8px;font-size:11px;width:16px">${i+1}</span>
+            <span>${escHtml(s)}</span>
+          </div>
+        `).join('')}`
+    }
+    else if(key==='forum2'){
+      tl.textContent='论坛'
+      const fm=phoneData.forum2||{},posts=fm.posts||[],bh=fm.browseHistory||[]
+      ct.innerHTML=`
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+          ${snoopIcons.forum2('rgba(114,46,209,.8)',18)}
+          <div style="font-size:14px;font-weight:600;color:${tx}">论坛</div>
+          <div style="margin-left:auto;font-size:11px;color:${dm}">ID: ${escHtml(fm.username||'匿名')}</div>
+        </div>
+        <div style="font-size:12px;font-weight:600;color:${tx};margin-bottom:8px">Ta发表的帖子</div>
+        ${posts.map(p=>`
+          <div style="background:${cb};border-radius:14px;padding:14px;margin-bottom:10px;border:1px solid rgba(255,255,255,.06)">
+            <div style="display:flex;align-items:center;margin-bottom:8px">
+              <span style="font-size:10px;padding:2px 8px;border-radius:8px;background:rgba(200,168,208,.15);color:#c8a8d0">${escHtml(p.board||'水区')}</span>
+              <span style="margin-left:auto;font-size:10px;color:${dm}">${p.replies||0}条回复</span>
+            </div>
+            <div style="font-size:14px;font-weight:600;color:${tx};margin-bottom:6px">${escHtml(p.title)}</div>
+            <div style="font-size:12px;color:${dm};line-height:1.7">${escHtml(p.content)}</div>
+          </div>
+        `).join('')}
+        ${bh.length?`
+          <div style="font-size:12px;font-weight:600;color:${tx};margin:14px 0 8px">浏览过的帖子</div>
+          ${bh.map(t=>`<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;color:${dm}">${escHtml(t)}</div>`).join('')}
+        `:''}
+        <div style="text-align:center;margin-top:14px">
+          <div id="_fakeForumBtn" style="display:inline-block;padding:10px 28px;border-radius:20px;background:rgba(114,46,209,.2);border:1px solid rgba(114,46,209,.4);color:#b37feb;font-size:13px;font-weight:600;cursor:pointer">冒充发帖</div>
+        </div>`
+      setTimeout(()=>{const b=$('#_fakeForumBtn');if(b)b.onclick=()=>_snoopAction('fakeForum',charId)},30)
+    }
+
     else if(key==='chats'){
   tl.textContent='聊天记录'
   var chats=phoneData.allChats||[]
@@ -25624,56 +26026,166 @@ ${recognizedContext ? '\n【你所知晓的关联情报】：\n' + recognizedCon
 }
 
 // ==========================================
-// 角色随机查岗（后台自动触发）
+// 移植自《时空机》：离线突发查岗与抓出轨引擎
 // ==========================================
 function startAutoCheckup(){
-  setInterval(()=>{
-    // 检查角色主动消息开关
-    if(!store.get('autoBgMsgEnabled',false))return
-    // 每次间隔检查，20%概率触发
-    if(Math.random()>0.20)return
-    // 冷却：20分钟内不重复
-    const lastCheck=store.get('lastAutoCheckup',0)
-    if(Date.now()-lastCheck<1200000)return
-    // 不在聊天页时才触发
-    if(document.getElementById('_msglist'))return
+  // 记录活跃时间
+  const updateActive = () => localStorage.setItem('_otome_last_active', Date.now().toString())
+  updateActive()
+  setInterval(updateActive, 15000)
 
-    const api=getApi()
-    if(!api||!api.key)return
+  // 1. 离线回归突发查岗（离线超 60 分钟上线触发）
+  const lastActiveStr = localStorage.getItem('_otome_last_active_prev')
+  const nowTs = Date.now()
+  localStorage.setItem('_otome_last_active_prev', nowTs.toString())
 
-    const myChars=getMyChars().filter(c=>!c.isDeleted&&!c.isBlocked)
-    if(!myChars.length)return
+  if(lastActiveStr){
+    const diffMins = (nowTs - parseInt(lastActiveStr)) / (1000 * 60)
+    if(diffMins >= 60){
+      setTimeout(async ()=>{
+        const api = getApi()
+        if(!api||!api.key) return
+        const myChars = getMyChars().filter(c=>!c.isDeleted&&!c.isBlocked)
+        if(myChars.length < 2) return
 
-    // 如果最近跟其他角色互动过，查岗概率翻倍
-let hasEvidence=false
-const recentChar=myChars[Math.floor(Math.random()*myChars.length)]
-// 修复：只检查他认识的社交圈
-const otherChars=getMyChars().filter(x=>x.id!==recentChar.id && (
-  (x.relation||'').includes(recentChar.name) || 
-  (x.personality||'').includes(recentChar.name) || 
-  (recentChar.personality||'').includes(x.name) || 
-  (recentChar.relation||'').includes(x.name)
-))
-otherChars.forEach(oc=>{
-  const ocMsgs=getMsgs(oc.id).slice(-3)
-  if(ocMsgs.length&&ocMsgs.some(m=>m.from==='u'))hasEvidence=true
-})
-    
-    // 有证据时100%触发，没证据时正常概率
-    if(!hasEvidence&&Math.random()>0.5)return
+        // 随机挑选一个查岗吃醋的角色
+        const snooper = myChars[Math.floor(Math.random()*myChars.length)]
+        // 寻找玩家跟其他角色的最后一条互动（抓出轨）
+        const otherChars = myChars.filter(x=>x.id!==snooper.id)
+        let illicitTarget = null
+        let illicitMsg = ''
 
-    const c=recentChar
-    // 🌟 如果跟这个角色最近30分钟内聊过，不查岗
-    const _ckMsgs=getMsgs(c.id)
-    if(_ckMsgs.length){
-      try{
-        const _ckLast=new Date(_ckMsgs[_ckMsgs.length-1].time).getTime()
-        if(Date.now()-_ckLast<1800000)return
-      }catch(e){}
+        for(const oc of otherChars){
+          const mList = getMsgs(oc.id)
+          const lastUserMsg = mList.slice().reverse().find(m=>m.from==='u' && m.text && !m.text.startsWith('<'))
+          if(lastUserMsg){
+            illicitTarget = oc
+            illicitMsg = lastUserMsg.text
+            break
+          }
+        }
+
+        if(illicitTarget && illicitMsg){
+          if(navigator.vibrate) navigator.vibrate([100, 80, 100])
+          
+          const promptText = `你是「${snooper.name}」。
+【性格】：${snooper.personality||'自然'}
+【与对方关系】：${snooper.relation||'密切'}
+
+【突发反向查岗事件】：
+对方已经消失超过 ${Math.floor(diffMins/60)} 小时没有理你了。
+你极度缺乏安全感或占有欲发作，偷偷越权调取了对方的设备记录，竟然震惊地发现对方背着你，给【${illicitTarget.name}】发了这样一条消息：“${illicitMsg.slice(0,60)}”！
+
+请根据你的性格（霸道/病娇发疯/委屈吃醋/冷嘲热讽/隐忍逼问），立刻发 2~3 条消息质问对方！
+要求：
+1. 直截了当地拿这条消息贴脸质问，表现出强烈的反差和吃醋情绪！
+2. 绝对严禁使用任何 emoji 表情符号。
+3. 返回纯JSON：{"messages":["质问消息1","质问消息2"]}`
+
+          try{
+            const res = await askAIJson('只返回JSON', promptText, 600)
+            if(res && res.messages && res.messages.length){
+              const arr = getMsgs(snooper.id)
+              const ts = ftime(now())
+              res.messages.forEach(msg=>{
+                arr.push({from:'c', text:msg, time:ts, read:false})
+              })
+              saveMsgs(snooper.id, arr)
+              showBgNotification(snooper, res.messages[0])
+            }
+          }catch(e){}
+        }
+      }, 5000)
     }
-    store.set('lastAutoCheckup',Date.now())
+  }
+
+  // 2. 在线定时查岗（每 15 分钟触发）
+  setInterval(()=>{
+    if(!store.get('autoBgMsgEnabled', true)) return
+    if(Math.random() > 0.3) return
+    const lastCheck = store.get('lastAutoCheckup', 0)
+    if(Date.now() - lastCheck < 900000) return
+
+    const myChars = getMyChars().filter(c=>!c.isDeleted&&!c.isBlocked)
+    if(!myChars.length) return
+    const c = myChars[Math.floor(Math.random()*myChars.length)]
+    store.set('lastAutoCheckup', Date.now())
     triggerCharCheckup(c.id)
-  },45000)
+  }, 60000)
+}
+
+// ===== 移植自时空机：查岗恶作剧与即时算账系统 =====
+async function _snoopAction(type, charId, customInput){
+  const c = charList.find(x=>x.id===charId)
+  if(!c) return
+  const pe = P()
+  let actionDesc = ''
+  let detailDesc = ''
+
+  if(type === 'steal'){
+    const amount = (Math.floor(Math.random()*200)+10).toFixed(2)
+    actionDesc = `偷偷用你的手机给自己转了¥${amount}`
+    detailDesc = `刚刚收到了扣款通知：账户被对方转走了¥${amount}。`
+  } else if(type === 'fakeRedbook'){
+    const userInput = prompt('输入你要冒充Ta发布的动态内容：')
+    if(!userInput) return
+    actionDesc = `冒充你在动态平台发了：\"${userInput}\"`
+    detailDesc = `你打开动态平台，发现自己的账号被对方冒名顶替发了一条动态：\"${userInput}\"。`
+  } else if(type === 'fakeForum'){
+    const userInput = prompt('输入帖子内容（冒充Ta在论坛发布）：')
+    if(!userInput) return
+    actionDesc = `冒充你在论坛发了帖子：\"${userInput}\"`
+    detailDesc = `你登入论坛后台，赫然发现对方用你的账号发了一篇引人注目的新帖：\"${userInput}\"。`
+  } else if(type === 'editMemo'){
+    const userInput = customInput || prompt('把备忘录内容修改为：')
+    if(!userInput) return
+    actionDesc = `偷偷把你的私人备忘录修改为：\"${userInput}\"`
+    detailDesc = `你打开私人备忘录，赫然发现自己的秘密被对方恶意篡改成了：\"${userInput}\"。`
+  } else if(type === 'prankBed'){
+    actionDesc = `潜入你的房间偷偷弄乱了你的床`
+    detailDesc = `智能家居安防传感器警报响起：检测到房间床铺被恶意翻动弄乱，绝对是对方干的。`
+  } else if(type === 'prankLight'){
+    actionDesc = `远程黑进智能家居强行关掉了你房间的灯`
+    detailDesc = `你屋里的灯突然全部熄灭，智能中控显示被对方远程恶意切断电源。`
+  } else return
+
+  const labels = {steal:'转账成功',fakeRedbook:'已冒充发布',fakeForum:'帖子已发布',editMemo:'备忘录已篡改',prankBed:'已弄乱床铺',prankLight:'已切断照明'}
+  showToast(labels[type]||'操作成功')
+
+  if(navigator.vibrate) navigator.vibrate([80, 50, 80])
+
+  addMemoryEvent(charId, `对方趁你不注意动了你的东西，并且${actionDesc}。`, 'snoop_prank')
+
+  const api = getApi()
+  if(!api||!api.key) return
+
+  const promptText = `你是「${c.name}」。
+【性格】：${c.personality||'真实自然'}
+【与对方关系】：${c.relation||'密切'}
+
+【突发紧急事件】：
+${detailDesc}
+你立刻意识到是对方搞的鬼！
+
+请根据你的性格（傲娇/炸毛/霸道/宠溺气笑/危险逼近等），立刻给对方连续发 2~3 条消息质问！
+要求：
+1. 语气鲜明，符合人设，像真人抓到恶作剧时的第一现场反应。
+2. 绝对严禁使用任何 emoji 表情符号。
+3. 返回纯JSON：{"messages":["第一条消息","第二条消息"],"mood":"心情状态"}`
+
+  try{
+    const res = await askAIJson('只返回JSON', promptText, 600)
+    if(res && res.messages && res.messages.length){
+      const arr = getMsgs(charId)
+      const ts = ftime(now())
+      res.messages.forEach(msg => {
+        arr.push({from:'c', text:msg, time:ts, read:false})
+      })
+      if(res.mood){ c.mood = res.mood; saveCharList() }
+      saveMsgs(charId, arr)
+      showBgNotification(c, res.messages[0])
+    }
+  }catch(e){}
 }
 
 // 启动自动查岗
