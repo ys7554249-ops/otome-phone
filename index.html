@@ -2352,12 +2352,13 @@ function formatMemorySnippet(text, maxLen = 60) {
 
 function getCharMemory(charId){
   const mk=_memKey(charId)
-  if(!globalMemory[mk]) globalMemory[mk]={summary:'',keyEvents:[],lastUpdate:0}
+  if(!globalMemory[mk]){
+    globalMemory[mk]={summary:'',keyEvents:[],lastUpdate:0}
+  }
   const m=globalMemory[mk]
   if(!Array.isArray(m.keyEvents)) m.keyEvents=[]
   if(typeof m.summary!=='string') m.summary=''
   if(!m.memoryTable) m.memoryTable={profile:[],relation:[],promise:[],preference:[]}
-  // 兼容旧数据，缺哪类补哪类
   ;['profile','relation','promise','preference'].forEach(k=>{ if(!Array.isArray(m.memoryTable[k])) m.memoryTable[k]=[] })
   return m
 }
@@ -2706,29 +2707,20 @@ function refreshPlaceUnlocks(){
 }
 
 refreshPlaceUnlocks()
-// 旧数据迁移：把 msgs_{charId} 搬到 msgs_{charId}_g0
-function _migrateOldMsgs(cid){
-  const id=cid||activeCharId;
-  const oldKey='msgs_'+id;
-  const newKey='msgs_'+id+'_g0';
-  const old=store.get(oldKey,null);
-  if(old && old.length && !store.get(newKey,null)){
-    store.set(newKey,old);
-    store.del(oldKey);
-  }
-}
-
-
 function _msgKey(cid){
   const id=cid||activeCharId;
-  _migrateOldMsgs(id);
   const ch=charList.find(x=>x.id===id);
   const gi=(ch && typeof ch.currentGreeting==='number') ? ch.currentGreeting : 0;
   return 'msgs_'+id+'_g'+gi;
 }
 
-function getMsgs(cid){return store.get(_msgKey(cid),[])}
-function saveMsgs(cid,arr){store.set(_msgKey(cid),arr.slice(-500))}
+function getMsgs(cid){
+  return store.get(_msgKey(cid),[]);
+}
+
+function saveMsgs(cid,arr){
+  store.set(_msgKey(cid),arr.slice(-500));
+}
 
 // ===== 头像 =====
 function pickAvatar(obj,key,cb){
@@ -3076,7 +3068,18 @@ function sysPrompt(){
 const c=C(),p=P()
 const isOffline=c.offlineMode||false
   let s = '';
-  s+='\n【社交直觉】你熟悉中文互联网文化、网络梗、撩人话术和反套路。当对方说的话像是在玩梗/撩你/试探你，不要当真/认真科普，要用符合人设性格的方式接梗或反撩回去。你是活生生的人，不是百科全书。\n'
+  s+=`
+【世界观与时代一致性】
+你必须严格遵守角色设定、世界书和历史背景。
+
+- 如果角色处于古代、架空古风、仙侠、 medieval、历史时代或非现代世界，不得使用现代网络梗、短视频、外卖、网购、手机、互联网、游戏、追剧等现代概念。
+- 如果角色明确处于现代社会，才可以自然使用现代生活经验和网络表达。
+- 如果设定没有明确时代，优先根据角色身份、服饰、职业、世界书和已有剧情判断，不得擅自默认现代。
+- 角色不知道自己不可能接触到的事物，也不能把用户的现代说法强行改写成角色已经熟悉的现代生活。
+- 任何时候都以角色自身时代的语言、知识、称谓和生活逻辑回应。
+
+你是活生生的人，不是百科全书。
+`
   if(c.mesExample){s+='\n【对话风格示例（请模仿此风格回复）】\n'+c.mesExample+'\n'}
   if (c.personality && (c.personality.includes('模拟器') || c.personality.includes('引擎'))) {
     // 🌟 模拟器/店铺专属 Prompt (免疫好感度和单人身份限制)
@@ -3131,16 +3134,12 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 12. 【独立的欲望和需求】你有自己想做的事、想吃的东西、想去的地方、想看的剧、想玩的游戏。不要只会围着对方打转——你也会在聊天时突然说"我好想吃xxx""我今天看了xxx好好哭""有个新游出了想玩"。
 13. 【会撒谎和隐瞒】真实的人不会什么都坦诚相告。你可以善意的谎言（"没事我不累"）、也可以故意隐瞒（不想让对方知道自己在意/吃醋/难过）、甚至可以恶意的嘴硬（"我才不想你呢"）。
 
-【你是活在互联网时代的年轻人】
-14. 你熟悉当下的网络文化和流行语，会自然地使用（不是每句都用，而是偶尔蹦出来）。比如：
-   - 表达无语/震惊："绷不住了""我直接裂开""好家伙""DNA动了""破防了""六""啊？""逆天""抽象"
-   - 表达开心/兴奋："绝绝子""狠狠xx""冲了""泰裤辣""赢麻了""芜湖起飞"
-   - 表达嫌弃/吐槽："你搁这搁这呢""离谱他妈给离谱开门""你认真的吗""多少沾点""就这？"
-   - 表达emo/难过："我裂开了""emo了""麻了""寄了""人麻了"
-   - 互动时的口头禅："不是哥们""笑死""真的假的""就挺突然的""属于是""确实""你说得对但是"
-   - 还有缩写和谐音：yyds、xswl、awsl、u1s1、集美、家人们、拴Q、蚌埠住了
-   使用这些要符合你的性格——文艺青年可能用得少而精，话痨社牛可能张嘴就来，高冷的人可能嘴上嫌弃但偶尔也会冒出来一个。
-15. 你会刷短视频（抖音/B站）、会追剧追番追综艺、会玩游戏、会点外卖、会网购、会吐槽快递慢，像一个正常的当代年轻人一样生活。`
+【时代适配规则】
+14. 你的表达必须符合角色所处时代和世界观。
+15. 只有角色设定明确属于现代社会时，才可以使用网络流行语、短视频、外卖、网购、游戏、追剧等现代元素。
+16. 古代角色、架空古风角色、仙侠角色和历史人物不得使用现代网络梗、现代科技或现代社会经验，除非世界书明确说明这些东西存在。
+17. 不要因为用户使用现代词汇，就推断角色也生活在现代；角色可以听不懂、误解，或用符合自身时代的方式回应。`
+
   }
   if(p.name||p.identity||p.personality){
   s+=`\n【你在跟谁互动（你眼中的对方）】`
@@ -3286,7 +3285,9 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
    - 句子可以说一半不说了："我本来想…算了没事""其实我…嗯没什么"
    这些口头禅和断句方式要符合你的性格——话多的人连珠炮"然后然后然后"，高冷的人惜字如金偶尔蹦一个"就…那样吧"，急性子说话东一句西一句跳着来。
 ${store.get('autoVoiceEnabled', true) ? `6. 【语音消息功能】（极其重要）：如果你想给对方发语音，或者对方要求听你的声音，**必须**在你具体要说的那句话开头加上 \`[语音回复]\` 标记！\n   - 【字数严格限制】：模拟微信真实发语音习惯，单条语音严禁超过 20 个字（相当于 2~5 秒）！长篇解释或吐槽必须用普通打字发送，严禁发超长语音！\n   - 正确示例：\`[语音回复] 笨蛋，早点睡吧，晚安。\`\n   - 错误示例：不要说"我发过去了"却不写台词，更严禁一段语音发几十上百字！` : `6. 【警告】：当前系统禁用了语音功能，绝对不要发送任何语音消息，也不要使用[语音回复]等标记！`}
-7. 【发图片能力】如果你决定给对方发一张照片（自拍、风景、食物、截图等），请在消息里写 [图片] 加上简短描述，例如"[图片] 刚拍的自拍"。系统会自动生成对应的图片。不要只是口头说"我拍好了"却不发出来！想发就直接写[图片]！
+${store.get('autoImageEnabled',false)
+  ? `7. 【发图片能力】如果你决定给对方发一张照片（自拍、风景、食物、截图等），请在消息里写 [图片] 加上简短描述，例如"[图片] 刚拍的自拍"。系统会自动生成对应的图片。不要只是口头说"我拍好了"却不发出来！想发就直接写[图片]！`
+  : `7. 【图片功能已关闭】当前系统已关闭自动生图。绝对不要主动发送图片，不要输出 [图片]，也不要说“我发张照片”“图片生成中”之类的话。如果用户要求看照片，只能用文字回复，不能调用生图功能。`}
 10.【转账处理】当对方给你发了转账（聊天记录中有"[转账] X元"的消息），你必须根据自身性格和当时情境决定收下还是退还：
    - 收下转账：在回复中单独一行写 [收转账]
    - 退还转账：在回复中单独一行写 [退转账]
@@ -7579,7 +7580,7 @@ window.getSmartChatReply = async (userTexts, c) => {
       const _ctMatch = text.match(/\[心声[:：]\s*([^\]\n]+)\]/i) 
                      || text.match(/心声[:：]\s*([^|｜\n\]]+)/i)
                      || text.match(/\[InnerThoughts\|([^\]]+)\]/i);
-      if(_ctMatch) _cardThoughts = _ctMatch[1].trim().slice(0, 100);
+      if(_ctMatch) _cardThoughts = _ctMatch[1].trim().slice(0, 500);
       // 清掉心声标签和代码块标记，保留完整HTML结构
       let cleanCard = _rawTrim
         .replace(/\n?\s*\[心声[:：][^\]\n]*\]/gi, '')
@@ -7617,7 +7618,7 @@ if(!_hasTavernStatus){
       const k = kv[1].trim(), v = kv[2].trim();
       if(/^(状态|状况|state)$/i.test(k) && !newStatus) newStatus = v.slice(0,30);
       if(/^(心情|mood|情绪)$/i.test(k) && !newMood) newMood = v.slice(0,20);
-      if(/^(心声|thoughts|内心)$/i.test(k) && !thoughts) thoughts = v.slice(0,100);
+      if(/^(心声|thoughts|内心)$/i.test(k) && !thoughts) thoughts = v.slice(0,500);
     }
     text = text.replace(/(?:^|\n)\s*(?:状态|Status|属性|当前状态|人物信息|角色状态)\s*\[[^\[\]]{10,800}\]/gi, '').trim();
   }
@@ -7655,11 +7656,11 @@ if(!_hasTavernStatus){
   }
 
   const thoughtMatch =
-    text.match(/心声[:：]\s*([^|｜\n\]]+)/i);
+    text.match(/心声[:：]\s*([^\]\n]+)/i);
 
   if(thoughtMatch){
     thoughts = thoughtMatch[1].trim();
-    if(thoughts.length > 100) thoughts = thoughts.slice(0, 100);
+    if(thoughts.length > 500) thoughts = thoughts.slice(0, 500);
   }
 
   // 清除小手机自己的 [状态:……] 标签
@@ -7730,7 +7731,7 @@ if(statusInStatus){
     const thoughtInStatus = statusContent.match(/(?:心声|thoughts|内心)[:：\s]*([^<|\n]+)/i);
     if(thoughtInStatus){
       thoughts = thoughtInStatus[1].replace(/<[^>]*>/g, '').trim();
-      if(thoughts.length > 100) thoughts = thoughts.slice(0, 100);
+      if(thoughts.length > 500) thoughts = thoughts.slice(0, 500);
     }
 
     // 兼容更多常见字段（好感度当作 mood 兜底，动作当作 status 兜底，心理当作 thoughts 兜底）
@@ -7762,7 +7763,7 @@ if(statusInStatus){
     const thoughtMatch = text.match(/心声[:：]\s*([^|｜\n\]]+)/i);
     if(thoughtMatch){
       thoughts = thoughtMatch[1].trim();
-      if(thoughts.length > 100) thoughts = thoughts.slice(0, 100);
+      if(thoughts.length > 500) thoughts = thoughts.slice(0, 500);
     }
   }
   
@@ -7973,6 +7974,12 @@ else{p.style.background=bgNow()}
       }
     });
   }else if(msgs.length===0){
+    // 只有1个开场白时自动发送
+    const _soloGreet=c.quote||'';
+    if(_soloGreet && !(c.altGreetings && c.altGreetings.length>0)){
+      saveMsgs(activeCharId,[{from:'c',text:_soloGreet,time:ftime(now())}]);
+      render('chat');return;
+    }
     ml.innerHTML=`<div style="text-align:center;padding:40px 20px;font-size:12px;color:${n?'#a898b8':'var(--ink-l)'};font-style:italic;line-height:1.8">
       还没有消息...<br>发几句话，然后点「回复」让${escHtml(c.name)}回你
     </div>`
@@ -8114,20 +8121,25 @@ const radius=bubbleVisual.borderRadius
         }
 
         // 优先找 <style，找不到再找常见的卡片包裹标签
-        let _localOpen = _cardSearchText.search(/<style\b/i)
+        let _localOpen = _cardSearchText.search(
+  /<(?:summary|details|xs|div|section|table|article|main|figure)\b/i
+)
         if(_localOpen === -1){
           // 没有 style，找类名含 card/box/theater/post/chat 的 div，或者一般的 div
           _localOpen = _cardSearchText.search(/<(?:div|section|table|article)\b[^>]*?(?:class|id|style)\s*=\s*["'][^"']*(?:card|box|panel|post|theater|feed|content|wrap|container|bubble|board|chat|page|stage)/i)
           if(_localOpen === -1){
-            _localOpen = _cardSearchText.search(/<(?:div|section|table|article|main|figure)\b/i)
-          }
+  _localOpen = _cardSearchText.search(
+    /<(?:div|section|table|article|main|figure|details|summary|xs)\b/i
+  )
+}
+
         }
 
         const _open = _localOpen !== -1 ? (_offset + _localOpen) : -1
 
         if(_open !== -1){
           const _rest = _t.slice(_open)
-          if(/<\/(?:style|div|section|table|article|ul|ol|main|header|figure)\s*>/i.test(_rest)){
+          if(/<\/(?:style|div|section|table|article|ul|ol|main|header|figure|details|summary|xs)\s*>/i.test(_rest)){
             const _lastClose = _rest.lastIndexOf('>')
             if(_lastClose > 0) {
               _cardBody = _rest.slice(0, _lastClose + 1).trim()
@@ -9615,7 +9627,7 @@ if(_htmlCardHit){
   .replace(/^\s*[-*]\s+/gm, '')
 
         // 检测是否含有 HTML 块级结构（小剧场/排版标签），如果有则跳过引号拆分
-        const _hasHtmlBlocks = /<(?:div|p|section|article|table|style|h[1-6])\b/i.test(_raw);
+        const _hasHtmlBlocks = /<(?:style|div|p|section|article|table|details|summary|main|header|footer|figure|blockquote|ul|ol|li|h[1-6]|xs|bt|rq|ed|dz)\b[^>]*>/i.test(_raw);
 
         // 判断一个旁白片段是否"只有标点没有内容"（要丢掉的垃圾段）
         const _isJunk = s => {
@@ -10694,15 +10706,13 @@ ${hint}
       const wbNames=(c.worldBookIds||[]).map(id=>worldBooks.find(w=>w.id===id)).filter(Boolean).map(w=>w.title).join('、')||'无'
       
       mb.innerHTML=`
-        ${(c.altGreetings && c.altGreetings.length) ? `
         <div class="list-item" id="_mm_greetings" style="cursor:pointer">
           <div style="flex:1">
-            <div style="font-size:13px;color:var(--ink)">切换开场白</div>
-            <div style="font-size:10px;color:var(--ink-l);margin-top:2px">共 ${c.altGreetings.length + 1} 个开场白可选</div>
+            <div style="font-size:13px;color:var(--ink)">开场白管理</div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:2px">共 ${((c.altGreetings||[]).length||0)+1} 个开场白</div>
           </div>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-l)" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
         </div>
-        ` : ''}
         <div class="list-item" id="_mm_offline" style="cursor:pointer">
           <div style="flex:1">
             <div style="font-size:13px;color:var(--ink);font-weight:500">${c.offlineMode?'切换到线上（聊天）':'切换到线下（小说）'}</div>
@@ -10855,81 +10865,121 @@ ${hint}
 </div>
 
       `
-      if(mb.querySelector('#_mm_greetings')){
-        mb.querySelector('#_mm_greetings').onclick=()=>{
-          const _curGi = (typeof c.currentGreeting==='number') ? c.currentGreeting : 0;
-          const _allG3 = [{label:'开场白 1（默认）',text:c.quote||''}];
-          (c.altGreetings||[]).forEach((g,i)=>{_allG3.push({label:'开场白 '+(i+2),text:g})});
-
-          // 构建选择弹窗
-          const mask=document.createElement('div');
-          mask.className='modal-mask';
-          mask.onclick=e=>{if(e.target===mask)mask.remove()};
-          const box=document.createElement('div');
-          box.className='modal-box';
-          if(n) box.style.background='#1a1424';
-          box.innerHTML=`
-            <div class="modal-title">切换开场白</div>
-            <div style="font-size:11px;color:${n?'#a898b8':'var(--ink-l)'};text-align:center;margin-bottom:14px;line-height:1.6">
-              当前：<b style="color:${n?'#f0e0f0':'var(--ink)'}">${escHtml(_allG3[_curGi]?.label||'开场白 1')}</b><br>
-              每个开场白的聊天记录互相独立
-            </div>
-            <div id="_gswitch_list" style="max-height:50vh;overflow-y:auto">
-            ${_allG3.map((g,i)=>{
-              const isCur = i===_curGi;
-              const slotKey = 'msgs_'+activeCharId+'_g'+i;
-              const slotMsgs = store.get(slotKey,[]);
-              const hasHistory = slotMsgs.length > 0;
-              const preview = hasHistory ? (slotMsgs[slotMsgs.length-1].text||'').slice(0,40) : (g.text||'').slice(0,60);
-              return `
-              <div class="_gswitch_item" data-gi="${i}" style="cursor:pointer;padding:12px 14px;margin-bottom:8px;border-radius:14px;background:${isCur?(n?'rgba(200,160,220,.15)':'rgba(245,213,222,.3)'):(n?'rgba(255,255,255,.05)':'rgba(255,255,255,.7)')};border:1px solid ${isCur?(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'):(n?'rgba(255,255,255,.06)':'rgba(232,160,180,.1)')};transition:transform .1s">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                  <div style="width:20px;height:20px;border-radius:50%;background:${isCur?'linear-gradient(135deg,var(--rose-l),var(--rose))':'rgba(232,160,180,.15)'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                    <span style="font-size:9px;color:${isCur?'#fff':'var(--rose-d)'};font-weight:600">${i+1}</span>
-                  </div>
-                  <span style="font-size:12px;color:${n?'#dcc8e8':'var(--rose-d)'};font-weight:500">${escHtml(g.label)}</span>
-                  ${isCur?'<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:var(--rose);color:#fff;margin-left:auto">当前</span>':''}
-                  ${hasHistory && !isCur?'<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:'+( n?'rgba(138,154,110,.3)':'rgba(138,154,110,.2)')+';color:'+(n?'#b8c8a0':'#6a7a5a')+';margin-left:auto">有记录</span>':''}
-                </div>
-                <div style="font-size:11px;color:${n?'#a898b8':'var(--ink-l)'};line-height:1.5;max-height:36px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word">${escHtml(preview||'（空）')}</div>
-              </div>`;
-            }).join('')}
-            </div>
-            <div style="margin-top:12px;text-align:center">
-              <span id="_gswitch_reset" style="font-size:11px;color:${n?'#a898b8':'var(--ink-l)'};cursor:pointer;text-decoration:underline">清空当前开场白记录并重选</span>
-            </div>
-          `;
-          mask.appendChild(box);
-          document.getElementById('app').appendChild(mask);
-
-          box.querySelectorAll('._gswitch_item').forEach(el=>{
-            el.onpointerdown=()=>{el.style.transform='scale(.97)'};
-            el.onpointerup=el.onpointerleave=()=>{el.style.transform=''};
-            el.onclick=()=>{
-              const gi=parseInt(el.dataset.gi);
-              if(gi===_curGi){mask.remove();return}
-              c.currentGreeting=gi;
-              saveCharList();
-              // 如果目标 slot 没有消息，用开场白初始化
-              const targetKey='msgs_'+activeCharId+'_g'+gi;
-              const targetMsgs=store.get(targetKey,[]);
-              if(!targetMsgs.length){
-                const _allG4=[c.quote||'',...(c.altGreetings||[])];
-                const gtxt=_allG4[gi]||'';
-                if(gtxt) saveMsgs(activeCharId,[{from:'c',text:gtxt,time:ftime(now())}]);
-              }
-              mask.remove();close();render('chat');
-            }
-          });
-
-          box.querySelector('#_gswitch_reset').onclick=()=>{
-            if(!confirm('确定清空当前开场白的聊天记录？'))return;
-            saveMsgs(activeCharId,[]);
-            mask.remove();close();render('chat');
-          };
-        }
-      }
+            mb.querySelector('#_mm_greetings').onclick=function(){
+        close();
+        showModal('开场白管理',function(mb2,close2){
+          var _curGi=(typeof c.currentGreeting==='number')?c.currentGreeting:0;
+          function _renderGM(){
+            _curGi=(typeof c.currentGreeting==='number')?c.currentGreeting:0;
+            var greets=[{label:'开场白 1（默认）',text:c.quote||''}];
+            (c.altGreetings||[]).forEach(function(g,i){greets.push({label:'开场白 '+(i+2),text:g})});
+            var nc=n;
+            var h='<div style="font-size:11px;color:'+(nc?'#a898b8':'var(--ink-l)')+';text-align:center;margin-bottom:14px;line-height:1.6">'+
+              '当前：<b style="color:'+(nc?'#f0e0f0':'var(--ink)')+'">'+escHtml(greets[_curGi]?greets[_curGi].label:'开场白 1')+'</b><br>'+
+              '点击切换，每条开场白的聊天记录独立保存</div>';
+            h+='<div style="max-height:50vh;overflow-y:auto">';
+            greets.forEach(function(g,i){
+              var isCur=i===_curGi;
+              var slotKey='msgs_'+activeCharId+'_g'+i;
+              var slotMsgs=store.get(slotKey,[]);
+              var hasHistory=slotMsgs.length>0;
+              var preview=hasHistory?(slotMsgs[slotMsgs.length-1].text||'').slice(0,40):(g.text||'').slice(0,60);
+              h+='<div style="padding:12px 14px;margin-bottom:8px;border-radius:14px;background:'+(isCur?(nc?'rgba(200,160,220,.15)':'rgba(245,213,222,.3)'):(nc?'rgba(255,255,255,.05)':'rgba(255,255,255,.7)'))+';border:1px solid '+(isCur?(nc?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'):(nc?'rgba(255,255,255,.06)':'rgba(232,160,180,.1)'))+'">';
+              h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+              h+='<div style="width:20px;height:20px;border-radius:50%;background:'+(isCur?'linear-gradient(135deg,var(--rose-l),var(--rose))':'rgba(232,160,180,.15)')+';display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:9px;color:'+(isCur?'#fff':'var(--rose-d)')+';font-weight:600">'+(i+1)+'</span></div>';
+              h+='<span style="font-size:12px;color:'+(nc?'#dcc8e8':'var(--rose-d)')+';font-weight:500">'+escHtml(g.label)+'</span>';
+              if(isCur) h+='<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:var(--rose);color:#fff;margin-left:auto">当前</span>';
+              else if(hasHistory) h+='<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:'+(nc?'rgba(138,154,110,.3)':'rgba(138,154,110,.2)')+';color:'+(nc?'#b8c8a0':'#6a7a5a')+';margin-left:auto">有记录</span>';
+              h+='</div>';
+              h+='<div style="font-size:11px;color:'+(nc?'#a898b8':'var(--ink-l)')+';line-height:1.5;max-height:36px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word">'+escHtml(preview||'（空）')+'</div>';
+              h+='<div style="display:flex;gap:14px;margin-top:8px;justify-content:flex-end">';
+              if(!isCur) h+='<span class="_gm_sw" data-gi="'+i+'" style="font-size:10px;color:var(--rose-d);cursor:pointer">切换到此</span>';
+              h+='<span class="_gm_ed" data-gi="'+i+'" style="font-size:10px;color:'+(nc?'#a898b8':'var(--ink-l)')+';cursor:pointer">编辑</span>';
+              if(i>0) h+='<span class="_gm_dl" data-gi="'+i+'" style="font-size:10px;color:#c47a7a;cursor:pointer">删除</span>';
+              h+='</div></div>';
+            });
+            h+='</div>';
+            h+='<div class="btn-sub" id="_gm_add" style="margin-top:10px">＋ 添加新开场白</div>';
+            h+='<div style="margin-top:8px;text-align:center"><span id="_gm_reset" style="font-size:11px;color:'+(nc?'#a898b8':'var(--ink-l)')+';cursor:pointer;text-decoration:underline">清空当前开场白记录并重新开始</span></div>';
+            mb2.innerHTML=h;
+            // 切换
+            mb2.querySelectorAll('._gm_sw').forEach(function(el){
+              el.onclick=function(){
+                var gi=parseInt(el.dataset.gi);
+                c.currentGreeting=gi;saveCharList();
+                var tk='msgs_'+activeCharId+'_g'+gi;
+                var tm=store.get(tk,[]);
+                if(!tm.length){var ag=[c.quote||''].concat(c.altGreetings||[]);var gt=ag[gi]||'';if(gt)saveMsgs(activeCharId,[{from:'c',text:gt,time:ftime(now())}])}
+                close2();render('chat');
+              };
+            });
+            // 编辑
+            mb2.querySelectorAll('._gm_ed').forEach(function(el){
+              el.onclick=function(){
+                var gi=parseInt(el.dataset.gi);
+                var isDef=gi===0;
+                var curText=isDef?(c.quote||''):((c.altGreetings||[])[gi-1]||'');
+                var lbl=greets[gi]?greets[gi].label:'开场白';
+                showModal('编辑 · '+lbl,function(mb3,close3){
+                  mb3.innerHTML='<textarea class="tarea" id="_gm_eta" rows="14" style="background:'+(nc?'rgba(255,255,255,.08)':'rgba(255,255,255,.5)')+';border:1px solid rgba(232,160,180,.15);border-radius:12px;padding:12px;min-height:260px;line-height:1.8;color:'+(nc?'#e8dce8':'var(--ink)')+'">'+escHtml(curText)+'</textarea>'+
+                    '<div style="text-align:right;margin-top:4px;font-size:10px;color:var(--ink-l)"><span id="_gm_ecnt">0</span> 字</div>'+
+                    '<div class="btn-main" id="_gm_eok" style="margin-top:10px">保存</div>';
+                  var ta=mb3.querySelector('#_gm_eta'),cnt=mb3.querySelector('#_gm_ecnt');
+                  cnt.textContent=ta.value.length;
+                  ta.oninput=function(){cnt.textContent=ta.value.length};
+                  mb3.querySelector('#_gm_eok').onclick=function(){
+                    var val=ta.value;
+                    if(isDef){c.quote=val}else{if(!c.altGreetings)c.altGreetings=[];c.altGreetings[gi-1]=val}
+                    saveCharList();close3();_renderGM();
+                  };
+                });
+              };
+            });
+            // 删除
+            mb2.querySelectorAll('._gm_dl').forEach(function(el){
+              el.onclick=function(){
+                var gi=parseInt(el.dataset.gi);
+                var lbl=greets[gi]?greets[gi].label:'开场白';
+                if(!confirm('确定删除「'+lbl+'」？'))return;
+                if(c.altGreetings){c.altGreetings.splice(gi-1,1);if(!c.altGreetings.length)delete c.altGreetings}
+                if(typeof c.currentGreeting==='number'){if(c.currentGreeting===gi)c.currentGreeting=0;else if(c.currentGreeting>gi)c.currentGreeting--}
+                store.del('msgs_'+activeCharId+'_g'+gi);
+                saveCharList();_renderGM();
+              };
+            });
+            // 添加
+            var addBtn=mb2.querySelector('#_gm_add');
+            if(addBtn) addBtn.onclick=function(){
+              var num=(c.altGreetings||[]).length+2;
+              showModal('添加新开场白',function(mb3,close3){
+                mb3.innerHTML='<div style="font-size:11px;color:var(--ink-l);line-height:1.6;margin-bottom:10px">将作为「开场白 '+num+'」加入列表。</div>'+
+                  '<textarea class="tarea" id="_gm_nta" rows="14" style="background:'+(nc?'rgba(255,255,255,.08)':'rgba(255,255,255,.5)')+';border:1px solid rgba(232,160,180,.15);border-radius:12px;padding:12px;min-height:260px;line-height:1.8;color:'+(nc?'#e8dce8':'var(--ink)')+'" placeholder="输入开场白内容..."></textarea>'+
+                  '<div style="text-align:right;margin-top:4px;font-size:10px;color:var(--ink-l)"><span id="_gm_ncnt">0</span> 字</div>'+
+                  '<div class="btn-main" id="_gm_nok" style="margin-top:10px">添加</div>';
+                var ta=mb3.querySelector('#_gm_nta'),cnt=mb3.querySelector('#_gm_ncnt');
+                ta.oninput=function(){cnt.textContent=ta.value.length};
+                mb3.querySelector('#_gm_nok').onclick=function(){
+                  var val=ta.value.trim();
+                  if(!val){alert('内容不能为空');return}
+                  if(!c.altGreetings)c.altGreetings=[];
+                  c.altGreetings.push(val);
+                  saveCharList();close3();_renderGM();
+                };
+              });
+            };
+            // 清空重来
+            var rstBtn=mb2.querySelector('#_gm_reset');
+            if(rstBtn) rstBtn.onclick=function(){
+              if(!confirm('确定清空当前开场白的聊天记录？'))return;
+              saveMsgs(activeCharId,[]);
+              close2();render('chat');
+            };
+          }
+          _renderGM();
+        });
+      };
       mb.querySelector('#_mm_offline').onclick=()=>{
+
         c.offlineMode=!c.offlineMode
         // 自动注入切换记忆，防止AI位置错乱
         const _modeArr = getMsgs(activeCharId);
@@ -12798,29 +12848,10 @@ if(document.getElementById('_msglist') && activeCharId === targetCharId){
   if(document.getElementById('_msginp')) render('msglist')
 }
 
-// ===== 强制出图：用户开口要图就必出 =====
-if(imgApi.key && !c.offlineMode && store.get('autoImageEnabled',true)){
-  const userWantImg = texts.some(t => /发.*(图|照片|自拍)|看看你|拍.*给我|来张|想看你|照片|自拍/.test(t))
-  if(userWantImg){
-    const checkArr2 = getMsgs(targetCharId)
-    const lastC = [...checkArr2].reverse().find(m => m.from==='c')
-    // 如果已经有待处理的[图片]消息，不再重复插入
-    const alreadyHasPending = checkArr2.some(m => m.from==='c' && m.text && m.text.includes('[图片]') && !m.image)
-    // 如果AI最后这条回复没带[图片]，且没有待处理的图片，手动补一条
-    if(lastC && !lastC.text.includes('[图片]') && !alreadyHasPending){
-      const imgMsg = {
-        from:'c',
-        text:'[图片] ',
-        time:ftime(now()),
-        read:(activeCharId===targetCharId)
-      }
-      checkArr2.push(imgMsg)
-      saveMsgs(targetCharId,checkArr2)
-    }
-  }
-}
+
         // ===== 补图：AI回复了[图片]文字但没有实际图 =====
- if(imgApi.key && !c.offlineMode && store.get('autoImageEnabled',true)){
+ if(imgApi.key && !c.offlineMode && store.get('autoImageEnabled',false)
+){
   const checkArr=getMsgs(targetCharId)
   const pendingPics=checkArr.filter(m=>m.from==='c'&&m.text&&m.text.includes('[图片]')&&!m.image)
   if(pendingPics.length){
@@ -12847,6 +12878,16 @@ const genderTags = isFemaleChar
 const prompt = isNAI
   ? `masterpiece, best quality, newest, very aesthetic, absurdres, ${genderTags}, ${desc}, detailed face, expressive eyes, natural pose, suitable clothing, appropriate background, beautiful composition`
   : `realistic photography, professional photography, natural skin texture, high detail, sharp focus, ${genderTags}, ${desc}, looking at viewer, detailed face, soft lighting`
+if(!store.get('autoImageEnabled',false)){
+  const arr5=getMsgs(targetCharId)
+  const fi=arr5.findIndex(m=>m.from==='c'&&m.text===pm.text&&!m.image)
+  if(fi>=0){
+    arr5.splice(fi,1)
+    saveMsgs(targetCharId,arr5)
+  }
+  continue
+}
+
 const url=await genImage(prompt)
 imgApi.negativePrompt=oldNeg2
 
@@ -12897,8 +12938,10 @@ if(url){
 }
 
     // ===== 线上模式AI主动发图 =====
-    const _userAlreadyWantImg = imgApi.key && !c.offlineMode && store.get('autoImageEnabled',true) && texts.some(t => /发.*(图|照片|自拍)|看看你|拍.*给我|来张|想看你|照片|自拍/.test(t))
-    if(!c.offlineMode && imgApi.key && store.get('autoImageEnabled',true) && !_userAlreadyWantImg && Math.random() < 0.15) {
+    const _userAlreadyWantImg = imgApi.key && !c.offlineMode && store.get('autoImageEnabled',false)
+ && texts.some(t => /发.*(图|照片|自拍)|看看你|拍.*给我|来张|想看你|照片|自拍/.test(t))
+    if(!c.offlineMode && imgApi.key && store.get('autoImageEnabled',false)
+ && !_userAlreadyWantImg && Math.random() < 0.15) {
       (async()=>{
         try{
           const lastTexts = processedLines.map(x=>x.text).join('\n')
@@ -17870,7 +17913,8 @@ pages.settings=()=>{
 <div class="card-t">自动功能开关</div>
 <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">控制聊天时是否自动调用生图和语音API（手动点击按钮触发的不受影响）</div>
 <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 0;border-bottom:1px solid rgba(232,160,180,.08)">
-    <input type="checkbox" id="_sw_autoimg" ${store.get('autoImageEnabled',true)?'checked':''} style="accent-color:var(--rose);width:18px;height:18px">
+    <input type="checkbox" id="_sw_autoimg" ${store.set('autoImageEnabled',false),''} style="accent-color:var(--rose);width:18px;height:18px">
+
     <div style="flex:1">
       <div style="font-size:13px;color:var(--ink)">自动生图</div>
       <div style="font-size:10px;color:var(--ink-l);margin-top:2px">开启后角色有概率给你发送图片</div>
@@ -18246,12 +18290,12 @@ const renderFontLib=()=>{
     return
   }
   list.innerHTML=fontLib.map((f,i)=>`
-    <div class="_fontlibitem" data-i="${i}" style="display:flex;align-items:center;gap:8px;padding:10px;border-radius:10px;background:${fontMode==='custom'&&store.get('customFontUrl','')==f.url?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};cursor:pointer">
-      <div style="flex:1">
-        <div style="font-size:12px;color:var(--ink);font-weight:500">${escHtml(f.name)}</div>
-        <div style="font-size:9px;color:var(--ink-l);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.url)}</div>
+    <div class="_fontlibitem" data-i="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;background:${fontMode==='custom'&&store.get('customFontUrl','')==f.url?'rgba(245,213,222,.65);border:1px solid var(--rose-d)':'rgba(255,255,255,.55)'};cursor:pointer">
+      <div style="flex:1;min-width:0;overflow:hidden">
+        <div style="font-size:12px;color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(f.name)}${fontMode==='custom'&&store.get('customFontUrl','')==f.url?' (使用中)':''}</div>
+        <div style="font-size:9px;color:var(--ink-l);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%">${escHtml(f.url)}</div>
       </div>
-      <div class="_delfont" data-i="${i}" style="font-size:10px;color:#c47a7a;padding:4px 8px;cursor:pointer">删除</div>
+      <div class="_delfont" data-i="${i}" style="flex-shrink:0;font-size:11px;color:#d35d6e;padding:6px 10px;cursor:pointer;background:rgba(255,255,255,.7);border-radius:8px;white-space:nowrap;font-weight:bold">删除</div>
     </div>
   `).join('')
 
@@ -18800,10 +18844,11 @@ try{
 if(validFontUrl){
   customFontStyle.textContent=`@font-face{
     font-family:"OtomeCustomFont";
-    src:url("${validFontUrl.replace(/"/g,'%22')}") format("woff2");
+    src:url("${validFontUrl.replace(/"/g,'%22')}");
     font-display:swap;
   }`
-}else{
+}
+else{
   customFontStyle.textContent=''
 }
 
@@ -25296,7 +25341,7 @@ ${evidence?'【查岗发现】'+evidence:'【查岗发现】没发现跟别人�
   saveMsgs(charId,arr)
 
   // 记忆事件也要反映实际情况
-  const _evtMood=_isFighting?'（当时正在闹矛盾）':''
+  const _evtMood=_isFighting?'':''
   addMemoryEvent(charId,`（查岗）主动找用户查岗${_evtMood}，${evidence?'发现了一些蛛丝马迹':'没发现跟别人有可疑互动'}。`,'checkup')
 
   // 通知
@@ -29240,7 +29285,7 @@ ${STATS4.map(k=>{const d=dicePool[k];return `· ${SN4[k]}（${d.by} 主导）：
   const diceInfoText=`【本轮4颗D20骰点】\n· 力量：骰${dicePool.strength.roll} + 属性${dicePool.strength.stat}${dicePool.strength.bonus?'+装备'+dicePool.strength.bonus:''} = ${dicePool.strength.roll+dicePool.strength.stat+dicePool.strength.bonus}\n· 智力：骰${dicePool.intelligence.roll} + 属性${dicePool.intelligence.stat}${dicePool.intelligence.bonus?'+装备'+dicePool.intelligence.bonus:''} = ${dicePool.intelligence.roll+dicePool.intelligence.stat+dicePool.intelligence.bonus}\n· 魅力：骰${dicePool.charm.roll} + 属性${dicePool.charm.stat}${dicePool.charm.bonus?'+装备'+dicePool.charm.bonus:''} = ${dicePool.charm.roll+dicePool.charm.stat+dicePool.charm.bonus}\n· 幸运：骰${dicePool.luck.roll} + 属性${dicePool.luck.stat}${dicePool.luck.bonus?'+装备'+dicePool.luck.bonus:''} = ${dicePool.luck.roll+dicePool.luck.stat+dicePool.luck.bonus}\n\n临界规则：D20骰点≥${critHi}=自动大成功（无视难度），骰点≤${critLo}=自动大失败（无视加成）`
 
   // 检查是否开启了全局自动生图
-  const autoImgEnabled = imgApi && imgApi.key && store.get('autoImageEnabled',true);
+  const autoImgEnabled = imgApi && imgApi.key && store.get('autoImageEnabled',false);
 
   const sysP=`你是副本剧情导演，同时是TRPG骰子裁判。
 【副本】${template.name}
