@@ -44,6 +44,18 @@ try{
     }
   }
 }catch(e){}
+// 小说体基础样式（优先级低，custom CSS 可覆盖）
+try{
+  const _ns=document.createElement('style');_ns.id='_novelBase';
+  _ns.textContent=`
+._novel{--novel-text:var(--ink,#4a3a3a);--novel-dialogue:#c04070;--novel-bg:transparent;font-size:13px;line-height:2;letter-spacing:.4px;color:var(--novel-text);word-break:break-word}
+._novel p{margin:0;padding:0 6px;text-indent:2em;text-align:justify;white-space:pre-wrap}
+._novel p+p{margin-top:.3em}
+._novel ._dlg{font-style:normal;font-weight:600;color:var(--novel-dialogue);text-indent:0}
+._novel ._novel-header{text-indent:0;padding:0 6px 4px;display:flex;align-items:center;gap:8px}
+#app.night ._novel{--novel-text:#d8c8e0;--novel-dialogue:#f5b8cf}
+`;document.head.insertBefore(_ns,document.head.firstChild);
+}catch(e){}
 </script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600&display=swap');
@@ -467,13 +479,13 @@ if (embeddedBook) {
             activeCharId = nc.id;
             saveCharList();
             
-            if (nc.quote && !(nc.altGreetings && nc.altGreetings.length > 0)) {
+            if ((nc.firstMsg||nc.quote) && !(nc.altGreetings && nc.altGreetings.length > 0)) {
                 const msgs = getMsgs(nc.id);
-                msgs.push({from: 'c', text: nc.quote, time: ftime(now())});
+                msgs.push({from: 'c', text: nc.firstMsg||nc.quote, time: ftime(now())});
                 saveMsgs(nc.id, msgs);
             }
 
-            alert('🎉 角色卡导入成功！');
+            alert('角色卡导入成功！');
             if(callback) callback();
             
         } catch (err) {
@@ -2715,7 +2727,23 @@ function _msgKey(cid){
 }
 
 function getMsgs(cid){
-  return store.get(_msgKey(cid),[]);
+  const key=_msgKey(cid);
+  let arr=store.get(key,[]);
+  if(!arr.length){
+    const id=cid||activeCharId;
+    const ch=charList.find(x=>x.id===id);
+    const gi=(ch&&typeof ch.currentGreeting==='number')?ch.currentGreeting:0;
+    if(gi===0){
+      const oldKey='msgs_'+id;
+      const oldArr=store.get(oldKey,[]);
+      if(oldArr.length){
+        store.set(key,oldArr);
+        store.del(oldKey);
+        return store.get(key,[]);
+      }
+    }
+  }
+  return arr;
 }
 
 function saveMsgs(cid,arr){
@@ -2853,6 +2881,7 @@ async function callLLM(opt){
   model:a.model,
   max_tokens:opt.maxTokens||300,
   temperature:a.temperature||1.0,
+  stream:store.get('streamDisplay',true),
   system: sysArr,
   messages: (() => {
     const msgs = opt.messages || [];
@@ -2886,7 +2915,7 @@ async function callLLM(opt){
   model:a.model,
   max_tokens:opt.maxTokens||300,
   temperature:a.temperature||1.0,
-  stream:/claude/i.test(a.model),
+  stream:store.get('streamDisplay',true),
   messages: msgs
 })
 
@@ -2909,7 +2938,7 @@ async function callLLM(opt){
     }
 
     // ===== 流式SSE解析：仅克劳德走流式，其他模型保持原样 =====
-    const _isStream=/claude/i.test(a.model)
+    const _isStream=store.get('streamDisplay',true)&&/event-stream|octet-stream/i.test(r.headers.get('content-type')||'')
     let fullText=''
     if(!_isStream){
       const raw=await r.text()
@@ -2939,7 +2968,7 @@ async function callLLM(opt){
           try{
             const j=JSON.parse(t.slice(6))
             const delta=isClaude?(j.delta?.text||''):(j.choices?.[0]?.delta?.content||'')
-            if(delta) fullText+=delta
+            if(delta){ fullText+=delta; if(opt.onChunk) opt.onChunk(fullText) }
           }catch(e){}
         }
       }
@@ -2982,9 +3011,9 @@ ${reason}）`
 }
 
 // 快捷版：只要文本
-async function askAI(system,userMsg,maxTokens,api,timeout){
+async function askAI(system,userMsg,maxTokens,api,timeout,onChunk){
   const autoTimeout = timeout || Math.max(60000, Math.min(180000, (maxTokens||300)*30))
-  const r=await callLLM({api,system,messages:[{role:'user',content:userMsg}],maxTokens:maxTokens||300,timeout:autoTimeout})
+  const r=await callLLM({api,system,messages:[{role:'user',content:userMsg}],maxTokens:maxTokens||300,timeout:autoTimeout,onChunk})
   return r.text
 }
 
@@ -3141,6 +3170,13 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 17. 不要因为用户使用现代词汇，就推断角色也生活在现代；角色可以听不懂、误解，或用符合自身时代的方式回应。`
 
   }
+  s+=`\n\n【叙事一致性·最高优先级铁律】
+- 对话历史中已经发生的所有事件都是既定事实，绝对不可推翻、忽略或遗忘。
+- 已死亡的角色不能复活、已离开的角色不能凭空出现、已毁坏的东西不能完好如初——除非剧情中有极其充分合理的解释（如魔法复活等，且必须作为重大剧情展开）。
+- 每次回复前你必须先回顾最近的对话历史，确保你的回复与已发生的事件完全一致，不允许出现任何前后矛盾。
+- 如果你不确定某件事是否发生过，宁可不提也绝不编造与上文矛盾的内容。
+- 前文中其他NPC/角色的生死状态、位置、情绪变化都必须延续，不可擅自重置。`
+
   if(p.name||p.identity||p.personality){
   s+=`\n【你在跟谁互动（你眼中的对方）】`
   if(p.name) s+=`\n对方叫${p.name}`
@@ -3164,6 +3200,19 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
   // 全局记忆注入
   const memText=getMemoryPromptText(activeCharId)
   if(memText) s+=`\n${memText}`
+
+  // 人际关系网注入：让角色知道自己认识谁、关系如何
+  try{
+    const _known = getCharKnownList(c.id).filter(k=>k.rel.familiarity>=10).slice(0,8)
+    if(_known.length){
+      s+=`\n\n【你的人际关系网（你认识的人，真实存在于你的世界）】`
+      _known.forEach(({other, rel})=>{
+        const _hist=(rel.history||[]).slice(0,2).map(h=>h.text).join('；')
+        s+=`\n· ${other.name}：${describeCharRel(rel)}。TA的身份：${(other.relation||'').slice(0,40)}。TA的性格：${(other.personality||'').replace(/\s+/g,' ').slice(0,80)}${_hist?`。近期往来：${_hist}`:''}`
+      })
+      s+=`\n（这些人可以在聊天中被自然提起；线下剧情里，合理时他们可以登场、打电话、偶遇、介入，并按各自性格说话行动。态度差的人见面要有火药味，亲近的人要有熟稔感。）`
+    }
+  }catch(e){}
 
   // 朋友圈动态注入（让角色知道最近朋友圈发生了什么）
   {
@@ -3236,6 +3285,35 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 - 不要只输出HTML卡片/代码！必须先写完整丰富的小说剧情正文！
 - 不要写成剧本格式（不要角色名：台词）
 - 不要一段话全是对话没有描写`
+
+    // 多人线下：注入同场人物人设
+    const _comps=(c.offlineCompanions||[]).map(id=>charList.find(x=>x.id===id)).filter(x=>x&&!x.isDeleted)
+    if(_comps.length){
+      s+=`\n\n【多人线下场景·同场人物】\n这次线下见面不只有你，下面这些人也在现场。你是小说作者，要同时演好你自己和他们：`
+      const _wbSeen = new Set()
+      _comps.forEach(o=>{
+        let _r='素不相识'
+        try{ _r=describeCharRel(getCharRel(c.id,o.id)) }catch(e){}
+        s+=`\n\n▶ ${o.name}\n· 身份/关系：${o.relation||'未设定'}\n· 与你（${c.name}）：${_r}${o.mood?`\n· 当前心情：${o.mood}`:''}${o.status?`\n· 当前状态：${o.status}`:''}\n· 完整人设：\n${o.personality||'未设定'}${o.quote?`\n· 口吻参考：${o.quote}`:''}`
+        // 同行者自己和用户之间的记忆
+        try{
+          const _om = getMemoryPromptText(o.id)
+          if(_om) s+=`\n· ${o.name}和用户之间的记忆：\n${_om}`
+        }catch(e){}
+        // 同行者挂载、但主角没挂的世界书（去重，跳过卡片类）
+        const _ob = (o.worldBookIds||[])
+          .filter(id=>!(c.worldBookIds||[]).includes(id) && !_wbSeen.has(id))
+          .map(id=>worldBooks.find(b=>b.id===id))
+          .filter(b=>b && b.enabled && b.type!=='card')
+        _ob.forEach(b=>{ _wbSeen.add(b.id); s+=`\n· ${o.name}相关世界书【${b.title||'设定'}】：\n${b.content}` })
+      })
+      s+=`\n\n【多人场景规则】
+- 每个人有自己的动机和立场，按各自人设说话行动，不要所有人都围着用户转，也不要都附和同一件事
+- 人物之间要有真实互动：拌嘴、护短、打圆场、吃醋、揭短、使眼色；关系差的人要有火药味
+- 每句对白前后用动作或神态交代是谁在说，别让读者分不清
+- 你（${c.name}）仍是主视角角色，但其他人的戏份要实打实，不能沦为背景板
+- 剧情合理时可以有人离场或新到场，离场要在正文里写清楚`
+    }
 
     // 叠加绑定的预设（system 位置的）
     const cStyles=(c.styleBookIds||[]).map(id=>styleBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.position!=='jailbreak')
@@ -7397,7 +7475,7 @@ let _selected=new Set()
 // ==========================================
 // 🔮 智能心声与动态状态引擎 (赋予AI拉黑权限版)
 // ==========================================
-window.getSmartChatReply = async (userTexts, c) => {
+window.getSmartChatReply = async (userTexts, c, onChunk) => {
     const api = getApi();
     if(!api || !api.key) return { text: '（没有配置API）', thoughts: '' };
     
@@ -7552,8 +7630,9 @@ window.getSmartChatReply = async (userTexts, c) => {
     let r;
     if(_cardHit && c.offlineMode){
       // 线下模式+卡片触发：两次调用，第一次正常写剧情，第二次单独生成卡片
-      const storyForcedTag = `\n\n（【系统强制指令】：当前是线下小说剧情模式。请在小说正文彻底写完之后，必须另起一行附加：\n[状态:当前动作|心情:当前心情|剧情时间:当前剧情里是什么时候|心声:你此刻心里真正在想、却绝不会说出口的真心话]）`;
-      r = await callLLM({ system: sys + storyForcedTag, messages: hist, maxTokens: 8192 });
+            const storyForcedTag = '\n\n（【系统强制指令】当前是线下小说剧情模式。本次回复只需要输出小说剧情正文和状态栏（严格按照世界书中定义的状态栏格式），绝对禁止输出任何HTML代码、<div>、<style>标签。互动卡片将由另一次独立调用生成，你不需要管。）';
+
+      r = await callLLM({ system: sys + storyForcedTag, messages: hist, maxTokens: 8192, onChunk });
       if(!r.ok) return { text: r.text || '（API 调用失败：未知错误）', thoughts: '' };
       // 第二次调用：只生成卡片HTML
       const cardR = await callLLM({ system: cardPrompt + '\n\n（角色背景仅作填充参考）\n' + sys, messages: hist, maxTokens: 4000 });
@@ -7565,7 +7644,7 @@ window.getSmartChatReply = async (userTexts, c) => {
       // 统一单次调用（HTML预设已包含在 sysPrompt 中，渲染层会自动拆分剧情和HTML卡片）
       const maxTokens = _cardHit ? 8192 : (c.offlineMode ? 16384 : 8192);
       const finalSys = _cardHit ? (cardPrompt + '\n\n（角色背景仅作填充参考）\n' + sys) : (sys + cardPrompt);
-      r = await callLLM({ system: finalSys, messages: hist, maxTokens });
+      r = await callLLM({ system: finalSys, messages: hist, maxTokens, onChunk });
       if(!r.ok) return { text: r.text || '（API 调用失败：未知错误）', thoughts: '' };
     }
 
@@ -7789,7 +7868,10 @@ if(statusInStatus){
     if(/<(?:div|span|p|br|img|style|a|table|ul|ol|h[1-6])\b/i.test(inner)) return full;
     return '';
   }).trim();
-  // 清理带"状态栏"标题的 <details> 整块
+
+  // <status> 是正式状态栏，必须保留到 render('chat') 再提取。
+  // 这里只清理带“状态栏”标题的 details，不处理正式 <status>。
+  // 清理带"状态栏"标题的 <details>
   text = text.replace(/<details\b[^>]*>[\s\S]*?<summary\b[^>]*>[\s\S]*?(?:状态栏|状态面板|角色状态|state\s*bar|status\s*bar)[\s\S]*?<\/summary>[\s\S]*?<\/details>/gi, '').trim();
   if(_backtickStatusRe.test(text)) text = text.replace(/```[\s\S]*?```/gi, '').trim();
   // 清理正文里的 [状态:...] 标签，避免泄漏到气泡里
@@ -7935,7 +8017,7 @@ else{p.style.background=bgNow()}
   const msgs=getMsgs()
   if(msgs.length===0 && c.altGreetings && c.altGreetings.length > 0){
     // ★ 酒馆卡多开场白选择器
-    const _allG=[{label:'开场白 1（默认）',text:c.quote||''}];
+    const _allG=[{label:'开场白 1（默认）',text:c.firstMsg||c.quote||''}];
     (c.altGreetings||[]).forEach((g,i)=>{_allG.push({label:'开场白 '+(i+2),text:g})});
     ml.innerHTML=`
       <div style="display:flex;flex-direction:column;align-items:center;padding:30px 16px;animation:fadeIn .4s ease-out">
@@ -7964,7 +8046,7 @@ else{p.style.background=bgNow()}
       el.onpointerup=el.onpointerleave=()=>{el.style.transform='';el.style.boxShadow=''};
       el.onclick=()=>{
         const _gidx=parseInt(el.dataset.gidx);
-        const _allG2=[c.quote||'',...(c.altGreetings||[])];
+        const _allG2=[c.firstMsg||c.quote||'',...(c.altGreetings||[])];
         const _gtxt=_allG2[_gidx]||'';
         if(!_gtxt){alert('该开场白内容为空');return}
         c.currentGreeting=_gidx;
@@ -7975,7 +8057,7 @@ else{p.style.background=bgNow()}
     });
   }else if(msgs.length===0){
     // 只有1个开场白时自动发送
-    const _soloGreet=c.quote||'';
+    const _soloGreet=c.firstMsg||c.quote||'';
     if(_soloGreet && !(c.altGreetings && c.altGreetings.length>0)){
       saveMsgs(activeCharId,[{from:'c',text:_soloGreet,time:ftime(now())}]);
       render('chat');return;
@@ -8072,7 +8154,9 @@ const radius=bubbleVisual.borderRadius
            // 特殊卡片渲染
       let bubbleContent=''
       let txt=m.text||''
-      // 🌟 万一消息里的 HTML 被转义了（< 变成 &lt;），先还原
+      // 普通文字被转义时才还原。
+      // 已明确标记为卡片的消息不能经过 textContent，
+      // 否则 HTML 会被直接转成纯文字。
       if(/&lt;|&gt;|&amp;|&quot;/.test(txt)){
         const tempDiv=document.createElement('div')
         tempDiv.innerHTML=txt
@@ -8097,11 +8181,12 @@ const radius=bubbleVisual.borderRadius
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 
-            // 🌟 最高优先级：AI 返回的 HTML 卡片（宽松检测：正文任意位置出现成对块级标签即命中）
+                       // 🌟 最高优先级：AI 返回的 HTML 卡片（宽松检测：正文任意位置出现成对块级标签即命中）
       let _cardBody = null
       let _extraStoryText = ''
       let _cardIframeHtml = ''
       if(!isU){
+
         let _t = txt.trim()
         // 剥掉 ```html ... ``` 围栏
         const _fence = _t.match(/```(?:html)?\s*([\s\S]*?)```/i)
@@ -8115,6 +8200,7 @@ const radius=bubbleVisual.borderRadius
 
         // 如果开头有状态栏（<status> 或 <details>），先跳过它再找卡片
         const _stSkip = _t.match(/^[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status|details)>\s*/i)
+
         if(_stSkip && _stSkip[0].length < _t.length - 50){
           _offset = _stSkip[0].length
           _cardSearchText = _t.slice(_offset)
@@ -8197,6 +8283,8 @@ const radius=bubbleVisual.borderRadius
       if(_cardBody){
         if(_extraStoryText) {
           txt = _extraStoryText
+        } else if(_htmlCardHit) {
+          txt = ''
         } else if(_isOfflineMsg) {
           // 线下模式如果 _extraStoryText 为空，说明卡片提取太宽了，把正文剥离出来
           // 此时卡片通常在末尾，把 _cardBody 从 txt 里剔除即可
@@ -9176,6 +9264,8 @@ let _statusText = ''
 let _mainText = txt
 
 if(!isU){
+  // 普通角色消息才解析状态栏。
+  // 独立互动卡片不参与状态栏解析，直接交给 iframe。
   // 依次尝试：<status|ztl|plot|StatusBar>，再兜底匹配带"状态栏"标题的 <details>
   let _statusMatch = txt.match(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>([\s\S]*?)<\/(?:status|ztl|plot|StatusBar|novel_status)>/i)
   let _statusFullMatch = _statusMatch && _statusMatch[0]
@@ -9792,71 +9882,25 @@ if(_htmlCardHit){
           ">` +
           _chapterCard +
           _statusPanel +
-                    _parts.map(pt => {
-            if(pt.t === 'h'){
-              // HTML 小剧场/排版内容：直接渲染真实的卡片 HTML，绝不转义成文本代码
-              let cleanHtml = pt.v.replace(/```html?/gi, '').replace(/```/g, '')
-              return `
-                <div class="_offline-narration _offline-html" style="
-                  width:100%;
-                  margin:0;
-                  padding:0 6px;
-                  box-sizing:border-box;
-                  color:${n?'#d8c8e0':'var(--ink)'};
-                  font-size:13px;
-                  line-height:1.8;
-                  letter-spacing:.4px;
-                  word-break:break-word;
-                ">${cleanHtml}</div>
-              `
+                    (()=>{
+            // 检查是否有 HTML 小剧场
+            const _hPart = _parts.find(p=>p.t==='h')
+            if(_hPart){
+              const cleanHtml = _hPart.v.replace(/```html?/gi,'').replace(/```/g,'')
+              return `<div class="_offline-narration _offline-html _novel${n?' _novel-night':''}" style="padding:0 6px">${cleanHtml}</div>`
             }
-            if(pt.t === 'n'){
-              let _nHtml = _restoreMediaTags(escHtml(pt.v))
-              const _dlgC = n ? '#f5b8cf' : '#c04070'
-              _nHtml = _nHtml.replace(
-                /([「『\u201c""])([^」』\u201d""]*?)([」』\u201d""])/g,
-                (f, open, inner, close) => `<span style="font-style:normal!important;font-weight:600!important;color:${_dlgC}!important;opacity:1!important">${open}${inner}${close}</span>`
-              )
-              return `
-                <div class="_offline-narration" style="
-                  width:100%;
-                  margin:0;
-                  padding:0 6px;
-                  box-sizing:border-box;
-                  color:${n?'#d8c8e0':'var(--ink)'};
-                  font-size:13px;
-                  font-style:italic;
-                  line-height:1.8;
-                  letter-spacing:.4px;
-                  opacity:.92;
-                  white-space:pre-wrap;
-                  word-break:break-word;
-                  text-align:justify;
-                ">${_nHtml}</div>
-              `
-            }
-
-
-            // 对话不再用气泡，统一为旁白样式+高亮
-            const _dlgC2 = n ? '#f5b8cf' : '#c04070'
-            return `
-              <div class="_offline-narration" style="
-                width:100%;
-                margin:0;
-                padding:0 6px;
-                box-sizing:border-box;
-                color:${n?'#d8c8e0':'var(--ink)'};
-                font-size:13px;
-                font-style:italic;
-                line-height:1.8;
-                letter-spacing:.4px;
-                opacity:.92;
-                white-space:pre-wrap;
-                word-break:break-word;
-                text-align:justify;
-              "><span style="font-style:normal!important;font-weight:600!important;color:${_dlgC2}!important;opacity:1!important">\u201c${_restoreMediaTags(escHtml(pt.v))}\u201d</span></div>
-            `
-          }).join('') +
+            // 合并所有文本，按换行拆段落
+            const _allText = _parts.map(p=>p.t==='d'?'\u201c'+p.v+'\u201d':p.v).join('\n')
+            const _paras = _allText.split('\n').map(l=>l.trim()).filter(l=>l && !/^[。，、；：？！,.;:?!…·"'"'「」『』（）()\[\]【】~～\-—_*#>]+$/.test(l))
+            if(!_paras.length) return ''
+            const _paraHtml = _paras.map(line=>{
+              let h = _restoreMediaTags(escHtml(line))
+              h = h.replace(/([「『\u201c""])([^」』\u201d""]*?)([」』\u201d""])/g,
+                (f,o,i,c)=>`<span class="_dlg">${o}${i}${c}</span>`)
+              return `<p>${h}</p>`
+            }).join('')
+            return `<div class="_offline-narration _novel${n?' _novel-night':''}">${_paraHtml}</div>`
+          })() +
           _homeBtnHtml +
           (_cardIframeHtml || '') +
           `</div>`
@@ -10523,6 +10567,7 @@ ${hint}
   charList.push(nc);
   activeCharId = nc.id;
   saveCharList();
+  if(bc) updateCharRel(bc.id, nc.id, { setFamiliarity: 70, event: `${nc.name}：${(nc.relation||'').slice(0,40)}` });
   
   // 自动把新角色的第一句话发到聊天框
   const arr = getMsgs(nc.id);
@@ -10721,6 +10766,13 @@ ${hint}
           <div style="padding:4px 10px;border-radius:10px;font-size:10px;${c.offlineMode?'background:rgba(138,154,110,.15);color:var(--green)':'background:rgba(232,160,180,.12);color:var(--rose-d)'}">${c.offlineMode?'线下中':'线上中'}</div>
         </div>
 
+        <div class="list-item" id="_mm_multi" style="cursor:pointer">
+          <div style="flex:1">
+            <div style="font-size:13px;color:var(--ink);font-weight:500">多人线下</div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:2px">${(()=>{const _cs=(c.offlineCompanions||[]).map(id=>charList.find(x=>x.id===id)).filter(x=>x&&!x.isDeleted);return _cs.length?'同行中：'+_cs.map(x=>escHtml(x.name)).join('、'):'拉上'+escHtml(c.name)+'的朋友、家人一起见面'})()}</div>
+          </div>
+          <div style="padding:4px 10px;border-radius:10px;font-size:10px;background:rgba(197,184,212,.2);color:var(--ink)">👥</div>
+        </div>
         <div class="list-item" id="_mm_char" style="cursor:pointer">
           <div style="flex:1">
             <div style="font-size:13px;color:var(--ink)">角色设定</div>
@@ -10871,7 +10923,7 @@ ${hint}
           var _curGi=(typeof c.currentGreeting==='number')?c.currentGreeting:0;
           function _renderGM(){
             _curGi=(typeof c.currentGreeting==='number')?c.currentGreeting:0;
-            var greets=[{label:'开场白 1（默认）',text:c.quote||''}];
+            var greets=[{label:'开场白 1（默认）',text:c.firstMsg||c.quote||''}];
             (c.altGreetings||[]).forEach(function(g,i){greets.push({label:'开场白 '+(i+2),text:g})});
             var nc=n;
             var h='<div style="font-size:11px;color:'+(nc?'#a898b8':'var(--ink-l)')+';text-align:center;margin-bottom:14px;line-height:1.6">'+
@@ -10909,7 +10961,7 @@ ${hint}
                 c.currentGreeting=gi;saveCharList();
                 var tk='msgs_'+activeCharId+'_g'+gi;
                 var tm=store.get(tk,[]);
-                if(!tm.length){var ag=[c.quote||''].concat(c.altGreetings||[]);var gt=ag[gi]||'';if(gt)saveMsgs(activeCharId,[{from:'c',text:gt,time:ftime(now())}])}
+                if(!tm.length){var ag=[c.firstMsg||c.quote||''].concat(c.altGreetings||[]);var gt=ag[gi]||'';if(gt)saveMsgs(activeCharId,[{from:'c',text:gt,time:ftime(now())}])}
                 close2();render('chat');
               };
             });
@@ -10918,7 +10970,7 @@ ${hint}
               el.onclick=function(){
                 var gi=parseInt(el.dataset.gi);
                 var isDef=gi===0;
-                var curText=isDef?(c.quote||''):((c.altGreetings||[])[gi-1]||'');
+                var curText=isDef?(c.firstMsg||c.quote||''):((c.altGreetings||[])[gi-1]||'');
                 var lbl=greets[gi]?greets[gi].label:'开场白';
                 showModal('编辑 · '+lbl,function(mb3,close3){
                   mb3.innerHTML='<textarea class="tarea" id="_gm_eta" rows="14" style="background:'+(nc?'rgba(255,255,255,.08)':'rgba(255,255,255,.5)')+';border:1px solid rgba(232,160,180,.15);border-radius:12px;padding:12px;min-height:260px;line-height:1.8;color:'+(nc?'#e8dce8':'var(--ink)')+'">'+escHtml(curText)+'</textarea>'+
@@ -10929,7 +10981,7 @@ ${hint}
                   ta.oninput=function(){cnt.textContent=ta.value.length};
                   mb3.querySelector('#_gm_eok').onclick=function(){
                     var val=ta.value;
-                    if(isDef){c.quote=val}else{if(!c.altGreetings)c.altGreetings=[];c.altGreetings[gi-1]=val}
+                    if(isDef){c.firstMsg=val}else{if(!c.altGreetings)c.altGreetings=[];c.altGreetings[gi-1]=val}
                     saveCharList();close3();_renderGM();
                   };
                 });
@@ -10988,6 +11040,7 @@ ${hint}
   _modeArr.push({from:'system', text:'—— 已切换到线下模式（小说体） ——', time:ftime(now()), isSystem:true, mode:'offline'});
 } else {
   addMemoryEvent(activeCharId, `线下剧情模式结束，现在改用手机线上聊天。`, '模式切换');
+  c.offlineCompanions = [];
   _modeArr.push({from:'system', text:'—— 已切换到线上模式（微信聊天） ——', time:ftime(now()), isSystem:true, mode:'online'});
 }
 
@@ -10998,6 +11051,7 @@ ${hint}
       }
 
       mb.querySelector('#_mm_char').onclick=()=>{close();render('charedit')}
+      mb.querySelector('#_mm_multi').onclick=()=>{close();openOfflineCompanionPicker(c)}
       mb.querySelector('#_mm_persona').onclick=()=>{close();openPersonaBind()}
       // 世界书：展开/收起
       mb.querySelector('#_mm_world_hd').onclick=()=>{
@@ -11181,6 +11235,7 @@ mb.querySelector('#_mm_import_save').onclick = () => {
           c.mood = impC.mood || c.mood;
           c.status = impC.status || c.status;
           c.quote = impC.quote || c.quote;
+          c.firstMsg = impC.firstMsg || impC.first_mes || c.firstMsg;
           c.affection = impC.affection || 0;
           c.patSuffix = impC.patSuffix || c.patSuffix;
           c.voiceId = impC.voiceId || c.voiceId;
@@ -11192,7 +11247,7 @@ mb.querySelector('#_mm_import_save').onclick = () => {
         
         close();
         render('chat');
-        alert('🎉 角色存档导入成功！TA已恢复到存档时的完美状态！');
+        alert('角色存档导入成功！TA已恢复到存档时的完美状态！');
       }
     } catch(err) {
       alert('导入失败：' + err.message);
@@ -12127,9 +12182,35 @@ ${ctxMsgs}
       render('chat');
       await new Promise(r=>setTimeout(r, 200));
       
-      const typing=appendTyping();
-      const aiRes=await window.getSmartChatReply(userTexts, c);
-      const reply=aiRes.text;
+      const _mlRegen=document.getElementById('_msglist')
+      const _typingRegen=ce('div');_typingRegen.id='_typing'
+      _typingRegen.style.cssText='display:flex;align-items:flex-end;gap:8px;animation:fadeIn .3s'
+      _typingRegen.innerHTML=`<div style="flex-shrink:0">${avatarEl(c.avatar,32)}</div><div style="padding:10px 14px;border-radius:18px 18px 18px 4px;background:${isN()?'rgba(255,255,255,.06)':'rgba(255,255,255,.66)'};font-size:13px;color:var(--ink-l)"><span style="animation:typing 1.2s infinite">·</span><span style="animation:typing 1.2s .2s infinite">·</span><span style="animation:typing 1.2s .4s infinite">·</span></div>`
+      if(_mlRegen){_mlRegen.appendChild(_typingRegen);_mlRegen.scrollTop=_mlRegen.scrollHeight}
+      const typing=_typingRegen;
+      const _stBubble=typing.lastElementChild
+      const _stStream=store.get('streamDisplay',true)
+      const _cleanStream=t=>{if(!t)return t;let s=t;const hasCard=/<(?:UpdateVariable|Analysis|JSONPatch)/i.test(s);s=s.replace(/<(?:UpdateVariable|Analysis|JSONPatch|status|ztl|EVE_DATA|thinking|artifact)[\s\S]*$/gi,'').replace(/\[心声[:：][\s\S]*$/gi,'').replace(/\[(?:状态|心情|好感|备注|记忆)[:：][^\]]*\]/gi,'').replace(/^[\s\S]*<\/(?:UpdateVariable|Analysis|JSONPatch|status|ztl)>\s*/gi,'').replace(/<(?:UpdateVariable|Analysis|JSONPatch)>[\s\S]*?<\/(?:UpdateVariable|Analysis|JSONPatch)>/gi,'').replace(/\[心声[:：][^\]]*\]/gi,'').trim();if(!s&&hasCard)s='✨ 正在生成小卡片…';return s}
+      let _sUS1=false
+      const aiRes=await window.getSmartChatReply(userTexts, c, _stStream?(partial)=>{
+        if(_stBubble&&partial&&_stBubble.isConnected){
+          const _cp=_cleanStream(partial);if(!_cp)return
+          const _sLines=(!c.offlineMode&&_cp.includes('\n'))?_cp.split('\n').map(l=>l.trim()).filter(l=>l):null
+          if(_sLines&&_sLines.length>1){
+            _stBubble.style.cssText='display:flex;flex-direction:column;gap:8px;max-width:85vw'
+            _stBubble.innerHTML=_sLines.map(l=>`<div style="padding:10px 14px;border-radius:18px 18px 18px 4px;background:${isN()?'rgba(255,255,255,.08)':'rgba(255,255,255,.75)'};font-size:13px;color:${isN()?'#e7d8e8':'var(--ink)'};line-height:1.8;word-break:break-word;align-self:flex-start">${escHtml(l)}</div>`).join('')
+          }else{
+            _stBubble.style.cssText='padding:10px 14px;border-radius:18px 18px 18px 4px;background:'+(isN()?'rgba(255,255,255,.08)':'rgba(255,255,255,.75)')+';font-size:13px;color:'+(isN()?'#e7d8e8':'var(--ink)')+';line-height:1.8;white-space:pre-wrap;word-break:break-word;max-width:85vw'
+            _stBubble.textContent=_cp
+          }
+          const _mlNow=document.getElementById('_msglist')
+          if(_mlNow){
+            if(!_sUS1&&_mlNow.scrollHeight-_mlNow.scrollTop-_mlNow.clientHeight>150)_sUS1=true
+            if(!_sUS1)requestAnimationFrame(()=>{_mlNow.scrollTop=_mlNow.scrollHeight})
+          }
+        }
+      }:null);
+      let reply=aiRes.text;
       const thoughts=aiRes.thoughts;
       typing.remove();
       const newArr=getMsgs();
@@ -12148,7 +12229,16 @@ ${ctxMsgs}
 });
 
       
-      if(aiRes.cardHtml){newArr.push({from:'c',text:aiRes.cardHtml,time:timeStr,mode:'offline'})}
+      if(aiRes.cardHtml){
+        newArr.push({
+          from:'c',
+          text:aiRes.cardHtml,
+          time:timeStr,
+          mode:'offline',
+          isCard:true,
+          _isCard:true
+        })
+      }
       saveMsgs(activeCharId,newArr);
 
       // 【修复】重说生成后，将新对话同步写入关键事件
@@ -12562,6 +12652,9 @@ let bubbleStyle = isOnlySticker
 if(sending)return
 sending=true
 const typing=appendTyping()
+if(!typing.isConnected){const _rml=document.getElementById('_msglist');if(_rml)_rml.appendChild(typing)}
+const _stBubble2=typing.lastElementChild
+const _stStream2=store.get('streamDisplay',true)
 
 // 【核心修复1】：锁定开始回复时的目标角色ID，防止切页面导致串台
 const targetCharId = c.id 
@@ -12583,7 +12676,26 @@ if(!pending.length){
 
 let aiRes, reply, thoughts;
 try {
-  aiRes=await window.getSmartChatReply(texts, c)
+  let _sUS2=false
+  aiRes=await window.getSmartChatReply(texts, c, _stStream2?(partial)=>{
+      if(_stBubble2&&partial){if(!_stBubble2.isConnected){const _ml0=document.getElementById('_msglist');if(_ml0&&!document.getElementById('_typing')){_ml0.appendChild(typing);}}if(_stBubble2.isConnected){
+        const _cp2=partial;if(!_cp2)return
+        const _sLines2=(!c.offlineMode&&_cp2.includes('\n'))?_cp2.split('\n').map(l=>l.trim()).filter(l=>l):null
+        if(_sLines2&&_sLines2.length>1){
+          _stBubble2.style.cssText='display:flex;flex-direction:column;gap:8px;max-width:85vw'
+          _stBubble2.innerHTML=_sLines2.map(l=>`<div style="padding:10px 14px;border-radius:18px 18px 18px 4px;background:${isN()?'rgba(255,255,255,.08)':'rgba(255,255,255,.75)'};font-size:13px;color:${isN()?'#e7d8e8':'var(--ink)'};line-height:1.8;word-break:break-word;align-self:flex-start">${escHtml(l)}</div>`).join('')
+        }else{
+          _stBubble2.style.cssText='padding:10px 14px;border-radius:18px 18px 18px 4px;background:'+(isN()?'rgba(255,255,255,.08)':'rgba(255,255,255,.75)')+';font-size:13px;color:'+(isN()?'#e7d8e8':'var(--ink)')+';line-height:1.8;white-space:pre-wrap;word-break:break-word;max-width:85vw'
+          _stBubble2.textContent=_cp2
+        }
+        const _ml2=document.getElementById('_msglist')
+        if(_ml2){
+          if(!_sUS2&&_ml2.scrollHeight-_ml2.scrollTop-_ml2.clientHeight>150)_sUS2=true
+          if(!_sUS2)requestAnimationFrame(()=>{_ml2.scrollTop=_ml2.scrollHeight})
+        }
+      }
+      }
+    }:null)
   reply=aiRes.text
   thoughts=aiRes.thoughts
 } catch (err) {
@@ -12603,22 +12715,40 @@ if(typing.parentElement) typing.remove()
     const timeStr=ftime(now())
     const isOffline=c.offlineMode||false
     let lines
-    // 互动卡片检测：整段是 HTML 时不拆
-    const _isHtmlCard2 = /(?:<style[\s>]|<div\s+(?:style|class)\s*=|<!DOCTYPE|<html[\s>])/i.test(reply||'')
-    // 酒馆标签检测：有 <status> 或 <EVE_DATA> 等结构化标签时不拆
-    const _hasTavernTags = /<(?:status|ztl)\b[\s\S]*?<\/(?:status|ztl)>|<EVE_DATA>|<-.*?->/.test((reply||''))
-    const _hasChatCard2 = /(?:MiPhone_start|MiPhone_end|msg_start|msg_end|\[和[^\]\[\r\n]{1,80}的(?:聊天|私聊)\]|<帖子内容[\|｜>])/i.test(reply||'');
+       // 先清理内部指令，但绝不能清理正式 <status> 状态栏
+    reply=(reply||'')
+      .replace(/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi,'')
+      .replace(/<Analysis>\s*[-\s\w:,.;]*<\/Analysis>/gi,'')
+      .replace(/<JSONPatch>[\s\S]*?<\/JSONPatch>/gi,'')
+      .replace(/<UpdateVariable>[\s\S]*$/gi,'')
+      .replace(/<JSONPatch>[\s\S]*$/gi,'')
+      .trim() || '...';
 
-    const _hasCustomTags2 = ((reply||'').match(/<\/[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5]{1,25}>/g)||[]).length >= 2
-    if(isOffline || _isHtmlCard2 || _hasTavernTags || _hasChatCard2 || _hasCustomTags2){
-      // 线下模式 / 互动卡片 / 酒馆标签：整段作为一个气泡
-      const full=reply.trim()||'...'
-      lines=[full]
+    // 互动卡片检测：只有整条回复从 HTML 开始才算独立 HTML 卡片
+    const _isHtmlCard2 =
+      /^\s*(?:```html\s*)?(?:<style\b|<div\b|<!DOCTYPE\b|<html\b)/i.test(reply||'');
+
+    // 正式酒馆状态栏必须整段保留，交给 render('chat') 提取
+    const _hasTavernTags =
+      /<(?:status|ztl|plot|StatusBar|novel_status)\b[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status)>/i.test(reply||'') ||
+      /<EVE_DATA>/i.test(reply||'') ||
+      /<-\s*[^>]+->/i.test(reply||'');
+
+    const _hasChatCard =
+      /(?:MiPhone_start|MiPhone_end|msg_start|msg_end|\[和[^\]\[\r\n]{1,80}的(?:聊天|私聊)\]|<帖子内容[\|｜>])/i.test(reply||'');
+
+    const _hasCustomTags =
+      ((reply||'').match(/<\/[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5]{1,25}>/g)||[]).length >= 2;
+
+    if(isOffline || _isHtmlCard2 || _hasTavernTags || _hasChatCard || _hasCustomTags){
+      // 线下模式、状态栏、互动卡片全部保持完整原文
+      lines=[reply.trim()||'...'];
     }else{
-      // 线上模式：按换行切碎成多个气泡
-      lines=reply.split('\n').map(l=>l.trim()).filter(l=>l!=='')
-      if(!lines.length)lines.push('...')
+      // 线上模式：按换行切分气泡
+      lines=reply.split('\n').map(l=>l.trim()).filter(l=>l!=='');
+      if(!lines.length) lines.push('...');
     }
+
  // 解析AI主动行为
     const processedLines=[]
     lines.forEach((line, idx)=>{
@@ -12808,7 +12938,16 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
     
     // 换头像已改为AI根据性格自主决定，不再随机触发
 
-    if(aiRes.cardHtml){newArr.push({from:'c',text:aiRes.cardHtml,time:timeStr,mode:'offline'})}
+    if(aiRes.cardHtml){
+      newArr.push({
+        from:'c',
+        text:aiRes.cardHtml,
+        time:timeStr,
+        mode:'offline',
+        isCard:true,
+        _isCard:true
+      })
+    }
     saveMsgs(targetCharId, newArr)
 
 // === 撤回延迟处理 ===
@@ -13180,13 +13319,20 @@ const r2 = _r2R.text
       if(sending)return;sending=true
       const tp=appendTyping()
             const aiRes=await window.getSmartChatReply(aiPrompt, c)
-      const reply=aiRes.text
+      let reply=aiRes.text
       const thoughts=aiRes.thoughts
 
       tp.remove()
       const newArr=getMsgs()
       newArr.forEach(m=>{if(m.from==='u'&&!m.replied)m.replied=true})
-            const _isHtmlCard3 = /(?:<style[\s>]|<div\s+(?:style|class)\s*=|<!DOCTYPE|<html[\s>])/i.test(reply||'')
+            reply=(reply||'')
+              .replace(/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi,'')
+              .replace(/<Analysis>\s*[-\s\w:,.;]*<\/Analysis>/gi,'')
+              .replace(/<JSONPatch>[\s\S]*?<\/JSONPatch>/gi,'')
+              .replace(/<UpdateVariable>[\s\S]*$/gi,'')
+              .replace(/<JSONPatch>[\s\S]*$/gi,'')
+              .trim() || '...';
+            const _isHtmlCard3 = /^\s*(?:```html\s*)?(?:<style\b|<div\b|<!DOCTYPE\b|<html\b)/i.test(reply||'')
      const _hasChatCard3 = /(?:MiPhone_start|MiPhone_end|msg_start|msg_end|\[和[^\]\[\r\n]{1,80}的(?:聊天|私聊)\]|<帖子内容[\|｜>])/i.test(reply||'');
 
       const _hasCustomTags3 = ((reply||'').match(/<\/[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5]{1,25}>/g)||[]).length >= 2
@@ -13195,9 +13341,28 @@ const r2 = _r2R.text
       const ts=ftime(now())
            lines.forEach((line, index)=>{
         const isLast = index === lines.length - 1;
-        newArr.push({from:'c',text:line,time:ts, thoughts: isLast ? thoughts : '', mode: c.offlineMode?'offline':'online'})
-        appendReplyBubble(line,ts, false, isLast ? thoughts : '')
+        newArr.push({
+          from:'c',
+          text:line,
+          time:ts,
+          thoughts:isLast ? thoughts : '',
+          mode:c.offlineMode ? 'offline' : 'online'
+        })
+        appendReplyBubble(line,ts,false,isLast ? thoughts : '')
       })
+
+      // 卡片必须作为独立消息保存，并明确标记为卡片。
+      // 否则 render() 会按普通小说文字处理。
+      if(aiRes.cardHtml){
+        newArr.push({
+          from:'c',
+          text:aiRes.cardHtml,
+          time:ts,
+          mode:'offline',
+          isCard:true,
+          _isCard:true
+        })
+      }
 
       // 【修复】功能面板互动（红包/转账/礼物/剧场等）写入关键事件
       const _fUBrief = formatMemorySnippet(userText, 50);
@@ -17942,6 +18107,17 @@ pages.settings=()=>{
 
 </div>
 <div class="card">
+  <div class="card-t">流式输出</div>
+  <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">开启后 AI 回复会边生成边显示，不用等全部写完。关掉则等写完一次性出现。</div>
+  <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 0">
+    <input type="checkbox" id="_sw_stream" ${store.get('streamDisplay',true)?'checked':''} style="accent-color:var(--rose);width:18px;height:18px">
+    <div style="flex:1">
+      <div style="font-size:13px;color:var(--ink)">流式输出（打字机效果）</div>
+      <div style="font-size:10px;color:var(--ink-l);margin-top:2px">对所有 OpenAI 兼容接口生效，不兼容的接口会自动回退</div>
+    </div>
+  </label>
+</div>
+<div class="card">
   <div class="card-t">数据管理</div>
       <div class="btn-main" id="_savemgr" style="margin-bottom:8px">存档管理（多存档 / 切换 / 复制）</div>
       <div class="btn-sub" id="_expall">导出全部数据</div>
@@ -18013,6 +18189,8 @@ pages.settings=()=>{
   if($('#_sw_autoimg'))$('#_sw_autoimg').onchange=function(){store.set('autoImageEnabled',this.checked)}
 if($('#_sw_autovoice'))$('#_sw_autovoice').onchange=function(){store.set('autoVoiceEnabled',this.checked)}
 if($('#_sw_autobgmsg'))$('#_sw_autobgmsg').onchange=function(){store.set('autoBgMsgEnabled',this.checked)}
+if($('#_sw_stream'))$('#_sw_stream').onchange=function(){store.set('streamDisplay',this.checked)}
+
 if($('#_btn_req_notif')) {
   $('#_btn_req_notif').onclick = (e) => {
     e.preventDefault();
@@ -18138,6 +18316,13 @@ pages.beauty=()=>{
   <input class="inp" id="_customfonturl" value="" placeholder="https://example.com/font.woff2" style="padding:9px 11px;border-radius:10px;background:rgba(255,255,255,.55)">
   <div style="display:flex;gap:8px;margin-top:8px">
     <div class="btn-main" id="_addfonttolib" style="flex:1;margin:0;padding:9px;font-size:11px">➕ 添加到字体库</div>
+  </div>
+  <div style="margin-top:10px;padding-top:10px;border-top:1px dashed rgba(232,160,180,.15)">
+    <div style="font-size:10px;color:var(--ink-l);line-height:1.7;margin-bottom:7px">📋 批量导入字体（一行一个，格式任选）：<br>
+      <code style="font-size:9px;background:rgba(0,0,0,.05);padding:1px 4px;border-radius:3px">字体名 https://xxx.woff2</code>　或　<code style="font-size:9px;background:rgba(0,0,0,.05);padding:1px 4px;border-radius:3px">https://xxx.woff2</code>（自动取文件名）<br>
+      也支持 Google Fonts CSS 链接，如 <code style="font-size:9px;background:rgba(0,0,0,.05);padding:1px 4px;border-radius:3px">https://fonts.googleapis.com/css2?family=...</code></div>
+    <textarea class="tarea" id="_fontbatch" rows="4" placeholder="我的手写体 https://example.com/handwrite.woff2&#10;https://example.com/another.woff2&#10;https://fonts.googleapis.com/css2?family=ZCOOL+XiaoWei&display=swap" style="font-family:monospace;font-size:10px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.55);border:1px solid rgba(232,160,180,.15);line-height:1.6"></textarea>
+    <div class="btn-main" id="_fontbatchimport" style="margin-top:8px;padding:9px;font-size:11px">批量导入</div>
   </div>
 </div>
 
@@ -18349,6 +18534,66 @@ body.querySelector('#_addfonttolib')?.addEventListener('click',()=>{
   renderFontLib()
 })
 
+// 批量导入字体
+body.querySelector('#_fontbatchimport')?.addEventListener('click', async ()=>{
+  const raw = (body.querySelector('#_fontbatch')?.value||'').trim()
+  if(!raw) return alert('请粘贴字体链接')
+  const lines = raw.split('\n').map(l=>l.trim()).filter(l=>l)
+  const btn = body.querySelector('#_fontbatchimport')
+  btn.textContent = '导入中...'; btn.style.opacity = '.5'; btn.style.pointerEvents = 'none'
+
+  let added = 0, skipped = 0, errors = []
+
+  for(const line of lines){
+    try{
+      // 判断是不是 Google Fonts CSS 链接
+      if(/fonts\.googleapis\.com\/css/i.test(line)){
+        const cssUrl = line.match(/https?:\/\/\S+/)?.[0]
+        if(!cssUrl){ errors.push(line.slice(0,40)+'… 无法识别链接'); continue }
+        // 从 family= 参数提取字体名
+        const famMatch = cssUrl.match(/family=([^&:]+)/)
+        const famName = famMatch ? decodeURIComponent(famMatch[1]).replace(/\+/g,' ') : 'Google Font'
+        // 检查重复
+        if(fontLib.some(f=>f.url===cssUrl)){ skipped++; continue }
+        fontLib.push({ name: famName, url: cssUrl, time: Date.now(), isGoogleCSS: true })
+        added++
+        continue
+      }
+
+      // 普通格式：可能是 "名字 URL" 或纯 URL
+      const urlMatch = line.match(/(https?:\/\/\S+)/)
+      if(!urlMatch){ errors.push(line.slice(0,40)+'… 找不到链接'); continue }
+      const url = urlMatch[1]
+      // URL 前面的部分当名字
+      let name = line.slice(0, line.indexOf(url)).trim()
+      if(!name){
+        // 从文件名提取
+        try{ name = decodeURIComponent(url.split('/').pop().split('?')[0].replace(/\.\w+$/,'')) }catch(e){}
+        if(!name) name = 'Font_' + (fontLib.length + added + 1)
+      }
+      // 校验
+      const u = new URL(url)
+      if(!['https:','http:'].includes(u.protocol)){ errors.push(name+' 链接不是 http/https'); continue }
+      // 检查重复
+      if(fontLib.some(f=>f.url===url)){ skipped++; continue }
+      fontLib.push({ name, url, time: Date.now() })
+      added++
+    }catch(e){
+      errors.push(line.slice(0,40)+'… '+e.message)
+    }
+  }
+
+  store.set('fontLibrary', fontLib)
+  renderFontLib()
+  body.querySelector('#_fontbatch').value = ''
+  btn.textContent = '批量导入'; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'
+
+  let msg = `成功导入 ${added} 个字体`
+  if(skipped) msg += `n⏭ 跳过 ${skipped} 个重复`
+  if(errors.length) msg += `n 失败 ${errors.length} 个：n${errors.join('n')}`
+  alert(msg)
+})
+
 // AI 设计气泡 CSS
 body.querySelector('#_aicssBtn')?.addEventListener('click',async()=>{
   const api=getApi()
@@ -18507,9 +18752,21 @@ const renderBeautyLib=()=>{
       if(b.groupWall!==undefined)store.set('groupWall',b.groupWall)
       if(b.momentsWall!==undefined)store.set('momentsWall',b.momentsWall)
       if(b.customCSS!==undefined)store.set('customCSS',b.customCSS)
-      if(b.customFontName)store.set('customFontName',b.customFontName)
-      if(b.customFontUrl)store.set('customFontUrl',b.customFontUrl)
+      // 字体：方案没存自定义字体就清空，避免残留上一个方案的字体
+      store.set('customFontName', b.customFontName||'')
+      store.set('customFontUrl', b.customFontUrl||'')
       if(b.chatBubbleStyle)store.set('chatBubbleStyle',b.chatBubbleStyle)
+      // 气泡自由 CSS + 装饰图（旧方案没有这个字段就不动）
+      if(b.bubbleFree){
+        const _bf = b.bubbleFree
+        const _setOrDel = (k,v)=>{ if(v) localStorage.setItem(k,v); else localStorage.removeItem(k) }
+        _setOrDel('_bubbleCssSelf', _bf.self)
+        _setOrDel('_bubbleCssOther', _bf.other)
+        _setOrDel('_bubbleDecoSelf', _bf.decoSelf)
+        _setOrDel('_bubbleDecoOther', _bf.decoOther)
+        _setOrDel('_bubbleDecoPosS', _bf.decoPosS)
+        _setOrDel('_bubbleDecoPosO', _bf.decoPosO)
+      }
       curTheme=b.theme||curTheme
       applyBeauty()
       alert(`已应用方案「${b.name}」，CSS长度：${(b.customCSS||'').length}字符`)
@@ -18554,6 +18811,14 @@ body.querySelector('#_savebeautylib')?.addEventListener('click',()=>{
     customFontName:store.get('customFontName',''),
     customFontUrl:store.get('customFontUrl',''),
     chatBubbleStyle:store.get('chatBubbleStyle',DEFAULT_BUBBLE_STYLE),
+    bubbleFree:{
+      self: localStorage.getItem('_bubbleCssSelf')||'',
+      other: localStorage.getItem('_bubbleCssOther')||'',
+      decoSelf: localStorage.getItem('_bubbleDecoSelf')||'',
+      decoOther: localStorage.getItem('_bubbleDecoOther')||'',
+      decoPosS: localStorage.getItem('_bubbleDecoPosS')||'tr',
+      decoPosO: localStorage.getItem('_bubbleDecoPosO')||'tr'
+    },
     time:Date.now()
   }
 
@@ -18644,7 +18909,12 @@ body.querySelector('#_savebeautylib')?.addEventListener('click',()=>{
   说明：._bubble-other 是"对方"（角色）的气泡。颜色要比我方气泡更浅/更柔和，形成对比。
 - ._bubble-self 和 ._bubble-other 的背景色必须不同！严禁加 border、outline、box-shadow。
 
-【线下小说模式（重要！）】
+【线下小说模式 & 群聊剧场（重要！用CSS变量覆盖）】
+- ._novel { --novel-text: 正文颜色 !important; --novel-dialogue: 对话高亮色 !important; }
+  说明：线下小说和群聊剧场共用 ._novel 容器。正文颜色通过 --novel-text 控制，角色说话（引号内）通过 --novel-dialogue 控制。
+  示例：._novel { --novel-text: #e0d0e8 !important; --novel-dialogue: #f5b8cf !important; }
+- ._novel p { }  说明：每个段落，可加 text-indent、margin 等
+- ._novel ._dlg { }  说明：对话文字（引号包裹的内容），默认加粗+高亮色
 - #app ._bubble-offline { background: xxx !important; color: xxx !important; border-radius: 16px 16px 16px 4px !important; border: none !important; box-shadow: none !important; }
 
 【特殊卡片 - 红包/转账/礼物/通话】
@@ -18690,6 +18960,7 @@ body.querySelector('#_savebeautylib')?.addEventListener('click',()=>{
 - 必须覆盖 --bar-bg 和 --bar-bg-n（否则聊天顶栏底栏颜色会跟主题不搭）
 - 每个属性都加 !important
 - ._bubble 和 ._bubble-offline 严禁加 border、outline、box-shadow（会出现难看的框框，破坏乙女感），只能改颜色和圆角
+- 严禁写 font-family（字体由用户在字体设置里单独选择）
 - 只输出CSS代码，不要解释，不要markdown格式`
   let res=await askAI('只输出CSS代码，不要解释和markdown。每个属性必须加!important。必须一次性输出完整CSS，不要在半个属性或半个规则处停下。',cssPrompt,4000)
   res=res.replace(/```css\n?/g,'').replace(/```\n?/g,'').trim()
@@ -18842,17 +19113,28 @@ try{
 }catch(e){}
 
 if(validFontUrl){
-  customFontStyle.textContent=`@font-face{
-    font-family:"OtomeCustomFont";
-    src:url("${validFontUrl.replace(/"/g,'%22')}");
-    font-display:swap;
-  }`
+  // Google Fonts CSS 链接用 @import，普通字体文件用 @font-face
+  const _isGCSS = /fonts\.googleapis\.com\/css|fonts\.gstatic\.com/i.test(validFontUrl) || (store.get('fontLibrary',[]).find(f=>f.url===validFontUrl)||{}).isGoogleCSS
+  if(_isGCSS){
+    // 从 family= 提取字体名，用 @import 加载
+    const _fm = validFontUrl.match(/family=([^&:]+)/)
+    const _gName = _fm ? decodeURIComponent(_fm[1]).replace(/\+/g,' ') : ''
+    customFontStyle.textContent = `@import url("${validFontUrl.replace(/"/g,'%22')}");\n` +
+      (_gName ? `body{font-family:"${_gName}","Noto Serif SC","PingFang SC","Microsoft YaHei",serif!important}input,textarea,select{font-family:"${_gName}","Noto Serif SC",serif!important}` : '')
+  } else {
+    customFontStyle.textContent=`@font-face{
+      font-family:"OtomeCustomFont";
+      src:url("${validFontUrl.replace(/"/g,'%22')}");
+      font-display:swap;
+    }`
+  }
 }
 else{
   customFontStyle.textContent=''
 }
 
-if(fontMode==='custom'&&validFontUrl){
+const _isGoogleFont = /fonts\.googleapis\.com\/css/i.test(validFontUrl) || (store.get('fontLibrary',[]).find(f=>f.url===validFontUrl)||{}).isGoogleCSS
+if(fontMode==='custom'&&validFontUrl&&!_isGoogleFont){
   document.body.style.fontFamily='"OtomeCustomFont","Noto Serif SC","PingFang SC","Microsoft YaHei",serif'
 }else if(fontMode==='sans'){
   document.body.style.fontFamily='system-ui,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif'
@@ -18920,20 +19202,59 @@ if(wall){
       }, 500)
     }
   }else{
-    // 让气泡自由 CSS 拥有最高优先级，不被全局 CSS 覆盖
+    // ===== 用户设置强制层：字体 + 气泡，永远压过 AI 主题 CSS =====
+    let _cssForTheme = customCSS
+    let _force = ''
+
+    // 【字体】用户选了非默认字体 → 删掉主题 CSS 里的 font-family，再强制套用户字体
+    if(fontMode !== 'serif'){
+      let _stack = ''
+      if(fontMode === 'custom' && validFontUrl){
+        const _gm = /fonts\.googleapis\.com\/css/i.test(validFontUrl) ? validFontUrl.match(/family=([^&:]+)/) : null
+        const _fam = _gm ? decodeURIComponent(_gm[1]).replace(/\+/g,' ') : 'OtomeCustomFont'
+        _stack = `"${_fam}","Noto Serif SC","PingFang SC","Microsoft YaHei",serif`
+      }else if(fontMode === 'sans'){
+        _stack = 'system-ui,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif'
+      }else if(fontMode === 'cute'){
+        _stack = '"Noto Serif SC","PingFang SC","Microsoft YaHei",serif'
+      }
+      if(_stack){
+        // 只删普通规则里的 font-family，保留 @font-face 里的定义
+        _cssForTheme = _cssForTheme.replace(/(@font-face\s*\{[^}]*\})|font-family\s*:[^;{}]*;?/gi, (m, ff)=> ff ? ff : '')
+        _force += `html body,html body #app,html body #app *:not([style*="monospace"]):not(code):not(pre):not(svg):not(svg *),html body input,html body textarea,html body select,html body .modal-box,html body .modal-box *{font-family:${_stack}!important}`
+      }
+    }
+
+    // 【气泡预设】用户改过气泡预设 → 强制套用，不让主题 CSS 覆盖
     const bSelf = localStorage.getItem('_bubbleCssSelf') || ''
     const bOther = localStorage.getItem('_bubbleCssOther') || ''
-    let bOverride = ''
+    const _bsSaved = store.get('chatBubbleStyle', null)
+    if(_bsSaved && JSON.stringify(_bsSaved) !== JSON.stringify(DEFAULT_BUBBLE_STYLE)){
+      const _n = isN()
+      const _vs = getBubbleStyle(true, _n), _vo = getBubbleStyle(false, _n)
+      const _imp = s => s.split(';').map(x=>x.trim()).filter(Boolean).map(p=>p.includes('!important')?p:p+'!important').join(';')
+      if(!bSelf) _force += ` #app#app#app#app ._bubble._bubble-self{${_imp(_vs.style)};color:${_vs.color}!important}`
+      if(!bOther) _force += ` #app#app#app#app ._bubble._bubble-other{${_imp(_vo.style)};color:${_vo.color}!important}`
+    }
+
+    // 【气泡自由 CSS】最高优先级
     if(bSelf){
       const sProps = bSelf.split(';').filter(Boolean).map(p=>p.includes('!important')?p:p+'!important').join(';')
-      bOverride += ` #app#app#app ._bubble-self{${sProps}}`
+      _force += ` #app#app#app#app ._bubble-self{${sProps}}`
     }
     if(bOther){
       const oProps = bOther.split(';').filter(Boolean).map(p=>p.includes('!important')?p:p+'!important').join(';')
-      bOverride += ` #app#app#app ._bubble-other,#app#app#app ._bubble-offline{${oProps}}`
+      _force += ` #app#app#app#app ._bubble-other,#app#app#app#app ._bubble-offline{${oProps}}`
     }
-    customStyle.textContent=customCSS + bOverride
+
+    customStyle.textContent = _cssForTheme
     try{localStorage.setItem('customCSS',customCSS)}catch(e){}
+
+    // 强制层放在独立 style 里，并始终挪到 head 最后，主题 CSS 写坏了也不受影响
+    let _forceStyle = document.getElementById('_userForceCSS')
+    if(!_forceStyle){ _forceStyle = document.createElement('style'); _forceStyle.id = '_userForceCSS' }
+    _forceStyle.textContent = _force
+    document.head.appendChild(_forceStyle)
   }
 
 
@@ -20300,6 +20621,7 @@ function openSpyGroupGen() {
       (res.newNpcs || []).forEach(npc => {
          const nc = { id: uid(), name: npc.name, personality: `【${targetChar.name}的私域NPC】${npc.relation}。${npc.personality}`, relation: npc.relation, mood: '在线', status: '水群中', affection: 0, quote: '', avatar: '', worldBookIds: targetChar.worldBookIds || [], bindPersonaId: activePersonaId, wechatId: genWcId(), isHidden: true };
          charList.push(nc); finalMemberIds.push(nc.id);
+         updateCharRel(targetChar.id, nc.id, { setFamiliarity: 70, event: `${nc.name}是${targetChar.name}的${(npc.relation||'熟人').slice(0,30)}` });
       });
       (res.existingCharNames || []).forEach(ename => {
          const exist = relatedChars.find(c => c.name.includes(ename));
@@ -21006,19 +21328,29 @@ function renderGroupMsg(m,members,n,mode){
 contentHtml=`<div style="white-space:pre-wrap">${parsedGroupText}</div>`
     }
 
-    if(mode==='drama'){
-      row.style.cssText='animation:fadeIn .3s;padding:0 20px 0 0'
+        if(mode==='drama'){
+      row.style.cssText='animation:fadeIn .3s;padding:0'
+      // 把纯文本消息按段落拆分+对话高亮，和单聊线下统一
+      const _rawDrama = (msgText||'').replace(/\*\*\*/g,'').replace(/\*\*/g,'').replace(/__/g,'').replace(/^#{1,6}\s*/gm,'')
+      const _dramaParas = _rawDrama.split('\n').map(l=>l.trim()).filter(l=>l)
+      const _dramaBody = _dramaParas.map(line=>{
+        let h = escHtml(line)
+        h = h.replace(/([「『\u201c""])([^」』\u201d""]*?)([」』\u201d""])/g,
+          (f,o,i,c)=>`<span class="_dlg">${o}${i}${c}</span>`)
+        return `<p>${h}</p>`
+      }).join('')
       row.innerHTML=`
-        <div class="card" style="background:${n?'rgba(255,255,255,.06)':'rgba(255,255,255,.7)'};margin:0">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div class="_offline-narration _novel${n?' _novel-night':''}" style="padding:4px 0">
+          <div class="_novel-header">
             <div style="flex-shrink:0;cursor:pointer" class="_gc_avatar_click" data-cid="${m.from}">${avatarEl(cavatar,28)}</div>
-            <div style="font-size:12px;color:${n?'#c8a8d0':'var(--rose-d)'};font-weight:500">${escHtml(cname)}${titleHtml}</div>
-            <div style="font-size:9px;color:${n?'#8878a8':'var(--ink-l)'}">${m.time||''}</div>
+            <div style="font-size:12px;color:var(--novel-dialogue,var(--rose-d));font-weight:500">${escHtml(cname)}${titleHtml}</div>
+            <div style="font-size:9px;color:var(--ink-l)">${m.time||''}</div>
           </div>
-          <div style="font-size:13px;color:${n?'#e0d0e8':'var(--ink)'};line-height:2">${contentHtml}</div>
+          ${_dramaBody}
           ${toolsHtml}
         </div>
       `
+
     }else{
       row.style.cssText='display:flex;flex-direction:column;align-items:flex-start;animation:fadeIn .3s;padding:0 50px 0 0'
       row.innerHTML=`
@@ -21175,7 +21507,39 @@ ${normalPrivateInfo}
   }
 
   const prompt=`${hist?'最近消息：\n'+hist+'\n\n':''}用户/指令：${userTexts.join('\n')}\n\n${isDrama?'（最高警告：当前是线下剧场模式！彻底忘掉之前的微信聊天格式，接下来的回复绝对不能包含任何@和emoji表情！必须用第三人称小说体描写！）\n\n':''}角色们的回复：`
-  const res=await askAI(sysPrompt,prompt,isDrama?1200:800)
+  const _gcStreamEl=document.getElementById('_gctyping')
+  let _gcScrolled=false
+  const _gcOnChunk=store.get('streamDisplay',true)?(partial)=>{
+    if(!_gcStreamEl||!_gcStreamEl.isConnected)return
+    const n2=isN()
+    const _chunks=partial.split(/(?=【)/).filter(s=>s.trim())
+    if(_chunks.length){
+      let html=''
+      _chunks.forEach(ck=>{
+        const nm=ck.match(/^【([^】]+)】/)
+        const name=nm?nm[1].trim():''
+        const txt=nm?ck.slice(nm[0].length).trim():ck.trim()
+        const ch=name?members.find(c=>c.name===name||name.includes(c.name)):null
+        if(isDrama){
+          html+=`<div style="padding:8px 12px;margin:4px 0;border-radius:12px;background:${n2?'rgba(255,255,255,.06)':'rgba(255,255,255,.65)'};font-size:13px;color:${n2?'#e7d8e8':'var(--ink)'};line-height:1.8;white-space:pre-wrap;word-break:break-word">${name?`<div style="font-size:11px;font-weight:600;color:${n2?'#c8a8d0':'var(--rose-d)'};margin-bottom:4px">${escHtml(name)}</div>`:''}${escHtml(txt)}</div>`
+        }else{
+          const lines=txt.split('\n').filter(l=>l.trim())
+          lines.forEach(l=>{
+            html+=`<div style="display:flex;align-items:flex-start;gap:8px;margin:4px 0">${ch?`<div style="flex-shrink:0;width:24px;height:24px;border-radius:50%;overflow:hidden">${avatarEl(ch.avatar,24)}</div>`:''}<div style="padding:8px 12px;border-radius:14px;background:${n2?'rgba(255,255,255,.08)':'rgba(255,255,255,.75)'};font-size:13px;color:${n2?'#e7d8e8':'var(--ink)'};line-height:1.6;word-break:break-word;max-width:80vw">${name?`<div style="font-size:10px;color:${n2?'#a898b8':'var(--ink-l)'};margin-bottom:2px">${escHtml(name)}</div>`:''}${escHtml(l)}</div></div>`
+          })
+        }
+      })
+      _gcStreamEl.innerHTML=html
+    }else{
+      _gcStreamEl.innerHTML=`<div style="padding:8px 12px;font-size:13px;color:${n2?'#e7d8e8':'var(--ink)'};line-height:1.8;white-space:pre-wrap;word-break:break-word">${escHtml(partial)}</div>`
+    }
+    const _ml3=_gcStreamEl.closest('[id]')
+    if(_ml3){
+      if(!_gcScrolled&&_ml3.scrollHeight-_ml3.scrollTop-_ml3.clientHeight>150)_gcScrolled=true
+      if(!_gcScrolled)requestAnimationFrame(()=>{_ml3.scrollTop=_ml3.scrollHeight})
+    }
+  }:null
+  const res=await askAI(sysPrompt,prompt,isDrama?1200:800,null,null,_gcOnChunk)
 
   // ======= 智能纠错解析器 =======
   const replies=[]
@@ -21414,7 +21778,7 @@ function openGroupMenu(g){
             </div>
           </div>`
         }
-        for(const [iid,iws] of _wImp){const iname=iws[0]?.importName||'导入的世界书';const ick=iws.filter(w=>(g.worldBookIds||[]).includes(w.id)).length;const igid='_gwi_'+iid;html+=`<div style="margin-bottom:6px"><div class="_wbgrp_b" data-gid="${igid}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:rgba(138,154,110,.08);border:1px solid rgba(138,154,110,.1);cursor:pointer;margin-bottom:2px"><span class="_wbga" data-gid="${igid}" style="font-size:10px;color:var(--green);transition:transform .2s;display:inline-block">▶</span><span style="flex:1;font-size:13px;font-weight:500;color:var(--green)">📖 ${escHtml(iname)}</span><span style="font-size:10px;color:var(--ink-l)">${ick}/${iws.length} 已选</span></div><div class="_wbgb" data-gid="${igid}" style="display:none;padding-left:6px;border-left:2px solid rgba(138,154,110,.12);margin-left:10px">${iws.map(w=>_wIt(w)).join('')}</div></div>`}
+        for(const [iid,iws] of _wImp){const iname=iws[0]?.importName||'导入的世界书';const ick=iws.filter(w=>(g.worldBookIds||[]).includes(w.id)).length;const igid='_gwi_'+iid;html+=`<div style="margin-bottom:6px"><div class="_gwgrp" data-gid="${igid}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:rgba(138,154,110,.08);border:1px solid rgba(138,154,110,.1);cursor:pointer;margin-bottom:2px"><span class="_gwga" data-gid="${igid}" style="font-size:10px;color:var(--green);transition:transform .2s;display:inline-block">▶</span><span style="flex:1;font-size:13px;font-weight:500;color:var(--green)">${escHtml(iname)}</span><span style="font-size:10px;color:var(--ink-l)">${ick}/${iws.length} 已选</span></div><div class="_gwgb" data-gid="${igid}" style="display:none;padding-left:6px;border-left:2px solid rgba(138,154,110,.12);margin-left:10px">${iws.map(w=>_wIt(w)).join('')}</div></div>`}
         _wNo.forEach(w=>{html+=_wIt(w)})
         html+=`<div class="btn-main" id="_gwok" style="margin-top:12px">完成</div>`
         mb2.innerHTML=html
@@ -21698,6 +22062,7 @@ mb.querySelectorAll('._gckick').forEach(el=>{
       // 创建新角色（隐藏起来，不出现在私聊列表里）
       const nc = {id:uid(), name:res.name, personality:`【NPC】${inviter.name}的${res.relation}。${res.personality}`, relation:res.relation, mood:'好奇', status:'刚进群', affection:10, quote:res.firstMsg, avatar:'', worldBookIds:[], bindPersonaId: activePersonaId, isHidden:true, wechatId:genWcId()};
       charList.push(nc); saveCharList();
+      updateCharRel(inviter.id, nc.id, { setFamiliarity: 70, event: `${inviter.name}拉了自己的${(res.relation||'熟人').slice(0,30)}进群` });
       
       // 加入群聊
       g.charIds.push(nc.id); saveGroups();
@@ -23470,6 +23835,269 @@ function openNotificationPanel(){
     render()
   })
 }
+// ===== 多人线下：同行者选择 =====
+function openOfflineCompanionPicker(c){
+  const MAX = 3
+  const sel = new Set((c.offlineCompanions||[]).filter(id=>charList.some(x=>x.id===id&&!x.isDeleted)))
+  showModal('多人线下 · 选同行的人', (mb, close)=>{
+    const draw = ()=>{
+      const knownMap = {}
+      getCharKnownList(c.id).forEach(k=>{ knownMap[k.otherId] = k.rel })
+      // 同马甲下的角色 + 关系网里认识的人（含隐藏NPC），排除粉丝号，认识的排前面
+      const pool = charList
+        .filter(x=>x.id!==c.id && !x.isDeleted && !(x.relation||'').includes('的粉丝') && (x.bindPersonaId===c.bindPersonaId || knownMap[x.id]))
+        .sort((a,b)=>(knownMap[b.id]?.familiarity||0)-(knownMap[a.id]?.familiarity||0))
+
+      mb.innerHTML = `
+        <div style="font-size:11px;color:var(--ink-l);text-align:center;margin-bottom:12px;line-height:1.6">最多选 ${MAX} 个人，和 ${escHtml(c.name)} 一起线下见你<br>认识 ${escHtml(c.name)} 的人排在前面</div>
+        ${pool.length ? pool.map(o=>{
+          const on = sel.has(o.id)
+          return `<div class="list-item _cmp" data-id="${o.id}" role="checkbox" aria-checked="${on}" style="cursor:pointer;${on?'border-color:var(--rose);background:rgba(232,160,180,.15)':''}">
+            <div style="flex-shrink:0">${avatarEl(o.avatar,40)}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;color:var(--ink)">${escHtml(o.name)}${o.isHidden?' <span style="font-size:9px;color:var(--ink-l)">NPC</span>':''}</div>
+              <div style="font-size:10px;color:var(--ink-l);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${knownMap[o.id]?describeCharRel(knownMap[o.id]):'和TA不认识'} · ${escHtml((o.relation||'').slice(0,20))}</div>
+            </div>
+            ${o.isHidden?`<div class="_cmp_addfriend" data-id="${o.id}" role="button" style="flex-shrink:0;padding:4px 8px;border-radius:10px;font-size:10px;background:rgba(138,154,110,.15);color:var(--green);cursor:pointer">加好友</div>`:''}
+            ${(o.personality||'').length<300?`<div class="_cmp_fill" data-id="${o.id}" role="button" aria-label="补全${escHtml(o.name)}的人设" style="flex-shrink:0;padding:4px 8px;border-radius:10px;font-size:10px;background:rgba(212,165,116,.15);color:var(--gold);cursor:pointer">补全人设</div>`:''}
+            <div style="font-size:16px;color:var(--rose-d);width:16px">${on?'✓':''}</div>
+          </div>`
+        }).join('') : '<div style="text-align:center;padding:20px;color:var(--ink-l);font-size:12px">还没有其他角色</div>'}
+        <div class="card" style="margin-top:12px">
+          <div class="card-t">从人设 & 世界书自动提取人际圈</div>
+          <div style="font-size:11px;color:var(--ink-l);line-height:1.6;margin-bottom:8px">读取 ${escHtml(c.name)} 的完整人设和所有世界书，自动找出里面提到的家人、朋友、同事、对手等，批量生成角色</div>
+          <div class="btn-sub" id="_cmp_extract" style="padding:8px;font-size:12px">一键提取人际圈</div>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <div class="card-t">或者让 ${escHtml(c.name)} 叫个新的人来</div>
+          <input class="inp" id="_cmp_hint" aria-label="想叫谁来" placeholder="例如：他的发小 / 他妹妹 / 他的前任">
+          <div class="btn-sub" id="_cmp_gen" style="margin-top:8px;padding:8px;font-size:12px">AI 生成并加入</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <div class="btn-sub" id="_cmp_solo" style="flex:1;margin:0">单人线下</div>
+          <div class="btn-main" id="_cmp_go" style="flex:1;margin:0">多人线下 (${sel.size})</div>
+        </div>`
+
+      mb.querySelectorAll('._cmp').forEach(el=>{
+        el.onclick = ()=>{
+          const id = el.dataset.id
+          if(sel.has(id)) sel.delete(id)
+          else{
+            if(sel.size >= MAX) return alert(`最多选 ${MAX} 个人`)
+            sel.add(id)
+          }
+          draw()
+        }
+      })
+
+      // 加好友：把NPC从隐藏变为可见，同时把多人线下的记忆写进私聊
+      mb.querySelectorAll('._cmp_addfriend').forEach(btn=>{
+        btn.onclick = e=>{
+          e.stopPropagation()
+          const npc = charList.find(x=>x.id===btn.dataset.id)
+          if(!npc) return
+          if(!confirm(`把「${npc.name}」加为好友？加好友后TA会出现在你的聊天列表里`)) return
+          npc.isHidden = false
+          // 把该NPC参与过的群聊/多人线下记录写入私聊作为共同记忆
+          try{
+            const existMsgs = getMsgs(npc.id)
+            if(!existMsgs.length){
+              const memMsgs = []
+              groups.forEach(g=>{
+                if(!(g.charIds||[]).includes(npc.id)) return
+                const gMsgs = (g.messages||[]).filter(m=>m.from===npc.id||m.from==='u').slice(-20)
+                if(gMsgs.length){
+                  memMsgs.push({from:'c',text:`[群聊回忆·${g.name||'群聊'}] 我们之前在群里聊过`,time:gMsgs[0].time||ftime(now()),read:true})
+                  gMsgs.forEach(gm=>{
+                    memMsgs.push({from:gm.from==='u'?'u':'c', text:gm.text, time:gm.time||'', read:true, mode:gm.mode||''})
+                  })
+                }
+              })
+              // 也把当前角色的多人线下消息里该NPC说过的话搬进来
+              const hostMsgs = getMsgs(c.id)
+              const offlineMentions = hostMsgs.filter(m=>m.from==='c'&&m.mode==='offline'&&(m.text||'').includes(npc.name)).slice(-10)
+              if(offlineMentions.length){
+                memMsgs.push({from:'c',text:`[线下回忆] 我们一起线下见过面`,time:offlineMentions[0].time||ftime(now()),read:true})
+                offlineMentions.forEach(om=>{
+                  memMsgs.push({from:'c', text:om.text, time:om.time||'', read:true, mode:'offline'})
+                })
+              }
+              if(memMsgs.length) saveMsgs(npc.id, memMsgs)
+            }
+          }catch(e){}
+          saveCharList()
+          alert(`已把「${npc.name}」加为好友！`)
+          draw()
+        }
+      })
+      // 补全人设：扩写短人设，保留原设定
+      mb.querySelectorAll('._cmp_fill').forEach(btn=>{
+        btn.onclick = async e=>{
+          e.stopPropagation() // 防止触发外层的勾选
+          const o = charList.find(x=>x.id===btn.dataset.id)
+          if(!o) return
+          const api = getApi()
+          if(!api || !api.key) return alert('请先配置聊天API')
+          btn.textContent = '补全中...'; btn.style.pointerEvents = 'none'; btn.style.opacity = '.5'
+
+          let _r = '素不相识', _hist = ''
+          try{
+            const _rel = getCharRel(c.id, o.id)
+            _r = describeCharRel(_rel)
+            _hist = (_rel.history||[]).map(h=>h.text).join('；')
+          }catch(e){}
+
+          const res = await askAIJson('你是角色档案设计师，只输出JSON', `请把角色「${o.name}」的人设扩写完整。
+【TA现有的设定（必须保留，不可矛盾）】
+身份：${o.relation||'未设定'}
+人设：${o.personality||'无'}
+${o.quote?`台词：${o.quote}`:''}
+【TA和${c.name}的关系】${_r}${_hist?`\n互动记录：${_hist}`:''}
+【${c.name}的完整人设（供参考，让两人的过往对得上）】
+${c.personality||'无'}
+
+要求：扩写到1500-2000字，必须包含：1.核心性格与表里反差 2.外貌与穿搭 3.背景经历 4.说话方式、口癖、小动作 5.与${c.name}的具体过往、羁绊和恩怨 6.对用户（${P().name||'玩家'}）的印象和态度
+换行用\\n表示。
+返回JSON：{"personality":"1500-2000字完整人设","quote":"一句代表性台词"}`, 8192)
+
+          if(!res || !res.personality){
+            btn.textContent = '补全人设'; btn.style.pointerEvents = 'auto'; btn.style.opacity = '1'
+            return alert('补全失败，再试一次')
+          }
+          o.personalityBackup = o.personality // 保留原文，方便反悔
+          o.personality = (o.relation ? `【${o.relation}】` : '') + res.personality
+          if(!o.quote && res.quote) o.quote = res.quote
+          saveCharList()
+          draw()
+        }
+      })
+
+      // 一键提取人际圈：读人设+世界书，批量生成提到的人物
+      mb.querySelector('#_cmp_extract').onclick = async ()=>{
+        const api = getApi()
+        if(!api || !api.key) return alert('请先配置聊天API')
+        const btn = mb.querySelector('#_cmp_extract')
+        btn.textContent = '正在分析人设和世界书...'; btn.style.opacity = '.5'; btn.style.pointerEvents = 'none'
+
+        // 收集完整人设 + 全部世界书内容
+        const _src = [`【${c.name}的完整人设】\n${c.personality||'无'}`]
+        if(c.quote) _src.push(`【口头禅】${c.quote}`)
+        const _cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled)
+        _cBooks.forEach(b=>_src.push(`【世界书·${b.title||'设定'}】\n${b.content}`))
+
+        // 已有角色名单，防重复
+        const _exist = charList.filter(x=>!x.isDeleted).map(x=>x.name)
+
+        const res = await askAIJson('只返回JSON', `你是角色档案设计师。仔细阅读角色「${c.name}」的完整人设和世界书，从中提取所有被提及或暗示存在的人物（家人、朋友、发小、同事、对手、前任、师生、邻居……），为每个人生成完整档案。
+
+${_src.join('\n\n')}
+
+【已存在的角色，不要重复生成】${_exist.join('、')||'无'}
+
+【要求】
+- 只提取人设/世界书中明确提到或能合理推断存在的人物，不要凭空捏造无关的人
+- 如果提到了"妹妹""发小"等但没给名字，你来起一个符合世界观的名字
+- 每个人的 personality 写 800-1200 字，必须包含：核心性格与表里反差、外貌穿搭、背景经历、说话方式和口癖小动作、与${c.name}的具体过往羁绊恩怨、对用户（${P().name||'玩家'}）可能的初始态度
+- attitude 是该人物对${c.name}的态度，-100到100
+
+返回JSON：{"people":[{"name":"名字","relation":"和${c.name}的关系","personality":"800-1200字完整人设","quote":"代表性台词","attitude":数字}]}
+人设里完全没提到任何人就返回 {"people":[]}`, 16384)
+
+        if(!res || !res.people || !Array.isArray(res.people)){
+          btn.textContent = '📖 一键提取人际圈'; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'
+          return alert('提取失败，再试一次')
+        }
+        if(!res.people.length){
+          btn.textContent = '📖 一键提取人际圈'; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'
+          return alert(`${c.name}的人设和世界书里没有找到其他人物的描述`)
+        }
+
+        let created = 0
+        res.people.forEach(p=>{
+          if(!p.name) return
+          if(charList.some(x=>!x.isDeleted && x.name === p.name)) return
+          const nc = {
+            id: uid(), name: p.name,
+            personality: `【${c.name}的${p.relation||'熟人'}】${p.personality||''}`,
+            relation: `${c.name}的${p.relation||'熟人'}`,
+            mood: '平静', status: '', affection: 0,
+            quote: p.quote || '', avatar: '',
+            worldBookIds: c.worldBookIds || [],
+            bindPersonaId: c.bindPersonaId || activePersonaId,
+            wechatId: genWcId(), isHidden: true
+          }
+          charList.push(nc)
+          updateCharRel(c.id, nc.id, { setFamiliarity: 75, setAttitude: Number(p.attitude)||20, event: `${nc.name}是${c.name}的${p.relation||'熟人'}` })
+          if(sel.size < MAX) sel.add(nc.id)
+          created++
+        })
+        saveCharList()
+        btn.textContent = `已生成 ${created} 人`; btn.style.opacity = '1'
+        if(created) draw()
+        else{ btn.style.pointerEvents = 'auto'; alert('人设里提到的人物都已存在，没有新生成的') }
+      }
+
+      mb.querySelector('#_cmp_gen').onclick = async ()=>{
+        const hint = mb.querySelector('#_cmp_hint').value.trim()
+        if(!hint) return alert('先写一下想叫谁来')
+        if(sel.size >= MAX) return alert(`最多 ${MAX} 个人`)
+        const api = getApi()
+        if(!api || !api.key) return alert('请先配置聊天API')
+        const btn = mb.querySelector('#_cmp_gen')
+        btn.textContent = '正在叫人...'; btn.style.opacity = '.5'; btn.style.pointerEvents = 'none'
+
+        const res = await askAIJson('只返回JSON', `你是剧情策划。角色「${c.name}」要叫一个跟自己有关系的人来和用户线下见面。
+【${c.name}的人设】${(c.personality||'').slice(0,500)}
+【要求】${hint}
+要求人设极度丰满，1500-2000字，必须包含：1.核心性格与表里反差 2.外貌与穿搭 3.背景经历 4.说话方式、口癖、小动作 5.与${c.name}的具体过往、羁绊和恩怨 6.对用户（${P().name||'玩家'}）的初始印象和态度
+返回JSON：{"name":"中文名字","relation":"和${c.name}的关系（如：发小/亲妹妹/前任）","personality":"1500-2000字完整人设","quote":"一句代表性台词","attitude":对${c.name}的态度（-100到100的数字）}`, 8192)
+
+        if(!res || !res.name){
+          btn.textContent = '✨ AI 生成并加入'; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'
+          return alert('生成失败，再试一次')
+        }
+        const nc = {
+          id: uid(), name: res.name,
+          personality: `【${c.name}的${res.relation||'熟人'}】${res.personality||''}`,
+          relation: `${c.name}的${res.relation||'熟人'}`,
+          mood: '平静', status: '和' + c.name + '在一起', affection: 0,
+          quote: res.quote || '', avatar: '',
+          worldBookIds: c.worldBookIds || [],
+          bindPersonaId: c.bindPersonaId || activePersonaId,
+          wechatId: genWcId(), isHidden: true
+        }
+        charList.push(nc); saveCharList()
+        updateCharRel(c.id, nc.id, { setFamiliarity: 75, setAttitude: Number(res.attitude) || 20, event: `${nc.name}是${c.name}的${res.relation||'熟人'}` })
+        sel.add(nc.id)
+        draw()
+      }
+
+      mb.querySelector('#_cmp_solo').onclick = ()=>{ sel.clear(); start() }
+      mb.querySelector('#_cmp_go').onclick = ()=>{
+        if(!sel.size) return alert('先选至少一个人，或者点「单人线下」')
+        start()
+      }
+    }
+
+    const start = ()=>{
+      const ids = [...sel]
+      const names = ids.map(id=>charList.find(x=>x.id===id)?.name).filter(Boolean)
+      c.offlineMode = true
+      c.offlineCompanions = ids
+      const arr = getMsgs(c.id)
+      arr.push({ from:'system', text: names.length ? `—— 多人线下：${names.join('、')} 也在场 ——` : '—— 已切换到线下模式（小说体） ——', time: ftime(now()), isSystem: true, mode: 'offline' })
+      saveMsgs(c.id, arr)
+      addMemoryEvent(c.id, names.length ? `线下多人场景开始：${names.join('、')}和${c.name}一起在现场。` : `现在切换到线下剧情模式（小说体叙事）。`, '模式切换')
+      ids.forEach(id=>bumpFamiliarityByCoOccur(c.id, id, 3, `一起和${P().name||'你'}线下见面`))
+      saveCharList()
+      close()
+      render('chat')
+    }
+
+    draw()
+  })
+}
+
 // ===== 角色暗流系统 =====
 function _relKey(id1, id2){
   return [id1, id2].sort().join('__')
@@ -23584,7 +24212,7 @@ function openCharRelationsPanel(charId){
                   <div style="flex:1;height:4px;background:${n?'rgba(255,255,255,.08)':'rgba(0,0,0,.06)'};border-radius:2px;overflow:hidden"><div style="height:100%;width:${rel.familiarity}%;background:var(--rose)"></div></div>
                 </div>
               </div>
-              <div class="_relmore" data-id="${otherId}" style="padding:6px 10px;border-radius:12px;font-size:10px;background:${n?'rgba(200,168,208,.15)':'rgba(232,160,180,.15)'};color:${n?'#c8a8d0':'var(--rose-d)'};cursor:pointer">详情</div>
+              ${other.isHidden?`<div class="_reladd" data-id="${otherId}" style="padding:6px 10px;border-radius:12px;font-size:10px;background:${n?'rgba(138,154,110,.2)':'rgba(138,154,110,.15)'};color:var(--green);cursor:pointer;margin-right:4px">加好友</div>`:''}<div class="_relmore" data-id="${otherId}" style="padding:6px 10px;border-radius:12px;font-size:10px;background:${n?'rgba(200,168,208,.15)':'rgba(232,160,180,.15)'};color:${n?'#c8a8d0':'var(--rose-d)'};cursor:pointer">详情</div>
             </div>
             ${(rel.history||[]).length?`
               <div style="margin-top:8px;padding-top:8px;border-top:1px dashed ${n?'rgba(255,255,255,.08)':'rgba(0,0,0,.06)'}">
@@ -23598,6 +24226,37 @@ function openCharRelationsPanel(charId){
         <div class="btn-sub" id="_manual_intro" style="margin-top:14px">✨ 手动介绍 TA 认识某人</div>
       `
 
+      mb.querySelectorAll('._reladd').forEach(el=>{
+        el.onclick = () => {
+          const npcId = el.dataset.id
+          const npc = charList.find(x=>x.id===npcId)
+          if(!npc) return
+          npc.isHidden = false
+          // 把该NPC参与过的群聊记录写入它的聊天历史作为共同记忆
+          try{
+            const npcGroups = groups.filter(g=>(g.charIds||[]).includes(npcId))
+            if(npcGroups.length){
+              const existMsgs = getMsgs(npcId)
+              if(!existMsgs.length){
+                const memMsgs = []
+                npcGroups.forEach(g=>{
+                  const gMsgs = (g.messages||[]).filter(m=>m.from===npcId||m.from==='u').slice(-20)
+                  if(gMsgs.length){
+                    memMsgs.push({from:'c',text:`[多人线下回忆] 我们在「${g.name||'群聊'}」里聊过天`,time:gMsgs[0].time||ftime(now()),read:true})
+                    gMsgs.forEach(gm=>{
+                      memMsgs.push({from:gm.from==='u'?'u':'c', text:gm.text, time:gm.time||'', read:true, mode:'offline'})
+                    })
+                  }
+                })
+                if(memMsgs.length) saveMsgs(npcId, memMsgs)
+              }
+            }
+          }catch(e){}
+          saveCharList()
+          render()
+          alert(`已把「${npc.name}」加为好友！`)
+        }
+      })
       mb.querySelectorAll('._relmore').forEach(el=>{
         el.onclick = () => openRelDetailPanel(charId, el.dataset.id, render)
       })
@@ -26145,7 +26804,7 @@ function startAutoCheckup(){
 
   // 2. 在线定时查岗（每 15 分钟触发）
   setInterval(()=>{
-    if(!store.get('autoBgMsgEnabled', true)) return
+    if(!store.get('autoBgMsgEnabled', false)) return
     if(Math.random() > 0.3) return
     const lastCheck = store.get('lastAutoCheckup', 0)
     if(Date.now() - lastCheck < 900000) return
