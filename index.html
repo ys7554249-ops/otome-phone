@@ -1706,25 +1706,10 @@ let stickers=store.get('stickers',[])
 function saveStickers(){store.set('stickers',stickers)}
 
 // ===== 内置表情包数据 =====
-const BUILTIN_KAOMOJI = {
-  '卖萌':['(◕ᴗ◕✿)','(´・ω・`)','(｡♥‿♥｡)','(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)','(✿◠‿◠)','(*≧▽≦)','(◍•ᴗ•◍)','ʕ•ᴥ•ʔ','(｡>﹏<｡)','(≧◡≦)','(●´ω｀●)','(◕‿◕)','(灬ºωº灬)','(⌒‿⌒)','(｡◕‿◕｡)','✧(≖ ◡ ≖✿)','(˘ω˘)','(ᵔᴥᵔ)','(•ω•)','꒰ᐢ. ̫.ᐢ꒱'],
-  '开心':['ヽ(>∀<☆)ノ','٩(◕‿◕｡)۶','(ﾉ◕ヮ◕)ﾉ*:・ﾟ✧','(≧∇≦)/','(*^▽^*)','(☆▽☆)','(ﾉ´ヮ`)ﾉ*: ・ﾟ','ヽ(✿ﾟ▽ﾟ)ノ','(╯✧▽✧)╯','˙❥˙','(ノ≧ڡ≦)','(◠‿◠✿)','(✧ω✧)','(◝‿◜)','♪(´▽｀)','(=^·^=)','(ꈍᴗꈍ)','(⸝⸝⸝°_°⸝⸝⸝)','ᕕ( ᐛ )ᕗ','(✿╹◡╹)'],
-  '难过':['(╥_╥)','(；′⌒`)','(T_T)','(πーπ)','(ノД`)','(´;ω;`)','(｡•́︿•̀｡)','(._.`)','(╯︵╰,)','(っ˘̩╭╮˘̩)っ','(;´༎ຶД༎ຶ`)','(ಥ_ಥ)','(⌯˃̶᷄ ﹏ ˂̶᷄⌯)','(´°̥̥̥̥̥̥̥̥ω°̥̥̥̥̥̥̥̥`)','｡ﾟ(ﾟ´Д`ﾟ)ﾟ｡','(ᗒᗩᗕ)','(⁄ ⁄•⁄ω⁄•⁄ ⁄)','(◞‸◟)','(;ω;)','(╥﹏╥)'],
-  '生气':['(╬ Ò﹏Ó)','(ノಠ益ಠ)ノ','(￣ε(#￣)','(╯°□°）╯︵ ┻━┻','(¬_¬)','(눈_눈)','(ꐦ°᷄д°᷅)','щ(ಠ益ಠщ)','(‡▼益▼)','(≖_≖ )','(¬‿¬)','ಠ_ಠ','(ꐦ°д°)','(ﾒ` ﾛ ´)','ヽ(`Д´)ノ','(>_<)','(ノ`Д)ノ','┻━┻ ︵ ╰(‵□′)╯︵ ┻━┻','凸(¬‿¬)','(ŏ﹏ŏ)'],
-  '撒娇':['(´,,•ω•,,)♡','(⺣◡⺣)♡*','(灬´ᴗ`灬)','♡(ŐωŐ人)','(ᗒᗨᗕ)','(*ˊᗜˋ*)','(ㅅ´ ˘ `)','(人´∀`)','(◍˃̶ᗜ˂̶◍)ﾉ"','(♡ >ω< ♡)','( ˘ ³˘)♥','(✿ ♥‿♥)','(人 •͈ᴗ•͈)','(ノ◕ヮ◕)ノ♡','(/ω\)','(⸝⸝ᵕᴗᵕ⸝⸝)','(≧◡≦) ♡','(づ￣ ³￣)づ','(っ´▽｀)っ','♡(˃͈ દ ˂͈ ༶ )'],
-  '无语':['(ー_ー)!!','(¬_¬ )','(눈_눈)','( ˘_˘)','(-_-)','(・_・;)','┐(￣ヮ￣)┌','¯\\_(ツ)_/¯','(´-ω-`)','(；一_一)','( ´_ゝ`)','(¬‿¬ )','(‐_‐)','(.﹒︠₋﹒︡.)','(ㅎ_ㅎ)','(꒪⌓꒪)','(⊙_⊙)','( ⚆ _ ⚆ )','(°ー°〃)','(ˉ▽ˉ；)'],
-  '特殊':['(づ｡◕‿‿◕｡)づ','ε=ε=ε=┌(;*´Д`)ﾉ','(ﾉ◕ヮ◕)ﾉ*:・ﾟ✧','☆*:.｡. o(≧▽≦)o .｡.:*☆','(∩^o^)⊃━☆','✩°｡⋆⸜(ू˙▿˙ )','♪♫•*¨*•.¸¸♪','(*꒦ິ⌓꒦ີ)','ଘ(੭ˊ꒳​ˋ)੭✧','(〃ω〃)','₍ᐢ. ̫.ᐢ₎','(ง •̀_•́)ง','( •̀ᴗ•́ )و','☆彡','(*ノωノ)','(⑅˃◡˂⑅)','░▒▓█►─═  ═─◄█▓▒░','( ˊᵕˋ )♡.°⑅','(^///^)','⁽⁽ ◝(　˙ ꒳ ˙ )◜ ⁾⁾']
-};
-const BUILTIN_EMOJI = {
-  '常用':['😊','😂','🥺','😭','❤️','🥰','😍','💕','✨','🎉','👍','🤗','😘','💖','🌸','😏','🙈','💗','😤','🤭','😅','🥹','😎','🫣','💘','🌹','🍬','🧸','☺️','💫'],
-  '表情':['😀','😃','😄','😁','😆','🤣','🙂','😉','😇','🥳','🤩','😋','😛','😜','🤪','😝','🤑','🤗','🫡','🤭','😐','😑','😶','🫠','😏','😒','🙄','😬','😮‍💨','🥴'],
-  '爱心':['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','🫶','💑','💏','😘','😍','🥰','😻','💌','🌹','🎀'],
-  '手势':['👋','🤚','✋','🖐️','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','👍','👎','✊','👊','🤛','🤜','👏','🙌','🫶','👐','🤝','🙏','💪'],
-  '动物':['🐱','🐶','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🦋','🐾','🐙','🐳','🦄','🐢','🦎','🐍','🐇','🐑','🐿️','🦔','🐝','🪼','🦭'],
-  '食物':['🍰','🧁','🍩','🍪','🍫','🍬','🍭','🍮','🍦','🧋','☕','🍵','🥤','🍷','🎂','🍓','🍑','🍒','🍜','🥟','🍙','🍡','🥘','🍕','🌮','🍔','🍣','🥐','🧇','🍿']
-};
-let _stkPanelTab = 'kaomoji';
-let _stkPanelCat = '卖萌';
+const BUILTIN_KAOMOJI = {};
+const BUILTIN_EMOJI = {};
+let _stkPanelTab = 'mine';
+let _stkPanelCat = '';
 
 // ===== 锁屏照片墙 =====
 let lockPhotos=store.get('lockPhotos',[])
@@ -1941,23 +1926,37 @@ function _itunesSearch(keyword,limit){
 async function _userSearch(keyword,n){
   const tpl=_userMusicApi()
   if(!tpl)return null
-  try{
-    const url=tpl.replace(/\{keyword\}/g,encodeURIComponent(keyword)).replace(/\{n\}/g,String(n||1))
-    const r=await fetch(url)
-    if(!r.ok)return null
-    const d=await r.json()
-    const find=(obj,names,dep)=>{
-      if(!obj||dep>4)return''
-      if(typeof obj!=='object')return''
-      for(const k of names){if(obj[k]&&typeof obj[k]==='string'&&obj[k].startsWith('http'))return obj[k]}
-      for(const k of Object.keys(obj)){const v=find(obj[k],names,dep+1);if(v)return v}
-      return''
-    }
-    const murl=find(d,['music_url','url','play_url','src','mp3','audio','mp3url'],0)
-    const title=find(d,['name','title','song_name'],0)||keyword
-    const artist=find(d,['author','artist','singer'],0)||''
-    if(murl)return{url:murl,title,artist,source:'自定义源(完整)'}
-  }catch(e){}
+  const url=tpl.replace(/\{keyword\}/g,encodeURIComponent(keyword)).replace(/\{n\}/g,String(n||1))
+  const tries=[
+    url,
+    'https://corsproxy.io/?'+encodeURIComponent(url),
+    'https://api.allorigins.win/raw?url='+encodeURIComponent(url),
+    'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(url)
+  ]
+  let d=null,lastErr=''
+  for(const u of tries){
+    try{
+      const ctrl=new AbortController()
+      const timer=setTimeout(()=>ctrl.abort(),6000)
+      const r=await fetch(u,{signal:ctrl.signal})
+      clearTimeout(timer)
+      if(r.ok){d=await r.json();break}
+      else lastErr='HTTP '+r.status
+    }catch(e){lastErr=e.message||String(e)}
+  }
+  if(!d){console.log('_userSearch全部失败:',lastErr);return null}
+  const find=(obj,names,dep)=>{
+    if(!obj||dep>4)return''
+    if(typeof obj!=='object')return''
+    for(const k of names){if(obj[k]&&typeof obj[k]==='string'&&(obj[k].startsWith('http')||obj[k].startsWith('//')))return obj[k].startsWith('//')?'https:'+obj[k]:obj[k]}
+    for(const k of Object.keys(obj)){const v=find(obj[k],names,dep+1);if(v)return v}
+    return''
+  }
+  const murl=find(d,['music_url','url','play_url','src','mp3','audio','mp3url','mp3_url','song_url'],0)
+  const title=find(d,['name','title','song_name','songname'],0)||keyword
+  const artist=find(d,['author','artist','singer','singer_name'],0)||''
+  if(murl)return{url:murl,title,artist,source:'自定义源(完整)'}
+  console.log('_userSearch返回数据中找不到音乐链接:',JSON.stringify(d).slice(0,500))
   return null
 }
 
@@ -2003,7 +2002,11 @@ function openMusicSearch(){
       btn.textContent='...';btn.style.opacity='.5'
       rbox.innerHTML=`<div style="text-align:center;padding:30px"><div style="width:28px;height:28px;margin:0 auto;border:3px solid ${n2?'rgba(200,180,220,.2)':'rgba(232,160,180,.2)'};border-top-color:${tc3};border-radius:50%;animation:spin 1s linear infinite"></div><div style="font-size:11px;color:${tc2};margin-top:12px">搜索中...</div></div>`
 
-      const results=await _itunesSearch(kw,12)
+      const _dz=await new Promise(ok=>{const cb='_dz'+Date.now(),s=document.createElement('script');let d=0;const end=v=>{if(d)return;d=1;clearTimeout(t);try{delete window[cb]}catch(e){};s.parentNode&&s.parentNode.removeChild(s);ok(v)};const t=setTimeout(()=>end([]),8000);window[cb]=data=>{end((data&&data.data||[]).map(x=>({title:x.title||'',artist:(x.artist&&x.artist.name)||'',album:(x.album&&x.album.title)||'',cover:(x.album&&x.album.cover_medium)||'',url:x.preview||'',duration:x.duration||0})).filter(x=>x.url))};s.onerror=()=>end([]);s.src='https://api.deezer.com/search?q='+encodeURIComponent(kw)+'&limit=15&output=jsonp&callback='+cb;document.body.appendChild(s)})
+      const _it=await _itunesSearch(kw,15)
+      const _seen=new Set(),_merged=[]
+      for(const s of [..._dz,..._it]){const k=(s.title+s.artist).toLowerCase().replace(/\s/g,'');if(!_seen.has(k)){_seen.add(k);_merged.push(s)}}
+      const results=_merged.slice(0,20)
       btn.textContent='搜索';btn.style.opacity='1'
       busy=false
 
@@ -2869,6 +2872,7 @@ async function callLLM(opt){
             const u=c.image_url.url
             const mt=u.match(/^data:(.*?);base64,(.*)/)
             if(mt)return{type:'image',source:{type:'base64',media_type:mt[1],data:mt[2]}}
+            if(/^https?:\/\//.test(u))return{type:'image',source:{type:'url',url:u}}
           }
           return c
         })
@@ -3135,7 +3139,13 @@ ${c.personality||'未设定，请你自己塑造一个鲜活立体、有血有�
 正在做：${c.status||'没什么特别的事'}
 你和对方的关系：${c.relation||'普通'}
 你的口癖/常说的话：${c.quote||'自然发挥'}
-你当前的聊天头像：本人照片/自拍照。
+${(c._checkupCtx&&(Date.now()-c._checkupCtx.ts<600000))?`
+⚠️【重要情境】你刚刚主动去查了对方的岗！你的情绪还没冷下来！
+${c._checkupCtx.evidence?'你发现了：'+c._checkupCtx.evidence:'你没发现什么可疑的。'}
+${c._checkupCtx.fighting?'你们最近在闹矛盾/吵架，你现在的查岗带着赌气和情绪！':''}
+你前面发的那些消息就是你查岗时说的话——对方现在回复了你，你必须延续刚才的情绪和态度来回应！
+不要突然变温柔、不要转移话题、不要装作什么都没发生。你刚才的醋意/质问/试探还在，对方的回答会直接影响你接下来的情绪走向。`:''}
+你的头像和对方的头像都会通过图片传给你，你自己看就行，不要凭空编造头像内容。
 【头像更换规则】你有一个头像库，可以用 [换头像] 标签来更换头像（该标签不会展示给对方）。
 但你是否换头像、多久换一次，完全取决于你的性格：
 - 如果你是爱自拍、爱臭美、社交达人型性格：你可能隔三差五就想换个头像，心情好了换，拍了好看的照片也换
@@ -3203,7 +3213,8 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 
   // 人际关系网注入：让角色知道自己认识谁、关系如何
   try{
-    const _known = getCharKnownList(c.id).filter(k=>k.rel.familiarity>=10).slice(0,8)
+    const _compIdSet = new Set((c.offlineCompanions||[]).map(id=>id))
+    const _known = getCharKnownList(c.id).filter(k=>k.rel.familiarity>=10 && !_compIdSet.has(k.otherId)).slice(0,5)
     if(_known.length){
       s+=`\n\n【你的人际关系网（你认识的人，真实存在于你的世界）】`
       _known.forEach(({other, rel})=>{
@@ -3291,10 +3302,21 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
     if(_comps.length){
       s+=`\n\n【多人线下场景·同场人物】\n这次线下见面不只有你，下面这些人也在现场。你是小说作者，要同时演好你自己和他们：`
       const _wbSeen = new Set()
+      const _compIdSet2 = new Set(_comps.map(x=>x.id))
       _comps.forEach(o=>{
         let _r='素不相识'
         try{ _r=describeCharRel(getCharRel(c.id,o.id)) }catch(e){}
         s+=`\n\n▶ ${o.name}\n· 身份/关系：${o.relation||'未设定'}\n· 与你（${c.name}）：${_r}${o.mood?`\n· 当前心情：${o.mood}`:''}${o.status?`\n· 当前状态：${o.status}`:''}\n· 完整人设：\n${o.personality||'未设定'}${o.quote?`\n· 口吻参考：${o.quote}`:''}`
+        // 隔离式关系注入：只展示该同行者自己认识的、且在场的其他角色
+        try{
+          const _oKnown = getCharKnownList(o.id).filter(k=>k.rel.familiarity>=10 && k.otherId!==c.id && _compIdSet2.has(k.otherId))
+          if(_oKnown.length){
+            s+=`\n· ${o.name}眼中的在场其他人：`
+            _oKnown.forEach(({other,rel})=>{
+              s+=`\n  - ${other.name}：${describeCharRel(rel)}`
+            })
+          }
+        }catch(e){}
         // 同行者自己和用户之间的记忆
         try{
           const _om = getMemoryPromptText(o.id)
@@ -3370,9 +3392,13 @@ ${store.get('autoImageEnabled',false)
    - 收下转账：在回复中单独一行写 [收转账]
    - 退还转账：在回复中单独一行写 [退转账]
    每笔转账只处理一次，[收转账]或[退转账]必须单独占一行。没有待处理的转账时不要写这些。
-8. 【表情包互动规则】你可以使用表情包表达情绪，格式必须是：(含义:链接)。
-可用表情包仓库见每条消息前缀。
-【最高警告】：当用户发表情包时，这是你们俩微信里通用的表情包！绝对不准说对方"偷你的图"、"盗图"，不要提"图库"或"代码"！把它当成对方做了一个搞笑动作，自然地吐槽或回应即可！
+8. 【表情包】你手机里存了表情包，用 [sticker:含义] 格式发送，含义必须从你的表情包列表里原样选一个。
+示范：[sticker:推眼镜]  [sticker:好的]
+可以单独一行发，也可以混在文字里：你说什么呢[sticker:推眼镜]
+- 只能用列表里有的含义，不许编造不存在的含义
+- 不要演"翻找表情包/没有表情包"的戏，要发就直接发
+- 吐槽、撒娇、敷衍、搞笑、生气时适合甩一个
+- 你和对方共用同一套表情包，不准说"偷图""盗图"，不准说自己没有表情包
 11.【转发聊天记录功能】你可以把你和朋友/同事/家人的聊天记录截图转发给对方看！格式：
    [forward:标题:发送者1>消息1|发送者2>消息2|发送者1>消息3]
    示例：[forward:和闺蜜的聊天记录:小美>你和那个人怎么样了|我>别提了 烦死|小美>哈哈哈活该|我>你给我闭嘴]
@@ -3382,9 +3408,14 @@ ${store.get('autoImageEnabled',false)
 12.【撤回消息】如果你发了一条消息后立刻后悔（说漏嘴、打错字、发错人），可以在那条消息的同一行末尾加 [撤回] 标记。
    示例：我喜欢你 [撤回]
    撤回后对方会看到"对方撤回了一条消息"。一次回复最多撤回一条，别滥用。适合口是心非/说漏嘴/发错人的场景。
+13.【点歌功能】你可以根据聊天氛围、你的心情、或者想对对方表达的情绪，主动点一首歌分享给对方！格式：[点歌:歌名-歌手]
+   示例：[点歌:晴天-周杰伦]  [点歌:Love Story-Taylor Swift]  [点歌:起风了-买辣椒也用券]
+   系统会自动搜索并播放这首歌，对方会看到一个音乐卡片。
+   什么时候点歌：聊到音乐话题时、想表达某种心情时、想哄对方开心时、对方心情不好时、深夜聊天氛围好的时候。
+   不要每次都点歌，偶尔来一首才有惊喜感。点歌时可以配一句话，比如"这首歌让我想到你 [点歌:xxx-xxx]"。
 
 绝对不要做的事：
-- 不要使用emoji表情，用文字表达情绪
+- 不要使用emoji表情符号（如😊😂❤️），但必须使用你的表情包库里的表情包
 - 不要说"作为AI"、不要讲大道理、不要客服腔。
 - 回复里不要加角色名标签，直接说话。
 - 标点该有的一定要有：问句必带"？"，情绪句必带"！"，别整段都是没标点的短句堆。
@@ -3451,10 +3482,16 @@ async function _personaAvatarB64(){
   }
 
   try{
-    const url=await imgDB.load(p.avatar)
+    let url=null
+    if(/^https?:\/\//.test(p.avatar)||/^data:/.test(p.avatar)){
+      url=p.avatar
+    }else{
+      url=await imgDB.load(p.avatar)
+    }
     if(!url)return null
-
     const img=new Image()
+    img.crossOrigin='anonymous'
+
 
     await new Promise((resolve,reject)=>{
       img.onload=resolve
@@ -3542,7 +3579,7 @@ ${card.template}
   const _dt  = (_now.getMonth()+1)+'月'+_now.getDate()+'日 星期'+'日一二三四五六'[_now.getDay()]
   const _hh  = _now.getHours()
   const _tod = _hh<6?'凌晨':_hh<9?'早上':_hh<12?'上午':_hh<14?'中午':_hh<18?'下午':_hh<21?'晚上':'深夜'
-  let _extra = `[当前时间：${_dt} ${_tod} ${_cur}]${stickers.length ? '\n[可用表情包：'+stickers.map(s=>`(${s.meaning}:${s.url})`).join('，')+']' : ''}\n[禁止使用emoji，用文字表达情绪]`
+  let _extra = `[当前时间：${_dt} ${_tod} ${_cur}]${stickers.length ? '\n[你的表情包列表：'+stickers.map(s=>s.meaning).join('、')+']' : ''}\n[禁止使用emoji符号]`
   const _recentMsgs = getMsgs(activeCharId).slice(-30)
   for(let i=_recentMsgs.length-1;i>=0;i--){
     const rm = _recentMsgs[i]
@@ -5228,6 +5265,7 @@ grid.appendChild(roomBtn(`<svg width="26" height="26" viewBox="0 0 48 48" fill="
 
 grid.appendChild(roomBtn(I.heart(ic,26),'养成',()=>render('nurture')))
 grid.appendChild(roomBtn(I.mirror(ic,26),'查岗',()=>render('snoop')))
+grid.appendChild(roomBtn(`<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="${ic}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,'音乐',()=>render('music')))
 
 sc.appendChild(grid)
 
@@ -7583,6 +7621,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
           }
           if (_blobUrl) {
             const _tmpImg = new Image();
+            _tmpImg.crossOrigin='anonymous';
             await new Promise((res, rej) => { _tmpImg.onload = res; _tmpImg.onerror = rej; _tmpImg.src = _blobUrl; });
             const _sc = Math.min(1, 1024 / _tmpImg.naturalWidth, 1024 / _tmpImg.naturalHeight);
             const _cv = document.createElement('canvas');
@@ -8841,8 +8880,9 @@ function reportHeight(){var b=document.body,d=document.documentElement;var h=0;f
             ? `<div style="margin:8px 0;padding:8px 10px;border-radius:10px;background:${n?'rgba(255,255,255,.04)':'rgba(255,255,255,.35)'};border:1px solid ${n?'rgba(200,180,220,.06)':'rgba(232,160,180,.1)'}"><div style="font-size:10.5px;color:${n?'#a898b8':'#a89898'};margin-bottom:6px;letter-spacing:.5px">👥 群聊</div>${card.groupChats.map(gc => {
                 return `<div style="padding:5px 0;border-top:1px solid ${n?'rgba(200,180,220,.05)':'rgba(232,160,180,.08)'};font-size:11.5px;color:${n?'#d0c0d8':'#4a3a3a'}"><div style="font-weight:500;margin-bottom:2px">${escHtml(gc.name)}</div><div style="font-size:10px;color:${n?'#a898b8':'#a89898'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(gc.members.map(m => m.replace(/\{\{user\}\}/gi, meName)).join('、'))}</div></div>`;
               }).join('')}</div>` : '';
-          const html = `<div style="white-space:normal;line-height:1.4;margin:6px 0;border-radius:22px;overflow:hidden;background:${n?'linear-gradient(180deg,#1a1424,#2a1e38)':'linear-gradient(180deg,#faeef2,#fef8f4)'};border:1px solid ${n?'rgba(200,180,220,.2)':'rgba(232,160,180,.3)'};box-shadow:0 4px 14px rgba(0,0,0,.08);max-width:300px
-"><div style="padding:5px 14px 3px;display:flex;justify-content:space-between;align-items:center;font-size:9.5px;color:${n?'#d0c0d8':'#8a7a8a'};font-weight:500;line-height:1.4"><span>${new Date().toTimeString().slice(0,5)}</span><span style="width:52px;height:12px;background:#000;border-radius:7px;opacity:.55"></span><span style="opacity:.7">100%</span></div><div style="padding:9px 12px;border-bottom:1px solid ${n?'rgba(200,180,220,.12)':'rgba(232,160,180,.18)'};text-align:center"><div style="font-size:13.5px;color:${n?'#f0e0f0':'#4a3a3a'};font-weight:500;letter-spacing:1px">📱 MiPhone</div></div><div style="padding:6px 10px 12px;max-height:500px;overflow-y:auto;background:${n?'rgba(0,0,0,.2)':'rgba(255,255,255,.5)'}">${chatBlocks}${discordBlocks}${contactBlock}${groupBlock}</div></div>`;
+          const html = `<div style="white-space:normal;line-height:1.4;margin:6px 0;border-radius:22px;overflow:hidden;background:${n?'linear-gradient(180deg,#1a1424,#2a1e38)':'linear-gradient(180deg,#faeef2,#fef8f4)'};border:1px solid ${n?'rgba(200,180,220,.2)':'rgba(232,160,180,.3)'};box-shadow:0 4px 14px rgba(0,0,0,.08);width:280px;max-width:85vw
+"><div style="padding:5px 14px 3px;
+display:flex;justify-content:space-between;align-items:center;font-size:9.5px;color:${n?'#d0c0d8':'#8a7a8a'};font-weight:500;line-height:1.4"><span>${new Date().toTimeString().slice(0,5)}</span><span style="width:52px;height:12px;background:#000;border-radius:7px;opacity:.55"></span><span style="opacity:.7">100%</span></div><div style="padding:9px 12px;border-bottom:1px solid ${n?'rgba(200,180,220,.12)':'rgba(232,160,180,.18)'};text-align:center"><div style="font-size:13.5px;color:${n?'#f0e0f0':'#4a3a3a'};font-weight:500;letter-spacing:1px">📱 MiPhone</div></div><div style="padding:6px 10px 12px;max-height:500px;overflow-y:auto;background:${n?'rgba(0,0,0,.2)':'rgba(255,255,255,.5)'}">${chatBlocks}${discordBlocks}${contactBlock}${groupBlock}</div></div>`;
           return html.replace(/>\s+</g, '><');
         }
 
@@ -8869,8 +8909,9 @@ function reportHeight(){var b=document.body,d=document.documentElement;var h=0;f
           const bubbleClr = m.isSelf ? (n?'#f5e8f5':'#4a3a3a') : (n?'#e8dce8':'#4a3a3a');
           return `<div style="display:flex;flex-direction:${m.isSelf?'row-reverse':'row'};align-items:flex-start;gap:8px;margin:6px 0">${av(m.isSelf?meAvatar:otherAvatar,26)}<div style="max-width:70%;min-width:0;display:flex;flex-direction:column;align-items:${m.isSelf?'flex-end':'flex-start'}"><div style="padding:7px 11px;border-radius:14px;background:${bubbleBg};color:${bubbleClr};font-size:12.5px;line-height:1.5;word-break:break-word;box-shadow:0 1px 2px rgba(0,0,0,.05)">${content}</div>${timeHtml}</div></div>`;
         }).join('');
-        const html = `<div style="white-space:normal;line-height:1.4;margin:6px 0;border-radius:20px;overflow:hidden;background:${n?'linear-gradient(180deg,#1a1424,#2a1e38)':'linear-gradient(180deg,#faeef2,#fef8f4)'};border:1px solid ${n?'rgba(200,180,220,.2)':'rgba(232,160,180,.3)'};box-shadow:0 4px 14px rgba(0,0,0,.08);max-width:290px
-"><div style="padding:5px 14px 3px;display:flex;justify-content:space-between;align-items:center;font-size:9.5px;color:${n?'#d0c0d8':'#8a7a8a'};font-weight:500;line-height:1.4"><span>${new Date().toTimeString().slice(0,5)}</span><span style="width:52px;height:12px;background:#000;border-radius:7px;opacity:.55"></span><span style="opacity:.7">100%</span></div><div style="padding:8px 12px;border-bottom:1px solid ${n?'rgba(200,180,220,.12)':'rgba(232,160,180,.18)'};display:flex;align-items:center;gap:9px">${av(otherAvatar,32)}<div style="flex:1;min-width:0;text-align:left"><div style="font-size:13px;color:${n?'#f0e0f0':'#4a3a3a'};font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(otherName)}</div><div style="font-size:10px;color:${n?'#a898b8':'#a89898'};margin-top:1px">在线</div></div></div><div style="padding:6px 10px 10px;max-height:400px;overflow-y:auto;background:${n?'rgba(0,0,0,.2)':'rgba(255,255,255,.5)'}">${bubbles}</div></div>`;
+        const html = `<div style="white-space:normal;line-height:1.4;margin:6px 0;border-radius:20px;overflow:hidden;background:${n?'linear-gradient(180deg,#1a1424,#2a1e38)':'linear-gradient(180deg,#faeef2,#fef8f4)'};border:1px solid ${n?'rgba(200,180,220,.2)':'rgba(232,160,180,.3)'};box-shadow:0 4px 14px rgba(0,0,0,.08);width:280px;max-width:85vw
+"><div style="padding:5px 14px 3px;
+display:flex;justify-content:space-between;align-items:center;font-size:9.5px;color:${n?'#d0c0d8':'#8a7a8a'};font-weight:500;line-height:1.4"><span>${new Date().toTimeString().slice(0,5)}</span><span style="width:52px;height:12px;background:#000;border-radius:7px;opacity:.55"></span><span style="opacity:.7">100%</span></div><div style="padding:8px 12px;border-bottom:1px solid ${n?'rgba(200,180,220,.12)':'rgba(232,160,180,.18)'};display:flex;align-items:center;gap:9px">${av(otherAvatar,32)}<div style="flex:1;min-width:0;text-align:left"><div style="font-size:13px;color:${n?'#f0e0f0':'#4a3a3a'};font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(otherName)}</div><div style="font-size:10px;color:${n?'#a898b8':'#a89898'};margin-top:1px">在线</div></div></div><div style="padding:6px 10px 10px;max-height:400px;overflow-y:auto;background:${n?'rgba(0,0,0,.2)':'rgba(255,255,255,.5)'}">${bubbles}</div></div>`;
         return html.replace(/>\s+</g, '><');
       };
       // 清理 <messageN> 包裹标签（某些酒馆卡片用来分组消息的标签，会打断聊天卡片正则）
@@ -10098,7 +10139,7 @@ txt = '\u2063BLMX_RENDERED\u2063';
             }
           }
 
-          let textWithoutStickers = (txt || '').replace(/[(（][^:：()]+[:：](?:https?:\/\/|data:)[^()]+[)）]/g, '').replace(/<bqb\b[^>]*>[\s\S]*?<\/bqb>/gi, '').replace(/<bqb\b[^>]*\/>/gi, '').trim();
+          let textWithoutStickers = (txt || '').replace(/\[sticker[:：]\s*[^\]]+?\s*\]/gi, '').replace(/[(（][^:：()]+[:：](?:https?:\/\/|data:)[^()]+[)）]/g, '').replace(/<bqb\b[^>]*>[\s\S]*?<\/bqb>/gi, '').replace(/<bqb\b[^>]*\/>/gi, '').trim();
           let isOnlySticker = textWithoutStickers === '';
           const _isCardOnly = /^\s*(\u2063(?:CHATCARD|MIPHONE|CNSTATUS|FORUMPOST|GAMETXT|BRKGAME|MEDIA)\d+\u2063\s*)+$/.test(txt);
           // 先处理 <bqb> 标签（在 escHtml 之前），转成好看的表情占位符
@@ -10108,7 +10149,10 @@ txt = '\u2063BLMX_RENDERED\u2063';
               const label = desc.trim().replace(/\.[a-z]{2,4}$/i, '').replace(/[a-z0-9]{5,}$/i, '').trim() || '表情';
               return `\u2063BQB:${label}\u2063`;
           }).replace(/<bqb\b[^>]*\/>/gi, '\u2063BQB:表情\u2063');
-          let parsedText = _restoreMediaTags((isU ? escHtml(_bqbProcessed) : _safeInlineHtml(_bqbProcessed)).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
+          let parsedText = _restoreMediaTags((isU ? escHtml(_bqbProcessed) : _safeInlineHtml(_bqbProcessed)).replace(/\[sticker[:：]\s*([^\]]+?)\s*\]/gi, (_m, meaning) => {
+              const _hit = stickers.find(s => s.meaning === meaning.trim());
+              return _hit ? `(${_hit.meaning}:${_hit.url})` : '';
+          }).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
               return `<img src="${url}" style="max-width:140px; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
           }).replace(/\u2063BQB:(.*?)\u2063/g, (m, label) => {
               return `<div style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:12px;background:${n?'rgba(255,255,255,.06)':'rgba(232,160,180,.08)'};border:1px dashed ${n?'rgba(200,180,220,.15)':'rgba(232,160,180,.2)'};margin:2px 0"><span style="font-size:22px">😸</span><span style="font-size:12px;color:${n?'#c0b0c8':'#8a7a7a'};font-style:italic">${label}</span></div>`;
@@ -10124,10 +10168,11 @@ txt = '\u2063BLMX_RENDERED\u2063';
           }else{
                         const _customCss=_getCustomBubbleCss(isU)
             const _deco=_decoHtml(isU)
-            const _baseStyle=bubbleStyle+` font-size:13px; color:${clr}; line-height:1.8; letter-spacing:.3px; padding:10px 14px;`
-            const _finalStyle=_customCss?(_customCss+`; font-size:13px; color:${clr}; line-height:1.8; letter-spacing:.3px; position:relative; overflow:visible; padding:10px 14px; display:inline-block; max-width:100%; box-sizing:border-box;`):_baseStyle
+            const _baseStyle=bubbleStyle+` font-size:13px; color:${clr}; line-height:1.6; letter-spacing:.3px; padding:8px 12px;`
+            const _stickerOverride = (isOnlySticker && !m.quote) ? 'padding:0!important; background:transparent!important; border:none!important; box-shadow:none!important; ' : ''
+            const _finalStyle=_stickerOverride + (_customCss?(_customCss+`; font-size:13px; color:${clr}; line-height:1.6; letter-spacing:.3px; position:relative; overflow:visible; padding:8px 12px; display:inline-block; max-width:100%; box-sizing:border-box;`):_baseStyle)
             bubbleContent=`
-              <div class="_bubble ${isU?'_bubble-self':'_bubble-other'}" data-idx="${idx}" style="${_finalStyle}">
+              <div class="${isOnlySticker?'':'_bubble '+(isU?'_bubble-self':'_bubble-other')}" data-idx="${idx}" style="${_finalStyle}">
               ${_deco}
               ${quoteHtml}
               <div style="white-space:pre-wrap;word-break:break-word">${_blmxHtml || parsedText}</div>
@@ -10458,9 +10503,7 @@ ${bubbleContent}${toolsHtml}</div>
       `).join('')+`
         <div style="display:flex;gap:10px;margin-top:12px">
           <div class="btn-sub" id="_addcharq" style="flex:1;margin:0">+ 新建角色</div>
-          <div class="btn-main" id="_addchar_ai_rel" style="flex:1;margin:0;background:linear-gradient(135deg, var(--lav), #d4c8e4);color:var(--ink)">AI 关联捏人</div>
         </div>
-        <div class="btn-main" id="_addchar_ai_persona" style="margin-top:10px;background:linear-gradient(135deg, #f5d5de, #e8a0b4);color:var(--ink);box-shadow:0 4px 12px rgba(232,160,180,0.2)">根据马甲捏人</div>
 <div class="btn-main" id="_import_tavern_btn" style="margin-top:10px;background:linear-gradient(135deg, #a8e063, #56ab2f);color:#fff;box-shadow:0 4px 12px rgba(86,171,47,0.2)">导入角色卡</div>
       `
       mb.querySelectorAll('._chpick').forEach(el=>{
@@ -10486,270 +10529,7 @@ if (importBtn) {
     handleTavernImport(() => { render('chat'); });
   };
 }
-      
-      // 🌟 新增：AI 关联角色生成系统
-      const aiRelBtn = mb.querySelector('#_addchar_ai_rel');
-      if(aiRelBtn) {
-        aiRelBtn.onclick = () => {
-          close();
-          showModal('AI 关联角色生成', (mb2, close2) => {
-            const myChars = getMyChars();
-            mb2.innerHTML = `
-              <div style="font-size:11px;color:var(--ink-l);margin-bottom:12px;line-height:1.6">
-                让 AI 读取你和某人的聊天记录，顺藤摸瓜生成与他相关的全新角色（比如他的家人、死敌、前任等）。
-              </div>
-              <div class="card">
-                <div class="card-t">参考谁的聊天记录？</div>
-                <select class="inp" id="_airel_basechar" style="background:rgba(255,255,255,.5);border-radius:8px;padding:8px">
-                  ${myChars.map(c => `<option value="${c.id}" ${c.id===activeCharId?'selected':''}>${escHtml(c.name)}</option>`).join('')}
-                </select>
-              </div>
-              <div class="card">
-                <div class="card-t">新角色设定 / 关系</div>
-                <textarea class="tarea" id="_airel_hint" rows="3" placeholder="例如：他的严厉父亲，刚得知我们在交往，非常生气地来找我算账..."></textarea>
-              </div>
-              <div class="btn-main" id="_airel_go" style="background:linear-gradient(135deg, var(--lav), #d4c8e4);color:var(--ink)">开始生成</div>
-              <div id="_airel_out" style="display:none;margin-top:16px">
-                <div class="card" id="_airel_preview" style="font-size:12px;line-height:1.8;color:var(--ink)"></div>
-                <div style="display:flex;gap:8px;margin-top:12px">
-                  <div class="btn-main" id="_airel_save" style="flex:1;margin:0">就决定是他了</div>
-                  <div class="btn-sub" id="_airel_retry" style="flex:1;margin:0">重新生成</div>
-                </div>
-              </div>
-            `;
-            
-            let generatedChar = null;
-            
-                      const doGen = async () => {
-              const api = getApi();
-              if(!api || !api.key) return alert('请先配置聊天API');
-              
-              const baseCharId = mb2.querySelector('#_airel_basechar').value;
-              const hint = mb2.querySelector('#_airel_hint').value.trim();
-              if(!hint) return alert('请填写新角色的设定或关系');
-              
-              const btn = mb2.querySelector('#_airel_go');
-              btn.textContent = '正在深度挖掘剧情并撰写长篇人设... (大概需要十几秒)'; btn.style.opacity = '.5'; btn.style.pointerEvents = 'none';
-              
-              // 提取参考角色的信息和最近的聊天记录
-              const bc = charList.find(x => x.id === baseCharId);
-              const bcMsgs = getMsgs(baseCharId).slice(-40).map(m => `${m.from==='u'?(P().name||'我'):bc.name}：${m.text.replace(/\[.*?\]/g, '')}`).join('\n');
-              
-              const prompt = `你是一个顶级乙女游戏/剧情策划。
-用户想要基于现有角色「${bc.name}」的剧情上下文，创造一个关联的新角色。
 
-【现有角色信息】
-名字：${bc.name}
-性格：${(bc.personality||'').slice(0,100)}
-
-【他们最近的聊天记录（作为剧情参考素材）】
-${bcMsgs.slice(-8000) || '（暂无聊天记录）'}
-
-【新角色的设定要求】
-${hint}
-
-请根据聊天记录中透露的蛛丝马迹，结合用户的设定要求，生成这个新角色的【超详细、全方位】人设！
-要求性格描述极度丰满，字数必须在 1500 到 2000 字左右！绝不能敷衍！必须包含：
-1. 核心性格与表里反差（表面展现什么，内心隐藏什么）
-2. 外貌特征与穿搭风格
-3. 背景故事与过往经历
-4. 说话方式、口癖、小动作
-5. 对用户的初始态度、心理活动及后续可能的情感变化
-6. 与「${bc.name}」的具体过往羁绊和恩怨
-
-返回严格的JSON格式：
-{
-  "name": "新角色的中文名字（符合身份）",
-  "personality": "1500-2000字的超长详细性格与背景描写",
-  "relation": "和用户的关系（如：${bc.name}的父亲 / ${bc.name}的死对头）",
-  "mood": "当前具体心情",
-  "status": "当前具体状态",
-  "quote": "加好友后发给用户的第一句话（像真人发微信一样，符合身份和当前剧情氛围）",
-  "affection": 初始好感度（数字，-100到100。如果是来找茬的反对者必须是负数！）
-}`;
-              
-              // 放宽 maxTokens 到 3500，防止长文被截断导致 JSON 解析失败
-              const res = await askAIJson('只返回JSON', prompt, 8192);
-              
-              btn.textContent = '开始生成'; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto';
-              
-              if(res && res.name) {
-                generatedChar = res;
-                mb2.querySelector('#_airel_out').style.display = 'block';
-                mb2.querySelector('#_airel_preview').innerHTML = `
-                  <div style="font-size:16px;font-weight:bold;color:var(--rose-d);margin-bottom:8px">${escHtml(res.name)}</div>
-                  <div><span style="color:var(--ink-l)">关系：</span>${escHtml(res.relation)}</div>
-                  <div style="margin-top:6px;max-height:200px;overflow-y:auto;padding-right:4px;white-space:pre-wrap;line-height:1.7"><span style="color:var(--ink-l)">性格与背景设定：</span>\n${escHtml(res.personality)}</div>
-                  <div style="margin-top:6px;padding:8px;background:rgba(0,0,0,0.05);border-radius:8px;font-style:italic">"${escHtml(res.quote)}"</div>
-                `;
-              } else {
-                alert('生成失败，长文生成可能超时，请再试一次');
-              }
-            };
-            
-            mb2.querySelector('#_airel_go').onclick = doGen;
-            mb2.querySelector('#_airel_retry').onclick = doGen;
-            
-            mb2.querySelector('#_airel_save').onclick = () => {
-  if(!generatedChar) return;
-  
-  // 🌟 修复：重新获取一下参考角色，防止报错卡死
-  const baseCharId = mb2.querySelector('#_airel_basechar').value;
-  const bc = charList.find(x => x.id === baseCharId);
-  
-  const nc = {
-    id: uid(),
-    name: generatedChar.name,
-    personality: generatedChar.personality,
-    relation: generatedChar.relation,
-    mood: generatedChar.mood,
-    status: generatedChar.status,
-    affection: generatedChar.affection,
-    quote: generatedChar.quote,
-    avatar: '',
-    worldBookIds: bc ? bc.worldBookIds : [], // 继承原角色的世界观
-    bindPersonaId: activePersonaId,
-    wechatId: genWcId()
-  };
-  charList.push(nc);
-  activeCharId = nc.id;
-  saveCharList();
-  if(bc) updateCharRel(bc.id, nc.id, { setFamiliarity: 70, event: `${nc.name}：${(nc.relation||'').slice(0,40)}` });
-  
-  // 自动把新角色的第一句话发到聊天框
-  const arr = getMsgs(nc.id);
-  arr.push({from: 'c', text: generatedChar.quote, time: ftime(now())});
-  saveMsgs(nc.id, arr);
-  
-  close2();
-  render('chat');
-};
-          });
-        };
-      }
-      // 🌟 新增：根据当前马甲人设，量身定制专属角色
-      const aiPersonaBtn = mb.querySelector('#_addchar_ai_persona');
-      if(aiPersonaBtn) {
-        aiPersonaBtn.onclick = () => {
-          close();
-          showModal('根据马甲捏人', (mb3, close3) => {
-            const curP = P(); // 获取当前活跃马甲
-            mb3.innerHTML = `
-              <div style="font-size:11px;color:var(--ink-l);margin-bottom:12px;line-height:1.6">
-                当前马甲：<b>${escHtml(curP.name||'未命名')}</b> (${escHtml(curP.identity||'无身份')})<br>
-                让 AI 根据你当前的马甲人设，为你量身定制一个专属角色。
-              </div>
-              <div class="card">
-                <div class="card-t">新角色设定 / 与你的关系</div>
-                <textarea class="tarea" id="_aipersona_hint" rows="3" placeholder="例如：我的死对头同事、一直暗恋我的青梅竹马、合租的冷酷室友..."></textarea>
-              </div>
-              <div class="btn-main" id="_aipersona_go" style="background:linear-gradient(135deg, #f5d5de, #e8a0b4);color:var(--ink)">开始生成</div>
-              <div id="_aipersona_out" style="display:none;margin-top:16px">
-                <div class="card" id="_aipersona_preview" style="font-size:12px;line-height:1.8;color:var(--ink)"></div>
-                <div style="display:flex;gap:8px;margin-top:12px">
-                  <div class="btn-main" id="_aipersona_save" style="flex:1;margin:0">就决定是他了</div>
-                  <div class="btn-sub" id="_aipersona_retry" style="flex:1;margin:0">重新生成</div>
-                </div>
-              </div>
-            `;
-            
-            let generatedChar = null;
-            
-            const doGenPersona = async () => {
-              const api = getApi();
-              if(!api || !api.key) return alert('请先配置聊天API');
-              
-              const hint = mb3.querySelector('#_aipersona_hint').value.trim();
-              if(!hint) return alert('请填写新角色的设定或关系');
-              
-              const btn = mb3.querySelector('#_aipersona_go');
-              btn.textContent = '正在根据马甲设定推演人设... (大概需要十几秒)'; btn.style.opacity = '.5'; btn.style.pointerEvents = 'none';
-              
-              const prompt = `你是一个顶级乙女游戏/剧情策划。
-用户想要基于她自己的【马甲（玩家化身）】设定，创造一个关联的全新角色。
-
-【用户的马甲设定】
-名字：${curP.name || '未设定'}
-身份：${curP.identity || '未设定'}
-性格与背景：${curP.personality || '未设定'}
-隐藏秘密：${curP.secret || '无'}
-
-【新角色的设定要求】
-${hint}
-
-请结合用户的马甲设定，生成这个新角色的【超详细、全方位】人设！两人之间要有宿命感、性张力或戏剧冲突。
-要求性格描述极度丰满，字数必须在 1500 到 2000 字左右！绝不能敷衍！必须包含：
-1. 核心性格与表里反差
-2. 外貌特征与穿搭风格
-3. 背景故事与过往经历
-4. 说话方式、口癖、小动作
-5. 对用户的初始态度、心理活动
-6. 与用户（${curP.name || '玩家'}）的具体羁绊、恩怨或互动张力
-
-返回严格的JSON格式：
-{
-  "name": "新角色的中文名字（符合身份）",
-  "personality": "1500-2000字的超长详细性格与背景描写",
-  "relation": "和用户的关系（如：死对头 / 青梅竹马 / 上司）",
-  "mood": "当前具体心情",
-  "status": "当前具体状态",
-  "quote": "加好友后发给用户的第一句话（符合身份和设定的张力）",
-  "affection": 初始好感度（数字，-100到100。根据设定关系合理分配）
-}`;
-              
-              const res = await askAIJson('只返回JSON', prompt, 8192);
-              
-              btn.textContent = '开始生成'; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto';
-              
-              if(res && res.name) {
-                generatedChar = res;
-                mb3.querySelector('#_aipersona_out').style.display = 'block';
-                mb3.querySelector('#_aipersona_preview').innerHTML = `
-                  <div style="font-size:16px;font-weight:bold;color:var(--rose-d);margin-bottom:8px">${escHtml(res.name)}</div>
-                  <div><span style="color:var(--ink-l)">关系：</span>${escHtml(res.relation)}</div>
-                  <div style="margin-top:6px;max-height:200px;overflow-y:auto;padding-right:4px;white-space:pre-wrap;line-height:1.7"><span style="color:var(--ink-l)">性格与背景设定：</span>\n${escHtml(res.personality)}</div>
-                  <div style="margin-top:6px;padding:8px;background:rgba(0,0,0,0.05);border-radius:8px;font-style:italic">"${escHtml(res.quote)}"</div>
-                `;
-              } else {
-                alert('生成失败，长文生成可能超时，请再试一次');
-              }
-            };
-            
-            mb3.querySelector('#_aipersona_go').onclick = doGenPersona;
-            mb3.querySelector('#_aipersona_retry').onclick = doGenPersona;
-            
-            mb3.querySelector('#_aipersona_save').onclick = () => {
-              if(!generatedChar) return;
-              
-              const nc = {
-                id: uid(),
-                name: generatedChar.name,
-                personality: generatedChar.personality,
-                relation: generatedChar.relation,
-                mood: generatedChar.mood,
-                status: generatedChar.status,
-                affection: generatedChar.affection,
-                quote: generatedChar.quote,
-                avatar: '',
-                worldBookIds: [], 
-                bindPersonaId: activePersonaId, // 绑定到当前马甲
-                wechatId: genWcId()
-              };
-              charList.push(nc);
-              activeCharId = nc.id;
-              saveCharList();
-              
-              // 自动把新角色的第一句话发到聊天框
-              const arr = getMsgs(nc.id);
-              arr.push({from: 'c', text: generatedChar.quote, time: ftime(now())});
-              saveMsgs(nc.id, arr);
-              
-              close3();
-              render('chat');
-            };
-          });
-        };
-      }
     })
   }
 
@@ -12212,12 +11992,23 @@ ${ctxMsgs}
       }
       if(!userTexts.length) return;
       
-      // 清除记忆中的旧对话残骸
+      // 清除记忆中的旧对话残骸（用用户消息摘要精确匹配，因为重说前后用户消息不变）
+      const _rgDelBrief = userTexts.map(t => formatMemorySnippet(t, 50)).filter(Boolean).join('；');
+      if(_rgDelBrief){
+        const mem = getCharMemory(c.id);
+        const _matchKey = _rgDelBrief.slice(0, 40);
+        mem.keyEvents = mem.keyEvents.filter(ev => {
+          if(ev.source !== 'chat') return true;
+          return !ev.text.includes(_matchKey);
+        });
+      }
+      // 兜底：也用AI原文匹配
       const deletedMsgs = arr.slice(roundStart, roundEnd + 1);
+      const mem = getCharMemory(c.id);
       deletedMsgs.forEach(dm => {
         if(dm.from === 'c' && dm.text){
-          const mem = getCharMemory(c.id);
-          mem.keyEvents = mem.keyEvents.filter(ev => !ev.text.includes(dm.text.slice(0, 25)));
+          const _snip = formatMemorySnippet(dm.text, 40);
+          if(_snip) mem.keyEvents = mem.keyEvents.filter(ev => !ev.text.includes(_snip));
         }
       });
       saveGlobalMemory();
@@ -12307,7 +12098,7 @@ ${ctxMsgs}
   const replyBtn=$('#_creply')
 
   const appendUserBubble=(text,timeStr)=>{
-    let textWithoutStickers = text.replace(/[(（][^:：()]+[:：](?:https?:\/\/|data:)[^()]+[)）]/g, '').trim();
+    let textWithoutStickers = text.replace(/\[sticker[:：]\s*[^\]]+?\s*\]/gi, '').replace(/[(（][^:：()]+[:：](?:https?:\/\/|data:)[^()]+[)）]/g, '').trim();
     let isOnlySticker = textWithoutStickers === '';
 
     let parsedText = escHtml(text).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
@@ -12329,7 +12120,7 @@ let bubbleStyle = isOnlySticker
       <div style="display:flex;align-items:flex-start;gap:8px;flex-direction:row-reverse">
         <div style="flex-shrink:0">${avatarEl(P().avatar,30,I.mirror(n?'#c8a8d0':'var(--rose)',14))}</div>
         <div style="max-width:78%;display:flex;flex-direction:column">
-                <div class="_bubble _bubble-self" style="font-size:13px; color:${bubbleVisual.color}; line-height:1.8; ${bubbleStyle}">
+                <div class="${isOnlySticker?'':'_bubble _bubble-self'}" style="font-size:13px; color:${bubbleVisual.color}; line-height:1.8; ${bubbleStyle}">
 
           <div style="white-space:pre-wrap">${parsedText}</div>
         </div>
@@ -12489,7 +12280,7 @@ let bubbleStyle = isOnlySticker
       setTimeout(()=>render('chat'),0);
       return;
   }else{
-      let textWithoutStickers = text.replace(/[(（][^:：()]+[:：](?:https?:\/\/|data:)[^()]+[)）]/g, '').trim();
+      let textWithoutStickers = text.replace(/\[sticker[:：]\s*[^\]]+?\s*\]/gi, '').replace(/[(（][^:：()]+[:：](?:https?:\/\/|data:)[^()]+[)）]/g, '').trim();
       let isOnlySticker = textWithoutStickers === '';
 
       let parsedText = _safeInlineHtml(text).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
@@ -12878,6 +12669,19 @@ if(typing.parentElement) typing.remove()
         return;
       }
 
+      // === 角色点歌解析 ===
+      const djMatch=line.match(/\[点歌[:：](.*?)\]/)
+      if(djMatch){
+        const djInfo=djMatch[1].trim()
+        const djParts=djInfo.split(/[-—~～]/).map(s=>s.trim())
+        const djTitle=djParts[0]||'未知歌曲'
+        const djArtist=djParts[1]||''
+        processedLines.push({text:`[音乐] ${djTitle}${djArtist?' - '+djArtist:''}`,from:'c',_needMusicSearch:djInfo})
+        const rest=line.replace(djMatch[0],'').trim()
+        if(rest)processedLines.push({text:rest,from:'c'})
+        return
+      }
+
       // === 转发聊天记录解析 ===
       const fwMatch=line.match(/\[forward[:：]([^:：]+?)[:：]([\s\S]+?)\]/)
       if(fwMatch){
@@ -12927,9 +12731,15 @@ if(typing.parentElement) typing.remove()
           processedLines.push({text:`[语音] ${voiceText}`, from:'c', doTts:true});
           return;
         }
-      }
-      
+           }
+      // === [sticker:含义] → (含义:URL) 自动匹配 ===
+      line = line.replace(/\[sticker[:：]\s*([^\]]+?)\s*\]/gi, (_m, meaning) => {
+        const hit = stickers.find(s => s.meaning === meaning.trim())
+        return hit ? `(${hit.meaning}:${hit.url})` : ''
+      })
+      if(!line.trim()) return;
       processedLines.push({text:line,from:'c'});
+
     });
     
     processedLines.forEach((item,_pi)=>{
@@ -12961,6 +12771,7 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
       if(item._returned) _msgObj._returned=true
       if(item._isReceiptCard) _msgObj._isReceiptCard=true
       if(item._recallAfter) _msgObj._recallAfter=true
+      if(item._needMusicSearch) _msgObj._needMusicSearch=item._needMusicSearch
       newArr.push(_msgObj)
 
       // 线上可以直接追加普通气泡；
@@ -12996,6 +12807,48 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
       })
     }
     saveMsgs(targetCharId, newArr)
+
+    // === 角色点歌：异步搜索并自动播放 ===
+    const _djItems=newArr.filter(m=>m._needMusicSearch)
+    if(_djItems.length){
+      ;(async()=>{
+        for(const dm of _djItems){
+          const kw=dm._needMusicSearch
+          try{
+            const results=await _itunesSearch(kw,3)
+            if(results.length){
+              const s=results[0]
+              let playUrl='',playTitle=s.title,playArtist=s.artist
+              if(_userMusicApi()){
+                const full=await _userSearch(s.title+' '+s.artist,1)
+                if(full&&full.url){playUrl=full.url;playTitle=full.title||s.title;playArtist=full.artist||s.artist}
+              }
+              if(!playUrl) playUrl=s.url
+              if(playUrl){
+                let idx=musicList.findIndex(m=>m.title===playTitle&&m.artist===playArtist)
+                if(idx<0){
+                  musicList.push({id:uid(),title:playTitle,artist:playArtist,audioId:'',url:playUrl,cover:s.cover||'',addTime:new Date().toLocaleString()})
+                  saveMusicList()
+                  idx=musicList.length-1
+                }
+                playMusicAt(idx)
+                // 回写musicCard数据到消息
+                const _dArr=getMsgs(targetCharId)
+                const _di=_dArr.findIndex(m=>m._needMusicSearch===kw)
+                if(_di>=0){
+                  _dArr[_di].musicCard={title:playTitle,artist:playArtist,cover:s.cover||'',url:playUrl}
+                  _dArr[_di].text=`[音乐] ${playTitle} - ${playArtist}`
+                  delete _dArr[_di]._needMusicSearch
+                  saveMsgs(targetCharId,_dArr)
+                  if(document.getElementById('_msglist')&&activeCharId===targetCharId){window._chatForceBottom=true;render('chat')}
+                }
+                showToast(`${c.name}点了一首「${playTitle}」`)
+              }
+            }
+          }catch(e){console.log('点歌搜索失败:',e)}
+        }
+      })()
+    }
 
 // === 撤回延迟处理 ===
 const _recallItems=newArr.filter(m=>m._recallAfter&&m.from==='c')
@@ -13260,12 +13113,27 @@ if(Math.random()<0.05&&!c.offlineMode){
             const _icPe = P().name||'对方'
 const _icTod = new Date().getHours()<6?'凌晨':new Date().getHours()<9?'早上':new Date().getHours()<12?'上午':new Date().getHours()<14?'中午':new Date().getHours()<18?'下午':new Date().getHours()<21?'晚上':'深夜'
 const _icTime = pad(new Date().getHours())+':'+pad(new Date().getMinutes())
-const reply = await askAI(sysPrompt(),`${_icTod}${_icTime}，${c.name}主动给${_icPe}打了一个${callType}电话。${_icPe}接通了。\n请用第三人称小说体描写：${c.name}这边的环境（符合${_icTod}的场景）、动作神态，以及${c.name}开口说的第一句话。字数150-300字，台词用中文双引号包裹。\n重要：全程第三人称！用"${c.name}"和"${_icPe}"称呼两人，绝对不要出现"我""你"。${callType==='语音'?'语音电话只能听到声音。':'视频电话能通过屏幕看到彼此。'}`,800);
+const _icHist=getMsgs(activeCharId).slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text||''}))
+const _icPov=store.get('callPov','first')
+_icHist.push({role:'user',content:callType==='语音'
+  ?(_icPov==='third'
+    ?`[现在是${_icTod}${_icTime}，${c.name}主动给${_icPe}打了语音电话，${_icPe}接通了。用第三人称小说体描写${c.name}接电话时的环境、动作神态，以及开口说的第一句话。150字以内，台词用中文引号包裹。全程用"${c.name}"和"${_icPe}"称呼两人，不要出现"我""你"。]`
+    :`[现在是${_icTod}${_icTime}，你主动给${_icPe}打了语音电话，对方接通了。用你平时说话的语气说第一句话，简短自然，不超过30字。只输出你说的话，不要描写动作/环境/表情，不要引号，不要第三人称。]`)
+  :(_icPov==='third'
+    ?`[现在是${_icTod}${_icTime}，${c.name}主动给${_icPe}打了视频电话，${_icPe}接通了。用第三人称小说体描写：${_icPe}的手机屏幕上出现了${c.name}的画面——环境、表情动作、开口说的第一句话。150字以内，台词用中文引号包裹。全程用"${c.name}"和"${_icPe}"称呼两人，不要出现"我""你"。]`
+    :`[现在是${_icTod}${_icTime}，你主动给${_icPe}打了视频电话，对方接通了。描写此刻场景：你这边的环境、你的表情动作、你说的第一句话。150字以内，纯文字，不要状态栏/标签/格式标记。用"我"指代自己。]`)})
             if (isHungUp) return;
-            
             historyBox.innerHTML = '';
-            appendMsg(reply, false);
-            playCallAudio(reply);
+            appendMsg('...', false);
+            let _icR=''
+            await callLLM({system:sysPrompt()+'\n\n【当前是通话场景】严禁输出<status>、<-EVE_DATA->、<-基础状态->、<-事件栏目->、心声、竖线分隔等任何结构化标签。只输出纯文字叙述或对话，不要任何标记。', messages:_icHist,
+ maxTokens:callType==='语音'?200:500, stream:true, onChunk:(t)=>{
+              if(isHungUp)return;_icR=t;
+const _el=historyBox.lastElementChild;if(_el)_el.textContent=`${c.name}：${_icR}`;historyBox.scrollTop=historyBox.scrollHeight
+            }})
+            if(isHungUp)return;
+            callHistoryText.push(`${c.name}：${_icR}`)
+            playCallAudio(_icR);
 
             // 用户输入并发送
             sendBtn.onclick = async () => {
@@ -13277,15 +13145,27 @@ const reply = await askAI(sysPrompt(),`${_icTod}${_icTime}，${c.name}主动给$
               sendBtn.style.opacity = '.5'; sendBtn.style.pointerEvents = 'none'; sendBtn.textContent = '...';
               
               const _r2Pe = P().name||'对方'
-const _r2CallMsgs = callHistoryText.map(t => ({role: t.startsWith(P().name||'你') ? 'user' : 'assistant', content: t}))
-_r2CallMsgs.push({role:'user', content:`${_r2Pe}说了："${text}"。\n请用第三人称小说体描写：先描写${_r2Pe}说这话时的语气和状态，然后描写${c.name}听到后的动作、神态反应，以及${c.name}的回答。\n要求：300-500字，台词用中文引号包裹，要有画面感和氛围感，不要用emoji。\n重要规则：全程第三人称！用"${c.name}"和"${_r2Pe}"称呼两人，绝对不要出现"我""你"！${callType==='语音'?'语音电话只能听到声音，多写声音、语气、呼吸等听觉细节。':'视频电话能通过屏幕看到彼此。'}当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。`})
-const _r2R = await callLLM({system:sysPrompt(), messages:_r2CallMsgs, maxTokens:1000})
-const r2 = _r2R.text
+const _r2Hist=getMsgs(activeCharId).slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text||''}))
+callHistoryText.forEach(t=>{const _u=t.startsWith(_r2Pe+'：')||(P().name&&t.startsWith(P().name+'：'));_r2Hist.push({role:_u?'user':'assistant',content:t.replace(/^[^：]+：/,'')})})
+const _r2Pov=store.get('callPov','first')
+_r2Hist.push({role:'user',content:callType==='语音'
+  ?(_r2Pov==='third'
+    ?`[我们正在语音通话，${_r2Pe}说了："${text}"。用第三人称小说体描写${c.name}的反应和回答，200-300字，台词用中文引号包裹。全程用"${c.name}"和"${_r2Pe}"称呼，不要出现"我""你"。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。]`
+    :`[我们正在语音通话，我说：]${text}[用你平时说话的语气回复，简短自然，不超过50字。只输出你说的话，不要描写动作/环境/心理，不要引号，不要第三人称。]`)
+  :(_r2Pov==='third'
+    ?`[我们正在视频通话，${_r2Pe}说了："${text}"。用第三人称小说体描写${c.name}的表情动作反应和回答，300-500字，台词用中文引号包裹。全程用"${c.name}"和"${_r2Pe}"称呼，不要出现"我""你"。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。]`
+    :`[我们正在视频通话，我说：]${text}[描写你的反应和回答，包含表情动作心理台词，200-400字。纯文字，不要状态栏/标签/格式标记。用"我"指代自己。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。]`)})
+appendMsg('...', false);
+let _r2Txt=''
+await callLLM({system:sysPrompt()+'\n\n【当前是通话场景】严禁输出<status>、<-EVE_DATA->、<-基础状态->、<-事件栏目->、心声、竖线分隔等任何结构化标签。只输出纯文字叙述或对话，不要任何标记。', messages:_r2Hist,
+ maxTokens:callType==='语音'?300:800, stream:true, onChunk:(t)=>{
+  if(isHungUp)return;_r2Txt=t;
+const _el=historyBox.lastElementChild;if(_el)_el.textContent=`${c.name}：${_r2Txt}`;historyBox.scrollTop=historyBox.scrollHeight
+}})
               if (isHungUp) return;
-
-              appendMsg(r2, false);
+callHistoryText.push(`${c.name}：${_r2Txt}`)
               sendBtn.style.opacity = '1'; sendBtn.style.pointerEvents = 'auto'; sendBtn.textContent = '发送';
-              playCallAudio(r2);
+              playCallAudio(_r2Txt);
             };
 
             // 挂断电话，记录保存分离！
@@ -13300,15 +13180,7 @@ const r2 = _r2R.text
               
               // 2. 长篇绝美描写和所有对话，全都打包塞进首页的“图文记忆库”中！
               if(callHistoryText.length > 0){
-                memories.unshift({
-                  id: uid(),
-                  title: `📞 与${c.name}的${callType}通话`,
-                  text: `通话时长：${duration}\n\n${callHistoryText.join('\n\n')}`,
-                  time: new Date().toLocaleString(),
-                  image: '', 
-                  type: callType === '语音' ? 'voicecall' : 'videocall'
-                });
-                saveMem();
+                addMemoryEvent(activeCharId, `（${callType}通话 ${duration}）${callHistoryText.join(' / ')}`, callType==='语音'?'voicecall':'videocall');
               }
               
               close2();render('chat');
@@ -13545,12 +13417,23 @@ const r2 = _r2R.text
             const _clPe = P().name||'对方'
 const _clTod = new Date().getHours()<6?'凌晨':new Date().getHours()<9?'早上':new Date().getHours()<12?'上午':new Date().getHours()<14?'中午':new Date().getHours()<18?'下午':new Date().getHours()<21?'晚上':'深夜'
 const _clTime = pad(new Date().getHours())+':'+pad(new Date().getMinutes())
-const reply = await askAI(sysPrompt(),`${_clTod}${_clTime}，${_clPe}给${c.name}打了一个语音电话。${c.name}的手机响了，接了起来。\n请用第三人称小说体描写这个场景：${c.name}接电话时的环境（符合${_clTod}）、动作神态，以及开口说的第一句话。台词用中文引号「」包裹。150字以内。\n重要：全程第三人称！用"${c.name}"和"${_clPe}"称呼两人，不要出现"我""你"。这是语音电话，只能听到声音。`,800);
+const _clHist=getMsgs(activeCharId).slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text||''}))
+const _clPov=store.get('callPov','first')
+_clHist.push({role:'user',content:_clPov==='third'
+  ?`[现在是${_clTod}${_clTime}，${_clPe}给${c.name}打了语音电话，${c.name}接通了。用第三人称小说体描写${c.name}接电话时的环境、动作神态、开口说的第一句话。150字以内，台词用中文引号包裹。全程用"${c.name}"和"${_clPe}"称呼，不要出现"我""你"。]`
+  :`[现在是${_clTod}${_clTime}，${_clPe}给你打了语音电话，你刚接通。用你平时说话的语气回一句，简短自然，不超过30字。只输出你说的话，不要描写动作/环境/表情，不要引号，不要第三人称。]`})
             if (isHungUp) return;
-            
             historyBox.innerHTML = '';
-            appendCallMsg(c.name, reply, false);
-            if(ttsApi.key){ const url = await genTTS(reply); if(url && !isHungUp) playTtsUrl(url); }
+            appendCallMsg(c.name, '...', false);
+            let _clR=''
+            await callLLM({system:sysPrompt()+'\n\n【当前是通话场景】严禁输出<status>、<-EVE_DATA->、<-基础状态->、<-事件栏目->、心声、竖线分隔等任何结构化标签。只输出纯文字叙述或对话，不要任何标记。', messages:_clHist,
+ maxTokens:200, stream:true, onChunk:(t)=>{
+              if(isHungUp)return;_clR=t;
+const _el=historyBox.lastElementChild;if(_el){const sp=_el.querySelector('span');if(sp)sp.textContent=_clR;else _el.lastChild.textContent=_clR}; historyBox.scrollTop=historyBox.scrollHeight
+            }})
+            if(isHungUp)return;
+            callHistoryText[callHistoryText.length-1]=`${c.name}：${_clR}`
+            if(ttsApi.key){ const url = await genTTS(_clR); if(url && !isHungUp) playTtsUrl(url); }
           }, 1500);
 
           sendBtn.onclick = async () => {
@@ -13560,15 +13443,24 @@ const reply = await askAI(sysPrompt(),`${_clTod}${_clTime}，${_clPe}给${c.name
               
               sendBtn.style.opacity = '.5'; sendBtn.style.pointerEvents = 'none'; sendBtn.textContent = '...';
               const _vcPe = P().name||'对方'
-const _vcCallMsgs = callHistoryText.map(t => ({role: t.startsWith(P().name||'你') ? 'user' : 'assistant', content: t}))
-_vcCallMsgs.push({role:'user', content:`${_vcPe}说了："${text}"。\n请用第三人称小说体描写：先描写${_vcPe}说这话时的语气和声音，然后描写${c.name}听到后的反应（动作、神态、心理）和回答。300-500字，台词用中文引号包裹，不要用emoji。\n重要规则：\n1. 全程第三人称！用"${c.name}"和"${_vcPe}"称呼两人，绝对不要出现"我""你"这种第一/第二人称！\n2. 这是语音电话！只能听到声音！多描写声音、语气、呼吸、沉默等听觉细节，不要描写视觉上看到对方的表情。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。`})
-const _vcR = await callLLM({system:sysPrompt(), messages:_vcCallMsgs, maxTokens:1000})
-const reply = _vcR.text
+const _vcHist=getMsgs(activeCharId).slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text||''}))
+callHistoryText.forEach(t=>{const _u=t.startsWith(_vcPe+'：')||(P().name&&t.startsWith(P().name+'：'));_vcHist.push({role:_u?'user':'assistant',content:t.replace(/^[^：]+：/,'')})})
+const _vcPov=store.get('callPov','first')
+_vcHist.push({role:'user',content:_vcPov==='third'
+  ?`[我们正在语音通话，${_vcPe}说了："${text}"。用第三人称小说体描写${c.name}的反应和回答，200-300字，台词用中文引号包裹。全程用"${c.name}"和"${_vcPe}"称呼，不要出现"我""你"。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。]`
+  :`[我们正在语音通话，我说：]${text}[用你平时说话的语气回复，简短自然，不超过50字。只输出你说的话，不要描写动作/环境/心理，不要引号，不要第三人称。]`})
+appendCallMsg(c.name, '...', false);
+let _vcR2=''
+await callLLM({system:sysPrompt()+'\n\n【当前是通话场景】严禁输出<status>、<-EVE_DATA->、<-基础状态->、<-事件栏目->、心声、竖线分隔等任何结构化标签。只输出纯文字叙述或对话，不要任何标记。', messages:_vcHist,
+ maxTokens:300, stream:true, onChunk:(t)=>{
+  if(isHungUp)return;_vcR2=t;
+const _el=historyBox.lastElementChild;if(_el){const sp=_el.querySelector('span');if(sp)sp.textContent=_vcR2;else _el.lastChild.textContent=_vcR2};historyBox.scrollTop=historyBox.scrollHeight
+}})
               if (isHungUp) return;
-
-              appendCallMsg(c.name, reply, false);
+callHistoryText[callHistoryText.length-1]=`${c.name}：${_vcR2}`
               sendBtn.style.opacity = '1'; sendBtn.style.pointerEvents = 'auto'; sendBtn.textContent = '发送';
-              if(ttsApi.key){ const url = await genTTS(reply); if(url && !isHungUp) playTtsUrl(url); }
+              if(ttsApi.key){ const url = await genTTS(_vcR2);
+ if(url && !isHungUp) playTtsUrl(url); }
           };
 
                     mb.querySelector('#_callhangup').onclick = () => {
@@ -13580,18 +13472,10 @@ const reply = _vcR.text
             arr.push({from:'c', text:`[${callType}通话] 时长 ${duration}`, time:timeStr, replied:true});
             saveMsgs(activeCharId, arr);
             
-            if (callHistoryText.length > 0) {
-               const memText = callHistoryText.join('\n\n');
-memories.unshift({
-  id: uid(),
-  title: `📞 与${c.name}的语音通话`,
-  text: `通话时长：${duration}\n\n${memText}`,
-  time: new Date().toLocaleString(),
-  image: '', // 如果你想配一张图，可以放个默认背景图链接
-  type: 'voicecall'
-});
-saveMem();
+                        if (callHistoryText.length > 0) {
+               addMemoryEvent(activeCharId, `（语音通话 ${duration}）${callHistoryText.join(' / ')}`, 'voicecall');
             }
+
             close(); render('chat');
           };
 
@@ -13600,6 +13484,13 @@ saveMem();
 
       case 'videocall':
   showModal('视频通话',(mb,close)=>{
+    // 全屏沉浸式 —— mb是#_mbody，mb.parentElement才是.modal-box
+    const _box=mb.parentElement,_mask=_box.parentElement
+    _mask.classList.add('_vc-fs')
+    const _fss=document.createElement('style');_fss.id='_vcFS'
+    _fss.textContent='._vc-fs{position:fixed!important;inset:0!important;background:#000!important;z-index:9999!important;display:block!important}._vc-fs .modal-box{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;border-radius:0!important;background:#1a1a24!important;padding:0!important;padding-bottom:0!important;overflow:hidden!important}._vc-fs .modal-title{display:none!important}._vc-fs #_mbody{height:100%!important;overflow:hidden!important}'
+    document.head.appendChild(_fss)
+    const _origClose=close;close=()=>{const s=document.getElementById('_vcFS');if(s)s.remove();_origClose()}
     const callType='视频';
     let isHungUp = false;
     let seconds = 0, timer = null;
@@ -13607,7 +13498,7 @@ saveMem();
 
           // 沉浸式 UI：背景铺满，带呼吸动画
                     mb.innerHTML=`
-            <div id="_vcscreen" style="position:relative;text-align:center;display:flex;flex-direction:column;height:80vh;background:#1a1a24;border-radius:16px;overflow:hidden">
+            <div id="_vcscreen" style="position:relative;text-align:center;display:flex;flex-direction:column;height:100%;min-height:100%;background:#1a1a24;border-radius:0;overflow:hidden">
               <div id="_vcbg" style="position:absolute;inset:0;background:url('${c.avatar}') center/cover;opacity:0.3;filter:blur(8px);transition:all 1s ease;animation:breathe 3s infinite alternate"></div>
               <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 20%, rgba(0,0,0,0.8) 100%);z-index:1"></div>
               
@@ -13695,20 +13586,28 @@ saveMem();
             }, 1000);
 
             historyBox.style.display = 'flex'; inputArea.style.display = 'flex';
-            appendCallMsg('系统', '视频信号已连接，生图AI正在渲染画面...', false, true);
-            
-            // 异步生图背景
-            generateVideoCG();
+            appendCallMsg('系统', '视频已连接', false, true);
 
             const _vcPe2 = P().name||'对方'
 const _vcTod2 = new Date().getHours()<6?'凌晨':new Date().getHours()<9?'早上':new Date().getHours()<12?'上午':new Date().getHours()<14?'中午':new Date().getHours()<18?'下午':new Date().getHours()<21?'晚上':'深夜'
 const _vcTime2 = pad(new Date().getHours())+':'+pad(new Date().getMinutes())
-const reply = await askAI(sysPrompt(),`${_vcTod2}${_vcTime2}，${_vcPe2}给${c.name}打了一个视频电话。${c.name}接通了。\n请用第三人称小说体描写：${_vcPe2}的手机屏幕上出现了${c.name}的画面——${c.name}这边的环境（符合${_vcTod2}的场景）、表情、动作，以及${c.name}开口说的第一句话。台词用中文引号包裹。150字以内。\n重要：全程第三人称！用"${c.name}"和"${_vcPe2}"称呼两人，不要出现"我""你"。`,800);
+const _vidHist1=getMsgs(activeCharId).slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text||''}))
+const _vidPov1=store.get('callPov','first')
+_vidHist1.push({role:'user',content:_vidPov1==='third'
+  ?`[现在是${_vcTod2}${_vcTime2}，${_vcPe2}给${c.name}打了视频电话，${c.name}接通了。用第三人称小说体描写：${_vcPe2}的屏幕上出现了${c.name}的画面——环境、表情动作、开口说的第一句话。150字以内，台词用中文引号包裹。全程用"${c.name}"和"${_vcPe2}"称呼，不要出现"我""你"。]`
+  :`[现在是${_vcTod2}${_vcTime2}，${_vcPe2}给你打了视频电话，你刚接通。描写此刻场景：你这边的环境、你的表情动作、你说的第一句话。150字以内，纯文字，不要状态栏/标签/格式标记。用"我"指代自己。]`})
             if (isHungUp) return;
-            
             historyBox.innerHTML = '';
-            appendCallMsg(c.name, reply, false);
-            if(ttsApi.key){ const url = await genTTS(reply); if(url && !isHungUp) playTtsUrl(url); }
+            appendCallMsg(c.name, '...', false);
+            let _vidR1=''
+            await callLLM({system:sysPrompt()+'\n\n【当前是通话场景】严禁输出<status>、<-EVE_DATA->、<-基础状态->、<-事件栏目->、心声、竖线分隔等任何结构化标签。只输出纯文字叙述或对话，不要任何标记。', messages:_vidHist1,
+ maxTokens:500, stream:true, onChunk:(t)=>{
+              if(isHungUp)return;_vidR1=t;
+const _el=historyBox.lastElementChild;if(_el){const sp=_el.querySelector('span');if(sp)sp.textContent=_vidR1;else _el.lastChild.textContent=_vidR1};historyBox.scrollTop=historyBox.scrollHeight
+            }})
+            if(isHungUp)return;
+            callHistoryText[callHistoryText.length-1]=`${c.name}：${_vidR1}`
+            if(ttsApi.key){ const url = await genTTS(_vidR1); if(url && !isHungUp) playTtsUrl(url); }
           }, 2000);
 
           // 核心识图逻辑 (调用摄像头)
@@ -13771,15 +13670,24 @@ const reply = await askAI(sysPrompt(),`${_vcTod2}${_vcTime2}，${_vcPe2}给${c.n
               sendBtn.style.opacity = '.5'; sendBtn.style.pointerEvents = 'none'; sendBtn.textContent = '...';
               
               const _vcPe3 = P().name||'对方'
-const _vcCallMsgs3 = callHistoryText.map(t => ({role: t.startsWith(P().name||'你') ? 'user' : 'assistant', content: t}))
-_vcCallMsgs3.push({role:'user', content:`${_vcPe3}在镜头里说了："${text}"。\n请用第三人称小说体描写：先描写${_vcPe3}在屏幕里说这话时的样子，然后描写${c.name}在屏幕对面的反应（表情、动作、心理）和回答。300-500字，台词用中文引号包裹，不要用emoji。\n重要规则：\n1. 全程第三人称！用"${c.name}"和"${_vcPe3}"称呼两人，绝对不要出现"我""你"！\n2. 这是视频电话！两人通过手机屏幕看到彼此，但不在同一个空间。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。`})
-const _vcR3 = await callLLM({system:sysPrompt(), messages:_vcCallMsgs3, maxTokens:1000})
-const reply = _vcR3.text
+const _vidHist2=getMsgs(activeCharId).slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text||''}))
+callHistoryText.forEach(t=>{const _u=t.startsWith(_vcPe3+'：')||(P().name&&t.startsWith(P().name+'：'));_vidHist2.push({role:_u?'user':'assistant',content:t.replace(/^[^：]+：/,'')})})
+const _vidPov2=store.get('callPov','first')
+_vidHist2.push({role:'user',content:_vidPov2==='third'
+  ?`[我们正在视频通话，${_vcPe3}说了："${text}"。用第三人称小说体描写${c.name}的表情动作反应和回答，300-500字，台词用中文引号包裹。全程用"${c.name}"和"${_vcPe3}"称呼，不要出现"我""你"。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。]`
+  :`[我们正在视频通话，我说：]${text}[描写你的反应和回答，包含表情动作心理台词，200-400字。纯文字，不要状态栏/标签/格式标记。用"我"指代自己。当前时间${pad(new Date().getHours())}:${pad(new Date().getMinutes())}。]`})
+appendCallMsg(c.name, '...', false);
+let _vidR2=''
+await callLLM({system:sysPrompt()+'\n\n【当前是通话场景】严禁输出<status>、<-EVE_DATA->、<-基础状态->、<-事件栏目->、心声、竖线分隔等任何结构化标签。只输出纯文字叙述或对话，不要任何标记。', messages:_vidHist2,
+ maxTokens:800, stream:true, onChunk:(t)=>{
+  if(isHungUp)return;_vidR2=t;
+const _el=historyBox.lastElementChild;if(_el){const sp=_el.querySelector('span');if(sp)sp.textContent=_vidR2;else _el.lastChild.textContent=_vidR2};historyBox.scrollTop=historyBox.scrollHeight
+}})
               if (isHungUp) return;
-
-              appendCallMsg(c.name, reply, false);
+callHistoryText[callHistoryText.length-1]=`${c.name}：${_vidR2}`
               sendBtn.style.opacity = '1'; sendBtn.style.pointerEvents = 'auto'; sendBtn.textContent = '发送';
-              if(ttsApi.key){ const url = await genTTS(reply); if(url && !isHungUp) playTtsUrl(url); }
+              if(ttsApi.key){ const url = await genTTS(_vidR2);
+ if(url && !isHungUp) playTtsUrl(url); }
           };
 
                     mb.querySelector('#_vchangup').onclick = () => {
@@ -13791,16 +13699,7 @@ const reply = _vcR3.text
             saveMsgs(activeCharId, arr);
             
             if (callHistoryText.length > 0) {
-               const memText = callHistoryText.join('\n\n');
-               memories.unshift({
-                 id: uid(),
-                 title: `📹 与${c.name}的视频通话`,
-                 text: `通话时长：${duration}\n\n${memText}`,
-                 time: new Date().toLocaleString(),
-                 image: '',
-                 type: 'videocall'
-               });
-               saveMem();
+               addMemoryEvent(activeCharId, `（视频通话 ${duration}）${callHistoryText.join(' / ')}`, 'videocall');
             }
             close(); render('chat');
           };
@@ -14445,24 +14344,7 @@ ${recentMsgs}
             }
 
             mb.innerHTML=`
-              <div style="display:flex;border-bottom:1px solid ${_n2?'rgba(200,180,220,.1)':'rgba(232,160,180,.12)'};margin-bottom:10px;overflow-x:auto">
-                <div class="_stktab" data-tab="kaomoji" style="${tabStyle(isKaomoji)}">颜文字</div>
-                <div class="_stktab" data-tab="emoji" style="${tabStyle(isEmoji)}">Emoji</div>
-                <div class="_stktab" data-tab="mine" style="${tabStyle(isMine)}">我的表情包${stickers.length?' ('+stickers.length+')':''}</div>
-              </div>
-
-              ${(isKaomoji||isEmoji)?`
-                <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px;flex-shrink:0">
-                  ${cats.map(c=>`<div class="_stkcat" data-cat="${escHtml(c)}" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;white-space:nowrap;background:${c===_stkPanelCat?(_n2?'rgba(200,168,208,.2)':'rgba(245,213,222,.5)'):(_n2?'rgba(255,255,255,.05)':'rgba(255,255,255,.5)')};color:${c===_stkPanelCat?(_n2?'#f0e0f0':'var(--rose-d)'):(_n2?'#a898b8':'var(--ink-l)')};border:1px solid ${c===_stkPanelCat?(_n2?'rgba(200,168,208,.25)':'rgba(232,160,180,.25)'):'transparent'}">${escHtml(c)}</div>`).join('')}
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(${isEmoji?'7':'3'},1fr);gap:${isEmoji?'2px':'6px'};max-height:180px;overflow-y:auto;padding:4px 0" id="_ek_grid">
-                  ${gridHtml}
-                </div>
-                <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px solid ${_n2?'rgba(200,180,220,.1)':'rgba(232,160,180,.12)'}">
-                  <textarea class="tarea" id="_ek_inp" rows="1" placeholder="点击表情插入，可以混着打字一起发~" style="flex:1;padding:10px 14px;border-radius:16px;background:${_n2?'rgba(255,255,255,.08)':'rgba(255,255,255,.65)'};border:1px solid ${_n2?'rgba(200,180,220,.12)':'rgba(232,160,180,.15)'};max-height:60px;font-size:13px;color:${_n2?'#e0d0e8':'var(--ink)'};resize:none"></textarea>
-                  <div id="_ek_sendbtn" class="btn-main" style="margin:0;padding:10px 16px;border-radius:16px;font-size:12px;flex-shrink:0">发送</div>
-                </div>
-              `:''}
+              <div style="text-align:center;margin-bottom:10px;font-size:13px;color:${_n2?'#f0e0f0':'var(--rose-d)'};font-weight:500;letter-spacing:1px">我的表情包${stickers.length?' ('+stickers.length+')':''}</div>
 
               ${isMine?`
                 <div style="font-size:11px;color:var(--ink-l);text-align:center;margin-bottom:10px">点击表情直接发送 · AI也会学习使用这里的表情包</div>
@@ -16151,124 +16033,112 @@ async function genMapScenePrompt(placeObj,charObj,lastText){
   const s = document.createElement('style');
   s.id = 'star-map-vn-style';
   s.textContent = `
-    /* ☀️ 默认白天/亮色模式：清爽手绘高德风 */
-    .starmap-container { background: var(--cream, #fef8f4); height: 100%; display: flex; flex-direction: column; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, 'Noto Serif SC', sans-serif; position: relative; }
-    .starmap-header { display: flex; justify-content: space-between; align-items: center; padding: max(env(safe-area-inset-top), 16px) 18px 12px; background: rgba(255,255,255,0.88); backdrop-filter: blur(16px); border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0; z-index: 20; }
-    .starmap-title { font-size: 16px; font-weight: 700; color: #32252a; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
-    .starmap-close { border: 1px solid rgba(230,160,180,0.4); border-radius: 18px; padding: 6px 16px; font-size: 12px; font-weight: 600; color: #a84865; background: rgba(255,235,240,0.85); cursor: pointer; box-shadow: 0 2px 8px rgba(214,122,148,0.15); transition: transform .15s; }
-    .starmap-close:active { transform: scale(0.95); }
-    .starmap-tip { margin: 10px 16px 6px; background: rgba(255,255,255,0.85); border-radius: 14px; text-align: center; padding: 8px 14px; font-size: 11.5px; color: #6a5860; z-index: 20; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border: 1px solid rgba(230,200,210,0.5); backdrop-filter: blur(8px); }
-    .starmap-body { flex: 1; position: relative; overflow: auto; padding: 10px 0 30px; -webkit-overflow-scrolling: touch; }
-    
-    /* 画布（白天：通透米白手账沙盘） */
-    .starmap-canvas { position: relative; width: 360px; height: 620px; margin: 0 auto; background: #faf6f0; border-radius: 28px; box-shadow: 0 8px 30px rgba(0,0,0,0.08); overflow: hidden; border: 2px solid #ffffff; }
-    
-    /* 道路网（白天） */
-    .road-h1 { position: absolute; top: 195px; left: 0; right: 0; height: 22px; background: rgba(0,0,0,0.025); border-top: 1px dashed rgba(0,0,0,0.08); border-bottom: 1px dashed rgba(0,0,0,0.08); z-index: 2; pointer-events:none; }
-    .road-h2 { position: absolute; bottom: 200px; left: 0; right: 0; height: 22px; background: rgba(0,0,0,0.025); border-top: 1px dashed rgba(0,0,0,0.08); border-bottom: 1px dashed rgba(0,0,0,0.08); z-index: 2; pointer-events:none; }
-    .road-label { position: absolute; font-size: 9px; color: rgba(0,0,0,0.3); letter-spacing: 2px; }
+    /* 手账风地图 */
+    .starmap-container{background:var(--cream,#fef8f4);height:100%;display:flex;flex-direction:column;overflow:hidden;font-family:'Noto Serif SC',serif;position:relative}
+    .starmap-header{display:flex;justify-content:space-between;align-items:center;padding:max(env(safe-area-inset-top),16px) 18px 10px;background:rgba(255,255,255,.88);backdrop-filter:blur(16px);border-bottom:1px solid rgba(232,160,180,.12);flex-shrink:0;z-index:20}
+    .starmap-title{font-size:17px;font-weight:700;color:var(--ink,#4a3a3a);letter-spacing:1.5px}
+    .starmap-close{border:1px solid rgba(232,160,180,.35);border-radius:20px;padding:6px 18px;font-size:12px;font-weight:600;color:var(--rose-d,#c47a92);background:rgba(255,235,240,.8);cursor:pointer;transition:transform .15s}
+    .starmap-close:active{transform:scale(.93)}
+    .starmap-tip{margin:8px 16px 4px;background:linear-gradient(135deg,rgba(245,213,222,.35),rgba(197,184,212,.25));border-radius:16px;text-align:center;padding:10px 14px;font-size:11.5px;color:var(--ink-l,#8a7a7a);flex-shrink:0;border:1px solid rgba(232,160,180,.18);line-height:1.6;letter-spacing:.5px}
+    .starmap-body{flex:1;overflow-y:auto;padding:6px 14px 30px;-webkit-overflow-scrolling:touch}
 
-    /* 河流（白天：清透水蓝） */
-    .starmap-river { position: absolute; top: -30px; left: 42%; width: 52px; height: 680px; background: linear-gradient(180deg, #cce4f7 0%, #b3daf5 40%, #c4e2f8 100%); transform: rotate(15deg); border-left: 2px solid rgba(255,255,255,0.9); border-right: 2px solid rgba(255,255,255,0.9); z-index: 1; }
-    
-    /* 街区（白天柔和淡彩） */
-    .starmap-park-zone { position: absolute; bottom: 20px; left: 14px; width: 150px; height: 160px; background: rgba(180,225,190,0.45); border-radius: 36px 45px 24px 38px; border: 1.5px dashed rgba(120,180,140,0.5); z-index: 2; }
-    .park-tree-decor { position: absolute; bottom: 10px; left: 18px; font-size: 11px; color: rgba(80,140,100,0.45); letter-spacing: 6px; pointer-events:none; }
-    .starmap-school-zone { position: absolute; top: 20px; right: 14px; width: 145px; height: 160px; background: rgba(225,210,245,0.45); border-radius: 40px 24px 45px 30px; border: 1.5px dashed rgba(170,140,210,0.5); z-index: 2; }
-    .starmap-com-zone { position: absolute; bottom: 20px; right: 14px; width: 145px; height: 165px; background: rgba(255,215,200,0.45); border-radius: 28px 45px 36px 20px; border: 1.5px dashed rgba(220,140,120,0.5); z-index: 2; }
+    /* 区域标题 */
+    .map-zone-title{display:flex;align-items:center;gap:8px;margin:18px 2px 10px;font-size:11.5px;font-weight:600;color:var(--ink-l,#8a7a7a);letter-spacing:2.5px}
+    .map-zone-title::before{content:'';width:3px;height:14px;border-radius:2px;background:var(--rose,#e8a0b4);flex-shrink:0}
+    .map-zone-title::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(232,160,180,.25),transparent)}
 
-    /* 📍 白天地标卡片（纯白立体卡片 + 纯正深色大字） */
-    .starmap-poi { position: absolute; background: #ffffff; border-radius: 12px; padding: 7px 11px 6px; cursor: pointer; z-index: 10; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; box-shadow: 0 4px 14px rgba(60,40,50,0.12), 0 1px 3px rgba(0,0,0,0.05); border: 1px solid rgba(220,205,210,0.8); border-left: 3.5px solid #e8658b; transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); min-width: 86px; }
-    .starmap-poi:active { transform: translateY(2px) scale(0.96); }
-    .poi-title { font-size: 12.5px; font-weight: 700; color: #2c2024 !important; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
-    .poi-sub { font-size: 9.5px; color: #7a686f !important; font-weight: 500; letter-spacing: 0.2px; }
-    .poi-dot { width: 5px; height: 5px; border-radius: 50%; background: #e8658b; flex-shrink: 0; }
-    .starmap-poi::after { content: ''; position: absolute; bottom: -5px; left: 20px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #ffffff; }
+    /* 地点卡片网格 */
+    .map-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px}
+    .map-card{position:relative;border-radius:16px;padding:18px 14px 14px;cursor:pointer;overflow:hidden;transition:transform .15s,box-shadow .2s;border:1px solid rgba(255,255,255,.6);display:flex;flex-direction:column;gap:6px;min-height:88px}
+    .map-card:active{transform:scale(.95)}
 
-    /* 地点特殊点缀色彩 */
-    .poi-school  { top: 38px; right: 26px; border-left-color: #9c6be8; }
-    .poi-school .poi-dot { background: #9c6be8; }
-    .poi-roof    { top: 112px; right: 18px; border-left-color: #8c57df; }
-    .poi-roof .poi-dot { background: #8c57df; }
-    .poi-cafe    { top: 48px; left: 20px; border-left-color: #cf7e3e; }
-    .poi-cafe .poi-dot { background: #cf7e3e; }
-    .poi-oldbook { top: 138px; left: 24px; border-left-color: #b5804c; }
-    .poi-oldbook .poi-dot { background: #b5804c; }
-    .poi-river   { top: 250px; left: 50%; transform: translateX(-50%); border-left-color: #3b8cd9; }
-    .poi-river::after { left: 50%; transform: translateX(-50%); }
-    .poi-river .poi-dot { background: #3b8cd9; }
-    .poi-store   { top: 312px; left: 45%; border-left-color: #d19a28; }
-    .poi-store .poi-dot { background: #d19a28; }
-    .poi-bamboo  { bottom: 120px; left: 20px; border-left-color: #3fa865; }
-    .poi-bamboo .poi-dot { background: #3fa865; }
-    .poi-park    { bottom: 42px; left: 28px; border-left-color: #369c5c; }
-    .poi-park .poi-dot { background: #369c5c; }
-    .poi-cinema  { bottom: 130px; right: 20px; border-left-color: #d94b7b; }
-    .poi-cinema .poi-dot { background: #d94b7b; }
-    .poi-arcade  { bottom: 78px; right: 30px; border-left-color: #a84bb8; }
-    .poi-arcade .poi-dot { background: #a84bb8; }
-    .poi-night   { bottom: 24px; right: 18px; border-left-color: #e65527; }
-    .poi-night .poi-dot { background: #e65527; }
+    /* 左侧色条 */
+    .map-card .mc-bar{position:absolute;top:0;left:0;width:3.5px;height:100%;border-radius:16px 0 0 16px}
 
-    /* 🌙 暗夜模式自适应（当处于深色/暗黑主题时自动生效） */
-    #app.night .starmap-container, body.night-mode .starmap-container, html:has(#app.night) .starmap-container { background: #130f17; }
-    #app.night .starmap-header, body.night-mode .starmap-header { background: rgba(22,17,26,0.92); border-color: rgba(255,255,255,0.08); }
-    #app.night .starmap-title, body.night-mode .starmap-title { color: #f5edf7; }
-    #app.night .starmap-close, body.night-mode .starmap-close { color: #ffe6ee; background: rgba(230,70,110,0.25); border-color: rgba(230,160,180,0.35); }
-    #app.night .starmap-tip, body.night-mode .starmap-tip { background: rgba(30,24,36,0.85); color: #d6cadb; border-color: rgba(255,255,255,0.08); }
-    #app.night .starmap-canvas, body.night-mode .starmap-canvas { background: #1c1622; border-color: rgba(255,255,255,0.12); box-shadow: 0 12px 35px rgba(0,0,0,0.5); }
-    #app.night .starmap-river, body.night-mode .starmap-river { background: linear-gradient(180deg, #182e44 0%, #1c3b59 40%, #152c42 100%); border-color: rgba(80,150,220,0.4); box-shadow: 0 0 20px rgba(40,110,180,0.2); }
-    #app.night .starmap-park-zone, body.night-mode .starmap-park-zone { background: radial-gradient(circle at 30% 70%, rgba(35,65,45,0.65), rgba(20,40,28,0.55)); border-color: rgba(80,180,110,0.3); }
-    #app.night .starmap-school-zone, body.night-mode .starmap-school-zone { background: radial-gradient(circle at 70% 30%, rgba(55,40,75,0.6), rgba(30,22,45,0.5)); border-color: rgba(180,140,220,0.3); }
-    #app.night .starmap-com-zone, body.night-mode .starmap-com-zone { background: radial-gradient(circle at 60% 60%, rgba(70,35,45,0.6), rgba(40,20,30,0.5)); border-color: rgba(240,110,130,0.3); }
-    #app.night .road-h1, #app.night .road-h2, body.night-mode .road-h1, body.night-mode .road-h2 { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.12); }
-    #app.night .road-label, body.night-mode .road-label { color: rgba(255,255,255,0.25); }
-    #app.night .starmap-poi, body.night-mode .starmap-poi { background: rgba(28,21,34,0.94); border-color: rgba(255,255,255,0.12); box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
-    #app.night .starmap-poi::after, body.night-mode .starmap-poi::after { border-top-color: rgba(28,21,34,0.94); }
-    #app.night .poi-title, body.night-mode .poi-title { color: #ffffff !important; }
-    #app.night .poi-sub, body.night-mode .poi-sub { color: rgba(220,200,230,0.65) !important; }
-    #app.night .poi-river, body.night-mode .poi-river { background: rgba(18,30,48,0.95); }
-    #app.night .poi-river::after, body.night-mode .poi-river::after { border-top-color: rgba(18,30,48,0.95); }
-    
-    /* 地标散落位置 */
-    .poi-school  { top: 40px; right: 30px; }
-    .poi-roof    { top: 110px; right: 20px; }
-    .poi-cafe    { top: 60px; left: 25px; }
-    .poi-oldbook { top: 155px; left: 35px; }
-    .poi-river   { top: 250px; left: 50%; transform: translateX(-50%); background: #f0f7fd; border-color: #bcdbf3; }
-    .poi-river::after { border-top-color: #f0f7fd; }
-    .poi-store   { top: 310px; left: 46%; }
-    .poi-bamboo  { bottom: 125px; left: 24px; }
-    .poi-park    { bottom: 45px; left: 40px; }
-    .poi-cinema  { bottom: 140px; right: 25px; }
-    .poi-arcade  { bottom: 85px; right: 40px; }
-    .poi-night   { bottom: 30px; right: 20px; }
+    /* 装饰圆点（替代emoji） */
+    .map-card .mc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;opacity:.7}
+    .map-card-name{font-size:13.5px;font-weight:700;color:#2c2024;letter-spacing:.8px;line-height:1.3;display:flex;align-items:center;gap:7px}
+    .map-card-sub{font-size:10px;color:rgba(80,60,70,.5);letter-spacing:.3px;line-height:1.4;padding-left:15px}
+
+    /* 各地点配色 */
+    .mc-cafe{background:linear-gradient(135deg,#fff5eb,#ffe8d0);box-shadow:0 3px 12px rgba(207,126,62,.1)}
+    .mc-cafe .mc-bar{background:#cf7e3e}.mc-cafe .mc-dot{background:#cf7e3e}
+    .mc-oldbook{background:linear-gradient(135deg,#faf3e8,#efe0c8);box-shadow:0 3px 12px rgba(181,128,76,.08)}
+    .mc-oldbook .mc-bar{background:#b5804c}.mc-oldbook .mc-dot{background:#b5804c}
+    .mc-school{background:linear-gradient(135deg,#f3eeff,#e4d8f8);box-shadow:0 3px 12px rgba(156,107,232,.08)}
+    .mc-school .mc-bar{background:#9c6be8}.mc-school .mc-dot{background:#9c6be8}
+    .mc-roof{background:linear-gradient(135deg,#eee8ff,#ddd0f8);box-shadow:0 3px 12px rgba(140,87,223,.08)}
+    .mc-roof .mc-bar{background:#8c57df}.mc-roof .mc-dot{background:#8c57df}
+    .mc-river{background:linear-gradient(135deg,#eaf5ff,#d4ebfd);box-shadow:0 3px 12px rgba(59,140,217,.08)}
+    .mc-river .mc-bar{background:#3b8cd9}.mc-river .mc-dot{background:#3b8cd9}
+    .mc-store{background:linear-gradient(135deg,#fff8e8,#ffedbd);box-shadow:0 3px 12px rgba(209,154,40,.08)}
+    .mc-store .mc-bar{background:#d19a28}.mc-store .mc-dot{background:#d19a28}
+    .mc-bamboo{background:linear-gradient(135deg,#edf8ef,#d4f0d8);box-shadow:0 3px 12px rgba(63,168,101,.08)}
+    .mc-bamboo .mc-bar{background:#3fa865}.mc-bamboo .mc-dot{background:#3fa865}
+    .mc-park{background:linear-gradient(135deg,#eaf8ee,#ccf0d5);box-shadow:0 3px 12px rgba(54,156,92,.08)}
+    .mc-park .mc-bar{background:#369c5c}.mc-park .mc-dot{background:#369c5c}
+    .mc-cinema{background:linear-gradient(135deg,#ffeff4,#fdd8e4);box-shadow:0 3px 12px rgba(217,75,123,.08)}
+    .mc-cinema .mc-bar{background:#d94b7b}.mc-cinema .mc-dot{background:#d94b7b}
+    .mc-arcade{background:linear-gradient(135deg,#f5eeff,#e8d6f8);box-shadow:0 3px 12px rgba(168,75,184,.08)}
+    .mc-arcade .mc-bar{background:#a84bb8}.mc-arcade .mc-dot{background:#a84bb8}
+    .mc-night{background:linear-gradient(135deg,#fff0ea,#ffddd0);box-shadow:0 3px 12px rgba(230,85,39,.08)}
+    .mc-night .mc-bar{background:#e65527}.mc-night .mc-dot{background:#e65527}
+
+    /* 宽卡（横跨两列） */
+    .map-card-wide{grid-column:1/-1;flex-direction:row;align-items:center;gap:12px;min-height:68px;padding:14px 18px}
+    .map-card-wide .mc-text{display:flex;flex-direction:column;gap:3px}
+    .map-card-wide .map-card-sub{padding-left:0}
+
+    /* 暗夜模式 */
+    #app.night .starmap-container{background:#1a1224}
+    #app.night .starmap-header{background:rgba(22,17,26,.92);border-color:rgba(255,255,255,.08)}
+    #app.night .starmap-title{color:#f5edf7}
+    #app.night .starmap-close{color:#ffe6ee;background:rgba(230,70,110,.2);border-color:rgba(230,160,180,.3)}
+    #app.night .starmap-tip{background:linear-gradient(135deg,rgba(60,30,50,.4),rgba(40,30,60,.4));color:#d6cadb;border-color:rgba(255,255,255,.08)}
+    #app.night .map-zone-title{color:#a898b0}
+    #app.night .map-zone-title::before{background:#c47a92}
+    #app.night .map-zone-title::after{background:linear-gradient(90deg,rgba(200,180,220,.15),transparent)}
+    #app.night .map-card{border-color:rgba(255,255,255,.06)}
+    #app.night .mc-cafe{background:linear-gradient(135deg,#2a2018,#33261a)}
+    #app.night .mc-oldbook{background:linear-gradient(135deg,#28221a,#302818)}
+    #app.night .mc-school{background:linear-gradient(135deg,#1e1828,#261e35)}
+    #app.night .mc-roof{background:linear-gradient(135deg,#1c1628,#241c33)}
+    #app.night .mc-river{background:linear-gradient(135deg,#141e2c,#1a2838)}
+    #app.night .mc-store{background:linear-gradient(135deg,#282218,#302a16)}
+    #app.night .mc-bamboo{background:linear-gradient(135deg,#162218,#1c2a1e)}
+    #app.night .mc-park{background:linear-gradient(135deg,#14221a,#1a2c20)}
+    #app.night .mc-cinema{background:linear-gradient(135deg,#281820,#331c28)}
+    #app.night .mc-arcade{background:linear-gradient(135deg,#221828,#2a1c33)}
+    #app.night .mc-night{background:linear-gradient(135deg,#281a16,#33201a)}
+    #app.night .map-card-name{color:#f0e4f2}
+    #app.night .map-card-sub{color:rgba(220,200,230,.45)}
+    #app.night .map-card .mc-dot{opacity:.85}
 
     /* VN 视觉小说剧场 */
-    .vn-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(20,15,25,0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); display: none; flex-direction: column; opacity: 0; transition: opacity 0.3s ease; }
-    .vn-overlay.active { display: flex; opacity: 1; }
-    .vn-top-bar { display: flex; justify-content: space-between; align-items: center; padding: max(env(safe-area-inset-top), 16px) 20px 10px; flex-shrink: 0; z-index: 10; }
-    .vn-btn { background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.35); padding: 5px 15px; border-radius: 20px; font-size: 13px; cursor: pointer; transition: 0.2s; letter-spacing: 1px; }
-    .vn-btn:active { background: rgba(255,255,255,0.35); }
-    .vn-place-tag { color: #fff; font-weight: bold; text-shadow: 0 2px 6px rgba(0,0,0,0.6); font-size: 15px; letter-spacing: 1px; }
-    .vn-sprite-area { flex: 1; min-height: 50vh; display: flex; justify-content: center; align-items: flex-end; gap: 10px; padding: 10px 14px 0; overflow: hidden; }
-    .vn-sprite-wrap { flex: 1; height: 100%; min-width: 0; display: flex; justify-content: center; align-items: flex-end; position: relative; }
-    .vn-sprite { width: 100%; height: 90%; object-fit: cover; object-position: top center; border-radius: 18px 18px 0 0; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); opacity: 0.4; filter: brightness(0.45); transform: scale(0.94); transform-origin: bottom center; -webkit-mask-image: linear-gradient(to top, transparent 0%, black 25%); box-shadow: inset 0 0 20px rgba(0,0,0,0.8); }
-    .vn-sprite-wrap.speaking .vn-sprite { height: 100%; opacity: 1; filter: brightness(1.1); transform: scale(1.02); box-shadow: 0 0 35px rgba(232,160,180,0.4); border: 1.5px solid rgba(255,255,255,0.3); z-index: 5; }
-        .vn-dialogue-box { flex-shrink: 0; margin: 0 14px calc(76px + env(safe-area-inset-bottom)) 14px; background: linear-gradient(135deg, rgba(35,28,35,0.96), rgba(20,16,22,0.98)); border: 1.5px solid #E8B4C0; border-radius: 18px; padding: 24px 18px 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); min-height: 140px; max-height: 42vh; cursor: pointer; position: relative; display: flex; flex-direction: column; z-index: 100; }
-    .vn-name-tag { position: absolute; top: -14px; left: 20px; background: linear-gradient(135deg, #F5D5DE, #E8A0B4); color: #3E242B; padding: 3px 18px; border-radius: 12px; font-weight: 900; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); border: 1.5px solid #fff; letter-spacing: 1px; z-index: 101; }
-    .vn-text { color: #FFF0F5; font-size: 15px; line-height: 1.75; text-align: justify; text-shadow: 0 1px 3px rgba(0,0,0,0.8); flex: 1; overflow-y: auto; padding-right: 4px; padding-bottom: 28px; -webkit-overflow-scrolling: touch; }
+    .vn-overlay{position:fixed;inset:0;z-index:9999;background:rgba(20,15,25,.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:none;flex-direction:column;opacity:0;transition:opacity .3s ease}
+    .vn-overlay.active{display:flex;opacity:1}
+    .vn-top-bar{display:flex;justify-content:space-between;align-items:center;padding:max(env(safe-area-inset-top),16px) 20px 10px;flex-shrink:0;z-index:10}
+    .vn-btn{background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.35);padding:5px 15px;border-radius:20px;font-size:13px;cursor:pointer;transition:.2s;letter-spacing:1px}
+    .vn-btn:active{background:rgba(255,255,255,.35)}
+    .vn-place-tag{color:#fff;font-weight:bold;text-shadow:0 2px 6px rgba(0,0,0,.6);font-size:15px;letter-spacing:1px}
+    .vn-sprite-area{flex:1;min-height:50vh;display:flex;justify-content:center;align-items:flex-end;gap:10px;padding:10px 14px 0;overflow:hidden}
+    .vn-sprite-wrap{flex:1;height:100%;min-width:0;display:flex;justify-content:center;align-items:flex-end;position:relative}
+    .vn-sprite{width:100%;height:90%;object-fit:cover;object-position:top center;border-radius:18px 18px 0 0;transition:all .3s cubic-bezier(.25,.8,.25,1);opacity:.4;filter:brightness(.45);transform:scale(.94);transform-origin:bottom center;-webkit-mask-image:linear-gradient(to top,transparent 0%,black 25%);box-shadow:inset 0 0 20px rgba(0,0,0,.8)}
+    .vn-sprite-wrap.speaking .vn-sprite{height:100%;opacity:1;filter:brightness(1.1);transform:scale(1.02);box-shadow:0 0 35px rgba(232,160,180,.4);border:1.5px solid rgba(255,255,255,.3);z-index:5}
+    .vn-dialogue-box{flex-shrink:0;margin:0 14px calc(76px + env(safe-area-inset-bottom)) 14px;background:linear-gradient(135deg,rgba(35,28,35,.96),rgba(20,16,22,.98));border:1.5px solid #E8B4C0;border-radius:18px;padding:24px 18px 14px;box-shadow:0 10px 40px rgba(0,0,0,.6);min-height:140px;max-height:42vh;cursor:pointer;position:relative;display:flex;flex-direction:column;z-index:100}
+    .vn-name-tag{position:absolute;top:-14px;left:20px;background:linear-gradient(135deg,#F5D5DE,#E8A0B4);color:#3E242B;padding:3px 18px;border-radius:12px;font-weight:900;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.4);border:1.5px solid #fff;letter-spacing:1px;z-index:101}
+    .vn-text{color:#FFF0F5;font-size:15px;line-height:1.75;text-align:justify;text-shadow:0 1px 3px rgba(0,0,0,.8);flex:1;overflow-y:auto;padding-right:4px;padding-bottom:28px;-webkit-overflow-scrolling:touch}
+    .vn-text::-webkit-scrollbar{display:none}
+    .vn-next-icon{position:absolute;bottom:10px;right:14px;color:#E8A0B4;font-size:13px;font-weight:bold;animation:vnBounce 1s infinite;z-index:102;display:flex;align-items:center;gap:2px}
+    @keyframes vnBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
+    .vn-input-area{position:absolute;bottom:calc(10px + env(safe-area-inset-bottom));left:14px;right:14px;display:flex;gap:8px;z-index:120;transition:.3s cubic-bezier(.175,.885,.32,1.275);transform:translateY(150%);opacity:0;pointer-events:none}
+    .vn-input-area.show{transform:translateY(0);opacity:1;pointer-events:auto}
+    .vn-input{flex:1;background:rgba(255,255,255,.96);border:1.5px solid #E8A0B4;border-radius:25px;padding:0 18px;font-size:14px;color:#333;outline:none;height:46px;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+    .vn-send-btn{height:46px;padding:0 20px;border-radius:23px;background:linear-gradient(135deg,#F5D5DE,#E8A0B4);border:1.5px solid #fff;color:#3E242B;font-weight:bold;font-size:13px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 15px rgba(0,0,0,.3);cursor:pointer;flex-shrink:0}
+    .vn-send-btn:active{transform:scale(.93)}
+    .vn-loader{position:absolute;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:200;color:#FFF0F5;font-size:13px;letter-spacing:1px;backdrop-filter:blur(5px);flex-direction:column;gap:8px}
+    .vn-loader.active{display:flex}
 
-    .vn-text::-webkit-scrollbar { display: none; }
-    .vn-next-icon { position: absolute; bottom: 10px; right: 14px; color: #E8A0B4; font-size: 13px; font-weight: bold; animation: vnBounce 1s infinite; z-index: 102; display: flex; align-items: center; gap: 2px; }
-    @keyframes vnBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
-    .vn-input-area { position: absolute; bottom: calc(10px + env(safe-area-inset-bottom)); left: 14px; right: 14px; display: flex; gap: 8px; z-index: 120; transition: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); transform: translateY(150%); opacity: 0; pointer-events: none; }
-    .vn-input-area.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
-    .vn-input { flex: 1; background: rgba(255,255,255,0.96); border: 1.5px solid #E8A0B4; border-radius: 25px; padding: 0 18px; font-size: 14px; color: #333; outline: none; height: 46px; box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
-    .vn-send-btn { height: 46px; padding: 0 20px; border-radius: 23px; background: linear-gradient(135deg, #F5D5DE, #E8A0B4); border: 1.5px solid #fff; color: #3E242B; font-weight: bold; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 15px rgba(0,0,0,0.3); cursor: pointer; flex-shrink: 0; }
-    .vn-send-btn:active { transform: scale(0.93); }
-    .vn-loader { position: absolute; inset: 0; background: rgba(0,0,0,0.65); display: none; align-items: center; justify-content: center; z-index: 200; color: #FFF0F5; font-size: 13px; letter-spacing: 1px; backdrop-filter: blur(5px); flex-direction: column; gap: 8px; }
-    .vn-loader.active { display: flex; }
   `;
   document.head.appendChild(s);
 })();
@@ -16286,92 +16156,83 @@ pages.map = () => {
 
   p.innerHTML = `
     <div class="starmap-header">
-      <div class="starmap-title">城市大地图</div>
-      <div class="starmap-close" onclick="render('home')">返回手机</div>
+      <div class="starmap-title">城市漫步</div>
+      <div class="starmap-close" onclick="render('home')">← 返回</div>
     </div>
-    <div class="starmap-tip">📍 点击地标触发偶遇漫步（有几率触发修罗场）</div>
+    <div class="starmap-tip">点击地标触发偶遇漫步，说不定会遇到某个人</div>
     <div class="starmap-body">
-      <div class="starmap-canvas">
-        <!-- 城市干道网络 -->
-        <div class="road-h1"><span class="road-label" style="top:4px;left:18px">学院路</span></div>
-        <div class="road-h2"><span class="road-label" style="top:4px;left:18px">夜市街</span></div>
 
-        <!-- 滨河夜景大道 -->
-        <div class="starmap-river"></div>
-
-        <!-- 生态公园绿地 -->
-        <div class="starmap-park-zone">
-          <div class="park-tree-decor">✦ ✦ ✦</div>
+      <div class="map-zone-title">学院文教区</div>
+      <div class="map-grid">
+        <div class="map-card mc-school" onclick="window.exploreMap('学校')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>樱花高校</div>
+          <div class="map-card-sub">下课铃声 · 林荫道</div>
         </div>
-
-        <!-- 学院文教区 -->
-        <div class="starmap-school-zone"></div>
-
-        <!-- 繁华商业霓虹街 -->
-        <div class="starmap-com-zone">
-          <div class="neon-spark" style="top:25px;right:30px"></div>
-          <div class="neon-spark" style="bottom:35px;right:75px"></div>
+        <div class="map-card mc-roof" onclick="window.exploreMap('天台')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>秘密天台</div>
+          <div class="map-card-sub">俯瞰夜景 · 晚风中</div>
         </div>
-
-        <!-- 现实都市风格地标 Pin（高对比度夜光白字 + 浪漫副标题） -->
-        <div class="starmap-poi poi-cafe" onclick="window.exploreMap('咖啡厅')">
-          <div class="poi-title"><span class="poi-dot"></span>街角咖啡</div>
-          <div class="poi-sub">现磨手冲 · 窗边位</div>
+        <div class="map-card mc-oldbook" onclick="window.exploreMap('旧书店')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>拾光书屋</div>
+          <div class="map-card-sub">旧纸油墨 · 沉木香</div>
         </div>
-
-        <div class="starmap-poi poi-oldbook" onclick="window.exploreMap('旧书店')">
-          <div class="poi-title"><span class="poi-dot"></span>拾光书屋</div>
-          <div class="poi-sub">旧纸油墨 · 沉木香</div>
-        </div>
-
-        <div class="starmap-poi poi-school" onclick="window.exploreMap('学校')">
-          <div class="poi-title"><span class="poi-dot"></span>樱花高校</div>
-          <div class="poi-sub">下课铃声 · 林荫道</div>
-        </div>
-
-        <div class="starmap-poi poi-roof" onclick="window.exploreMap('天台')">
-          <div class="poi-title"><span class="poi-dot"></span>秘密天台</div>
-          <div class="poi-sub">俯瞰夜景 · 晚风中</div>
-        </div>
-
-        <div class="starmap-poi poi-river" onclick="window.exploreMap('河堤')">
-          <div class="poi-title"><span class="poi-dot"></span>落日河堤</div>
-          <div class="poi-sub">晚霞余晖 · 木栈道</div>
-        </div>
-
-        <div class="starmap-poi poi-store" onclick="window.exploreMap('深夜便利店')">
-          <div class="poi-title"><span class="poi-dot"></span>暖光便利店</div>
-          <div class="poi-sub">关东煮 · 24H暖灯</div>
-        </div>
-
-        <div class="starmap-poi poi-bamboo" onclick="window.exploreMap('竹林小径')">
-          <div class="poi-title"><span class="poi-dot"></span>清幽竹林</div>
-          <div class="poi-sub">碎石小路 · 听风眠</div>
-        </div>
-
-        <div class="starmap-poi poi-park" onclick="window.exploreMap('中央公园')">
-          <div class="poi-title"><span class="poi-dot"></span>森林公园</div>
-          <div class="poi-sub">喷泉草坪 · 长椅旁</div>
-        </div>
-
-        <div class="starmap-poi poi-cinema" onclick="window.exploreMap('私人影院')">
-          <div class="poi-title"><span class="poi-dot"></span>私人影院</div>
-          <div class="poi-sub">双人沙发 · 爆米花</div>
-        </div>
-
-        <div class="starmap-poi poi-arcade" onclick="window.exploreMap('电玩城')">
-          <div class="poi-title"><span class="poi-dot"></span>潮玩电玩</div>
-          <div class="poi-sub">抓娃娃机 · 赛车声</div>
-        </div>
-
-        <div class="starmap-poi poi-night" onclick="window.exploreMap('夜市')">
-          <div class="poi-title"><span class="poi-dot"></span>烟火夜市</div>
-          <div class="poi-sub">章鱼小丸子 · 炭烤香</div>
+        <div class="map-card mc-cafe" onclick="window.exploreMap('咖啡厅')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>街角咖啡</div>
+          <div class="map-card-sub">现磨手冲 · 窗边位</div>
         </div>
       </div>
+
+      <div class="map-zone-title">自然风光区</div>
+      <div class="map-grid">
+        <div class="map-card map-card-wide mc-river" onclick="window.exploreMap('河堤')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>落日河堤</div>
+          <div class="mc-text">
+            <div class="map-card-sub">晚霞余晖 · 木栈道上并肩走</div>
+          </div>
+        </div>
+        <div class="map-card mc-bamboo" onclick="window.exploreMap('竹林小径')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>清幽竹林</div>
+          <div class="map-card-sub">碎石小路 · 听风眠</div>
+        </div>
+        <div class="map-card mc-park" onclick="window.exploreMap('中央公园')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>森林公园</div>
+          <div class="map-card-sub">喷泉草坪 · 长椅旁</div>
+        </div>
+      </div>
+
+      <div class="map-zone-title">繁华霓虹街</div>
+      <div class="map-grid">
+        <div class="map-card mc-store" onclick="window.exploreMap('深夜便利店')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>暖光便利店</div>
+          <div class="map-card-sub">关东煮 · 24H暖灯</div>
+        </div>
+        <div class="map-card mc-cinema" onclick="window.exploreMap('私人影院')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>私人影院</div>
+          <div class="map-card-sub">双人沙发 · 爆米花</div>
+        </div>
+        <div class="map-card mc-arcade" onclick="window.exploreMap('电玩城')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>潮玩电玩</div>
+          <div class="map-card-sub">抓娃娃机 · 赛车声</div>
+        </div>
+        <div class="map-card mc-night" onclick="window.exploreMap('夜市')">
+          <div class="mc-bar"></div>
+          <div class="map-card-name"><span class="mc-dot"></span>烟火夜市</div>
+          <div class="map-card-sub">章鱼小丸子 · 炭烤香</div>
+        </div>
+      </div>
+
     </div>
 
-    <!-- 橙光视觉小说剧场图层 -->
     <div class="vn-overlay" id="vnOverlay">
       <div class="vn-top-bar">
         <div class="vn-btn" onclick="window.exitVN()">退出离开</div>
@@ -16389,7 +16250,7 @@ pages.map = () => {
         <div class="vn-send-btn" id="vnSendBtn" onclick="window.sendVNReply()">回应</div>
       </div>
       <div class="vn-loader" id="vnLoader">
-        <div>🌸 剧情加载中...</div>
+        <div style="color:#FFF0F5;letter-spacing:1px">剧情加载中...</div>
       </div>
     </div>
   `;
@@ -16402,14 +16263,20 @@ pages.mapscene = () => render('map');
 
 // ===== 2. 地图探索偶遇算法 =====
 window.exploreMap = function(place) {
+  // 防重入：VN剧场进行中 或 正在处理偶遇流程 时直接忽略
+  if (window.vnState && window.vnState.active) return;
+  if (window._exploreMapLock) return;
+  window._exploreMapLock = true;
+  setTimeout(() => { window._exploreMapLock = false; }, 1500);
+
   const allChars = getMyChars().filter(c => !c.isDeleted);
   if (allChars.length === 0) {
     alert("当前通讯录里还没有角色，请先去【邂逅】添加心仪角色！");
     return;
   }
 
-  // 30% 概率判定
-  if (Math.random() > 0.4) {
+  // 15% 概率空跑（原60%太高了）
+  if (Math.random() > 0.85) {
     alert(`你在【${place}】转了一圈，微风拂过，周围很安静，这次什么也没发生。`);
     return;
   }
@@ -17201,6 +17068,7 @@ pages.music=()=>{
   <div id="_psearch" style="padding:6px 12px;border-radius:10px;background:${n?'rgba(200,168,208,.25)':'rgba(232,160,180,.25)'};font-size:11px;color:${n?'#c8a8d0':'var(--rose-d)'};cursor:pointer;font-weight:500">搜歌</div>
   <div id="_paddfile" style="padding:6px 12px;border-radius:10px;background:${n?'rgba(200,168,208,.15)':'rgba(232,160,180,.15)'};font-size:11px;color:${n?'#c8a8d0':'var(--rose-d)'};cursor:pointer">+ 本地</div>
   <div id="_paddurl" style="padding:6px 12px;border-radius:10px;background:${n?'rgba(160,180,220,.1)':'rgba(160,180,220,.12)'};font-size:11px;color:${n?'#a0b8d0':'#6a90b0'};cursor:pointer">+ 链接</div>
+  <div id="_p163" style="padding:6px 12px;border-radius:10px;background:${n?'rgba(220,60,60,.18)':'rgba(220,60,60,.1)'};font-size:11px;color:#e74c3c;cursor:pointer;font-weight:500">☁ 网易云</div>
 </div>
       </div>
       <div id="_mplaylist" style="display:flex;flex-direction:column;gap:6px">
@@ -17259,6 +17127,7 @@ $('#_psearch').onclick=()=>openMusicSearch()
       }
     })
   }
+  if($('#_p163'))$('#_p163').onclick=()=>open163()
   $('#_pmode').onclick=()=>{
     const modes=['list','single','shuffle']
     const names=['列表循环','单曲循环','随机播放']
@@ -17317,7 +17186,73 @@ function fmtTime(s){
   const m=Math.floor(s/60),ss=Math.floor(s%60)
   return m+':'+(ss<10?'0':'')+ss
 }
+
+// ===== 网易云音乐（完整移动版，持久化iframe） =====
+let _163wrap=null,_163frame=null
+
+function _to163url(url){
+  url=url.trim()
+  if(/^\d{4,}$/.test(url))return'https://music.163.com/m/playlist?id='+url
+  if(url.includes('music.163.com')){
+    // 把PC版链接转成移动版
+    url=url.replace(/#\//, '').replace(/music\.163\.com\/(?!m)/,'music.163.com/m/')
+    if(!url.startsWith('http'))url='https://'+url
+    return url
+  }
+  let m=url.match(/playlist.*?id=(\d+)/);if(m)return'https://music.163.com/m/playlist?id='+m[1]
+  m=url.match(/song.*?id=(\d+)/);if(m)return'https://music.163.com/m/song?id='+m[1]
+  m=url.match(/album.*?id=(\d+)/);if(m)return'https://music.163.com/m/album?id='+m[1]
+  m=url.match(/id=(\d+)/);if(m)return'https://music.163.com/m/playlist?id='+m[1]
+  return null
+}
+
+function open163(){
+  const n2=isN()
+  // 已创建 → 直接显示
+  if(_163wrap){
+    _163wrap.style.display='flex'
+    if(_163frame&&!_163frame.dataset.loaded){_163frame.src='https://music.163.com/m/';_163frame.dataset.loaded='1'}
+    return
+  }
+  // 首次创建
+  _163wrap=ce('div')
+  _163wrap.id='_163wrap'
+  Object.assign(_163wrap.style,{position:'fixed',inset:'0',zIndex:'9999',display:'flex',flexDirection:'column',background:n2?'#1a1028':'#fff',animation:'fadeIn .25s'})
+
+  _163wrap.innerHTML=`
+    <div style="display:flex;align-items:center;padding:8px 12px;padding-top:max(8px,env(safe-area-inset-top));flex-shrink:0;gap:6px;background:${n2?'rgba(26,16,40,.95)':'rgba(255,255,255,.95)'};border-bottom:1px solid ${n2?'rgba(255,255,255,.05)':'rgba(0,0,0,.06)'}">
+      <div id="_163close" style="padding:6px;cursor:pointer;flex-shrink:0;font-size:16px;color:${n2?'#c8a8d0':'var(--rose-d)'};line-height:1">✕</div>
+      <div id="_163home" style="padding:5px 8px;cursor:pointer;flex-shrink:0;font-size:10px;color:${n2?'#c8a8d0':'var(--rose-d)'};border:1px solid ${n2?'rgba(200,168,208,.3)':'rgba(196,122,146,.25)'};border-radius:10px">首页</div>
+      <input type="text" id="_163url" class="inp" placeholder="粘贴链接直达歌单/歌曲…" style="flex:1;padding:7px 14px;border-radius:16px;background:${n2?'rgba(255,255,255,.08)':'rgba(0,0,0,.04)'};border:none;font-size:11px;color:${n2?'#ddd':'var(--ink)'}">
+      <div id="_163go" style="padding:6px 12px;border-radius:14px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">跳转</div>
+      <div id="_163add" style="padding:6px 10px;border-radius:14px;background:${n2?'rgba(232,160,180,.15)':'rgba(232,160,180,.2)'};color:${n2?'#e8a0b4':'var(--rose-d)'};font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0">＋加歌</div>
+    </div>
+    <div style="flex:1;overflow:hidden">
+      <iframe id="_163iframe" src="about:blank" style="width:100%;height:100%;border:none" allow="autoplay;encrypted-media"></iframe>
+    </div>
+  `
+  document.body.appendChild(_163wrap)
+
+  _163frame=_163wrap.querySelector('#_163iframe')
+  _163frame.src='https://music.163.com/m/'
+  _163frame.dataset.loaded='1'
+
+  _163wrap.querySelector('#_163close').onclick=()=>{_163wrap.style.display='none'}
+  _163wrap.querySelector('#_163home').onclick=()=>{_163frame.src='https://music.163.com/m/'}
+  _163wrap.querySelector('#_163go').onclick=()=>{
+    const v=_163wrap.querySelector('#_163url').value
+    if(!v.trim())return
+    const u=_to163url(v)
+    if(!u){alert('无法识别链接格式');return}
+    _163frame.src=u
+    _163wrap.querySelector('#_163url').value=''
+  }
+  _163wrap.querySelector('#_163url').onkeydown=e=>{if(e.key==='Enter')_163wrap.querySelector('#_163go').click()}
+  _163wrap.querySelector('#_163add').onclick=()=>{_163wrap.style.display='none';openMusicSearch()}
+}
+
 // ===== 生图页 =====
+
 pages.gallery=()=>{
   const p=ce('div','page')
   p.style.background=bgNow()
@@ -18407,6 +18342,22 @@ pages.beauty=()=>{
   </div>
 </div>
 
+    <div class="card">
+      <div class="card-t">聊天字号</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${[{v:'12',l:'小'},{v:'13',l:'标准'},{v:'14',l:'大'},{v:'15',l:'特大'},{v:'16',l:'超大'}].map(o=>`<div class="_fsopt" data-v="${o.v}" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${store.get('chatFontSize','13')===o.v?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:${o.v}px;border:${store.get('chatFontSize','13')===o.v?'1.5px solid var(--rose)':'1px solid transparent'}">${o.l}</div>`).join('')}
+      </div>
+      <div style="font-size:10px;color:var(--ink-l);margin-top:8px;line-height:1.6">调整聊天气泡内文字大小（不影响界面其他元素）</div>
+    </div>
+
+    <div class="card">
+      <div class="card-t">通话人称视角</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${[{v:'first',l:'第一人称（角色说"我"）'},{v:'third',l:'第三人称（小说体）'}].map(o=>`<div class="_povopt" data-v="${o.v}" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${store.get('callPov','first')===o.v?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${store.get('callPov','first')===o.v?'1.5px solid var(--rose)':'1px solid transparent'}">${o.l}</div>`).join('')}
+      </div>
+      <div style="font-size:10px;color:var(--ink-l);margin-top:8px;line-height:1.6">语音/视频通话时AI的人称视角。第一人称更沉浸，第三人称有小说感</div>
+    </div>
+
 <div class="card">
   <div class="card-t">气泡自由 CSS</div>
   <div style="font-size:11px;color:var(--ink-l);margin-bottom:10px;line-height:1.6">
@@ -18534,14 +18485,14 @@ pages.beauty=()=>{
   })
 
   // === 应用图标自定义 ===
-  const _appLabels=['微信','主题','直播','副本','邂逅','世界书','约会','生图','马甲','地图','羁绊','论坛','预设','设置','钱包','助手','养成','查岗'];
+  const _appLabels=['微信','主题','直播','副本','邂逅','世界书','约会','生图','马甲','地图','羁绊','论坛','预设','设置','钱包','助手','养成','查岗','音乐'];
   const _appDefaultSvg={
     '微信':I.chat('#aaa',20),'主题':I.rose('#aaa',20),'直播':I.mic('#aaa',20),'副本':I.swords('#aaa',20),
     '邂逅':I.contacts('#aaa',20),'世界书':I.book('#aaa',20),'约会':I.calendar('#aaa',20),
     '生图':I.img('#aaa',20),'马甲':I.mirror('#aaa',20),'地图':I.map('#aaa',20),
     '羁绊':I.photo('#aaa',20),'论坛':I.chat('#aaa',20),'预设':I.quill('#aaa',20),
     '设置':I.gear('#aaa',20),'钱包':I.wallet('#aaa',20),'助手':I.heart('#aaa',20),
-    '养成':I.heart('#aaa',20),'查岗':I.mirror('#aaa',20)
+    '养成':I.heart('#aaa',20),'查岗':I.mirror('#aaa',20),'音乐':`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
   };
   const _iconGridEl=body.querySelector('#_iconGrid');
   if(_iconGridEl){
@@ -18611,6 +18562,8 @@ pages.beauty=()=>{
   body.querySelectorAll('._bluropt').forEach(el=>{el.onclick=()=>{store.set('blurMode',el.dataset.v);applyBeauty();render('beauty')}})
   body.querySelectorAll('._nightopt').forEach(el=>{el.onclick=()=>{store.set('nightMode',el.dataset.v);applyBeauty();render('beauty')}})
   body.querySelectorAll('._themeopt').forEach(el=>{el.onclick=()=>{curTheme=el.dataset.v;store.set('theme',curTheme);applyBeauty();render('beauty')}})
+  body.querySelectorAll('._fsopt').forEach(el=>{el.onclick=()=>{store.set('chatFontSize',el.dataset.v);applyBeauty();render('beauty')}})
+  body.querySelectorAll('._povopt').forEach(el=>{el.onclick=()=>{store.set('callPov',el.dataset.v);body.querySelectorAll('._povopt').forEach(e2=>{e2.style.background='rgba(255,255,255,.55)';e2.style.border='1px solid transparent'});el.style.background='rgba(245,213,222,.45)';el.style.border='1.5px solid var(--rose)'}})
 // 字体库功能
 const fontLib=store.get('fontLibrary',[])
 const renderFontLib=()=>{
@@ -19395,6 +19348,12 @@ if(wall){
 
     customStyle.textContent = _cssForTheme
     try{localStorage.setItem('customCSS',customCSS)}catch(e){}
+
+    // 【聊天字号】用户设置的字号强制覆盖内联样式
+    const _chatFs = store.get('chatFontSize', '13')
+    const _chatLh = Number(_chatFs) >= 15 ? '1.9' : '1.8'
+    _force += ` #app ._bubble,#app ._bubble-self,#app ._bubble-other,#app ._bubble-offline{font-size:${_chatFs}px!important;line-height:${_chatLh}!important}`
+    _force += ` #app ._msgrow div[style*="font-size:14px"]{font-size:${_chatFs}px!important;line-height:${_chatLh}!important}`
 
     // 强制层放在独立 style 里，并始终挪到 head 最后，主题 CSS 写坏了也不受影响
     let _forceStyle = document.getElementById('_userForceCSS')
@@ -23991,7 +23950,7 @@ function openOfflineCompanionPicker(c){
       getCharKnownList(c.id).forEach(k=>{ knownMap[k.otherId] = k.rel })
       // 同马甲下的角色 + 关系网里认识的人（含隐藏NPC），排除粉丝号，认识的排前面
       const pool = charList
-        .filter(x=>x.id!==c.id && !x.isDeleted && !(x.relation||'').includes('的粉丝') && (x.bindPersonaId===c.bindPersonaId || knownMap[x.id]))
+        .filter(x=>x.id!==c.id && !x.isDeleted && !(x.relation||'').includes('的粉丝') && (knownMap[x.id] || (!x.isHidden && x.bindPersonaId===c.bindPersonaId)))
         .sort((a,b)=>(knownMap[b.id]?.familiarity||0)-(knownMap[a.id]?.familiarity||0))
 
       mb.innerHTML = `
@@ -26140,13 +26099,21 @@ ${evidence?'【查岗发现】'+evidence:'【查岗发现】没发现跟别人�
   const arr=getMsgs(charId)
   const ts=ftime(now())
   res.messages.forEach(msg=>{
-    arr.push({from:'c',text:msg,time:ts,read:false})
+    arr.push({from:'c',text:msg,time:ts,read:false,_checkup:true})
   })
-  if(res.mood){c.mood=res.mood;saveCharList()}
+  // 保存查岗上下文，让后续回复能延续情绪
+  c._checkupCtx={
+    ts:Date.now(),
+    evidence:evidence||'',
+    fighting:_isFighting,
+    mood:res.mood||''
+  }
+  if(res.mood){c.mood=res.mood}
+  saveCharList()
   saveMsgs(charId,arr)
 
   // 记忆事件也要反映实际情况
-  const _evtMood=_isFighting?'':''
+  const _evtMood=_isFighting?'（吵架状态下的查岗）':''
   addMemoryEvent(charId,`（查岗）主动找用户查岗${_evtMood}，${evidence?'发现了一些蛛丝马迹':'没发现跟别人有可疑互动'}。`,'checkup')
 
   // 通知
