@@ -2521,6 +2521,19 @@ function addMemoryEvent(charId,text,source){
   storeMemoryVec(charId, text, source||'chat')
 }
 
+// 删除消息时同步清理对应的聊天记忆（和存事件用同一套清洗，避免对不上或误删）
+function removeMemoryForMsgs(charId, msgs){
+  const mem=getCharMemory(charId)
+  const snips=(msgs||[])
+    .filter(m=>m&&m.text&&(m.from==='c'||m.from==='u'))
+    .map(m=>formatMemorySnippet(m.text,9999).slice(0,20))
+    .filter(s=>s.length>=4)
+  if(!snips.length) return
+  mem.keyEvents=mem.keyEvents.filter(ev=>!(ev.source==='chat'&&snips.some(s=>ev.text.includes(s))))
+  mem.lastUpdate=Date.now()
+  saveGlobalMemory()
+}
+
 // ========== 关键词语义检索（纯本地，无需 API） ==========
 // 中文分词：切成 1-3 字的片段用于匹配
 function _tokenize(text){
@@ -9804,6 +9817,7 @@ if(_htmlCardHit){
   .replace(/^#{1,6}\s*/gm, '')
   .replace(/^\s*[-*]\s+/gm, '')
 
+
         // 检测是否含有 HTML 块级结构（小剧场/排版标签），如果有则跳过引号拆分
         const _hasHtmlBlocks = /<(?:style|div|p|section|article|table|details|summary|main|header|footer|figure|blockquote|ul|ol|li|h[1-6]|xs|bt|rq|ed|dz)\b[^>]*>/i.test(_raw) || /\[(?:对方|我的?)消息[|｜]/.test(_raw);
 
@@ -9814,10 +9828,26 @@ if(_htmlCardHit){
           return stripped === ''
         }
                                 const _parts = []
+        let _skipSplit = false
         if(_hasHtmlBlocks){
-          // 含 HTML 结构的小剧场/排版内容：不拆分，整段保留
-          _parts.push({t:'h', v:_raw})
-        } else {
+          // 正文和 HTML 卡片拆开：正文照常分段高亮，卡片原样渲染
+          const _src = _raw.replace(/```html?/gi,'').replace(/```/g,'')
+          const _om = _src.match(/<(?:style|div|p|section|article|table|details|summary|main|header|footer|figure|blockquote|ul|ol|li|h[1-6]|xs|bt|rq|ed|dz)\b[^>]*>/i)
+          const _hs = _om ? _om.index : -1
+          if(_hs > 0 && _src.slice(0,_hs).trim()){
+            const _closeRe = /<\/(?:style|div|p|section|article|table|details|summary|main|header|footer|figure|blockquote|ul|ol|li|h[1-6]|xs|bt|rq|ed|dz)\s*>/gi
+            let _he = -1, _cm
+            while((_cm = _closeRe.exec(_src)) !== null) _he = _cm.index + _cm[0].length
+            if(_he <= _hs) _he = _src.length
+            _parts.push({t:'h', v:_src.slice(_hs,_he)})
+            _raw = _src.slice(0,_hs) + '\n' + _src.slice(_he)
+          } else {
+            // 整条都是 HTML（纯小剧场）：保持原样
+            _parts.push({t:'h', v:_raw})
+            _skipSplit = true
+          }
+        }
+        if(!_skipSplit){
                const _re = /「([^」]*)」|『([^』]*)』|"([^"]*)"|"([^"]+)"/g
 
         let _last = 0, _mt
@@ -9971,11 +10001,25 @@ if(_htmlCardHit){
           _chapterCard +
           _statusPanel +
                     (()=>{
-            // 检查是否有 HTML 小剧场
-            const _hPart = _parts.find(p=>p.t==='h')
-            if(_hPart){
-              const cleanHtml = _hPart.v.replace(/```html?/gi,'').replace(/```/g,'')
-              return `<div class="_offline-narration _offline-html _novel${n?' _novel-night':''}" style="padding:0 6px">${cleanHtml}</div>`
+              // 检查是否有 HTML 小剧场：正文照常分段高亮，卡片原样渲染
+            const _hParts = _parts.filter(p=>p.t==='h')
+            if(_hParts.length){
+              const _txtParas = _parts.filter(p=>p.t!=='h')
+                .map(p=>p.t==='d'?'\u201c'+p.v+'\u201d':p.v).join('\n')
+                .split('\n').map(l=>l.trim()).filter(l=>l && !_isJunk(l))
+              let _out = ''
+              if(_txtParas.length){
+                _out += `<div class="_offline-narration _novel${n?' _novel-night':''}">` + _txtParas.map(line=>{
+                  let h = _restoreMediaTags(escHtml(line.replace(/^-{3,}\s*/,'').replace(/\*([^*\n]+)\*/g,'$1'))).replace(/&lt;br\s*\/?\s*&gt;/gi,'')
+                  h = h.replace(/([\u300c\u300e\u201c])([^\u300d\u300f\u201d]*?)([\u300d\u300f\u201d])/g,(f,o,i,c)=>`<span class="_dlg">${o}${i}${c}</span>`)
+                  return `<p>${h}</p>`
+                }).join('') + `</div>`
+              }
+              for(const hp of _hParts){
+                const cleanHtml = hp.v.replace(/```html?/gi,'').replace(/```/g,'')
+                _out += `<div class="_offline-narration _offline-html _novel${n?' _novel-night':''}" style="padding:0 6px">${cleanHtml}</div>`
+              }
+              return _out
             }
             // 合并所有文本，按换行拆段落
             const _allText = _parts.map(p=>p.t==='d'?'\u201c'+p.v+'\u201d':p.v).join('\n')
@@ -11577,17 +11621,8 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
     const arr=getMsgs()
     const idxs=[..._selected].map(Number).sort((a,b)=>b-a)
     // 清理被删消息对应的记忆
-    const mem=getCharMemory(activeCharId)
-    idxs.forEach(i=>{
-      const dm=arr[i]
-      if(dm&&dm.text&&dm.from==='c'){
-        const snip=dm.text.slice(0,25)
-        mem.keyEvents=mem.keyEvents.filter(ev=>!ev.text.includes(snip))
-      }
-      arr.splice(i,1)
-    })
-    mem.lastUpdate=Date.now()
-    saveGlobalMemory()
+    removeMemoryForMsgs(activeCharId, idxs.map(i=>arr[i]))
+    idxs.forEach(i=>{ arr.splice(i,1) })
     saveMsgs(activeCharId,arr);_selectMode=false;_selected.clear();render('chat')
   }
 
@@ -11628,13 +11663,7 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
           if(!confirm('确定删除这条消息？')) return
           const a=getMsgs()
           const dm=a[idx]
-          if(dm&&dm.from==='c'){
-            const mem=getCharMemory(activeCharId)
-            const snip=(dm.text||'').slice(0,25)
-            mem.keyEvents=mem.keyEvents.filter(ev=>!ev.text.includes(snip))
-            mem.lastUpdate=Date.now()
-            saveGlobalMemory()
-          }
+          removeMemoryForMsgs(activeCharId, [dm])
           a.splice(idx,1)
           saveMsgs(activeCharId,a);close();render('chat')
         }
@@ -11642,16 +11671,7 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
           const cnt=arr.length-idx
           showNiceConfirm(`确定删除从第 ${idx+1} 条开始的 ${cnt} 条消息？`, ()=>{
             const a=getMsgs()
-            const mem=getCharMemory(activeCharId)
-            for(let i=a.length-1;i>=idx;i--){
-              const dm=a[i]
-              if(dm&&dm.from==='c'){
-                const snip=(dm.text||'').slice(0,25)
-                mem.keyEvents=mem.keyEvents.filter(ev=>!ev.text.includes(snip))
-              }
-            }
-            mem.lastUpdate=Date.now()
-            saveGlobalMemory()
+            removeMemoryForMsgs(activeCharId, a.slice(idx))
             a.splice(idx)
             saveMsgs(activeCharId,a);close();render('chat')
           })
@@ -19349,11 +19369,22 @@ if(wall){
     customStyle.textContent = _cssForTheme
     try{localStorage.setItem('customCSS',customCSS)}catch(e){}
 
-    // 【聊天字号】用户设置的字号强制覆盖内联样式
+    // 【聊天字号】线上调整字号和行高，线下正文只调整字号
     const _chatFs = store.get('chatFontSize', '13')
     const _chatLh = Number(_chatFs) >= 15 ? '1.9' : '1.8'
-    _force += ` #app ._bubble,#app ._bubble-self,#app ._bubble-other,#app ._bubble-offline{font-size:${_chatFs}px!important;line-height:${_chatLh}!important}`
-    _force += ` #app ._msgrow div[style*="font-size:14px"]{font-size:${_chatFs}px!important;line-height:${_chatLh}!important}`
+
+    _force += ` #app ._bubble-self,
+#app ._bubble-other,
+#app ._bubble-offline:not(:has(._offline-html)),
+#app ._msgrow div[style*="font-size:14px"]{
+  font-size:${_chatFs}px!important;
+  line-height:${_chatLh}!important
+}`
+
+    _force += ` #app ._offline-narration:not(._offline-html),
+#app ._offline-narration:not(._offline-html) p{
+  font-size:${_chatFs}px!important
+}`
 
     // 强制层放在独立 style 里，并始终挪到 head 最后，主题 CSS 写坏了也不受影响
     let _forceStyle = document.getElementById('_userForceCSS')
