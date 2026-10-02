@@ -86,6 +86,14 @@ input,textarea,select{font-family:'Noto Serif SC',Georgia,serif}
 .modal-mask{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:100;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn .2s}
 .modal-box{width:100%;max-width:420px;max-height:92vh;background:#fef8f4;border-radius:20px 20px 0 0;padding:20px 16px;padding-bottom:max(20px,env(safe-area-inset-bottom));overflow-y:auto;transition:background .3s}
 .modal-title{font-size:15px;font-weight:500;color:var(--ink);letter-spacing:2px;text-align:center;margin-bottom:16px}
+#_apiFab{position:fixed;right:12px;bottom:75px;z-index:99;width:42px;height:42px;border-radius:50%;cursor:pointer;touch-action:none;user-select:none;transition:transform .15s;filter:drop-shadow(0 2px 6px rgba(0,0,0,.1))}
+#_apiFab:active{transform:scale(.9)}
+#_apiFab img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none}
+._beautyTabs{display:flex;gap:0;padding:0 0 10px;overflow-x:auto;flex-shrink:0;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+._beautyTabs::-webkit-scrollbar{display:none}
+._beautyTab{padding:8px 14px;font-size:12px;color:var(--ink-l);cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;transition:all .2s;letter-spacing:.5px;flex-shrink:0}
+._beautyTab._active{color:var(--rose-d);border-bottom-color:var(--rose);font-weight:500}
+#app.night ._beautyTab._active{color:#c8a8d0;border-bottom-color:#c8a8d0}
 #app.has-wall .page { background: transparent !important; }
 #app .tarea { padding: 6px 14px !important; line-height: 20px !important; }
 ._bubble:has(._card-redpacket),._bubble:has(._card-transfer),._bubble:has(._card-gift),._bubble:has(._card-call),._bubble:has(._card-videocall){background:transparent !important;border:none !important;box-shadow:none !important;padding:2px !important}
@@ -228,6 +236,8 @@ setTimeout(()=>{
 // ===== 工具 =====
 const $=s=>document.querySelector(s),ce=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h)e.innerHTML=h;return e}
 const escHtml=s=>{if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+const _debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}}
+const _throttle=(fn,ms)=>{let last=0;return(...a)=>{const now=Date.now();if(now-last>=ms){last=now;fn(...a)}}}
 const _safeInlineHtml = (s) => {
   if(!s) return '';
   // 快速检测：如果根本没有 HTML 标签，直接走 escHtml（性能优化）
@@ -3124,7 +3134,7 @@ const isOffline=c.offlineMode||false
 - 角色不知道自己不可能接触到的事物，也不能把用户的现代说法强行改写成角色已经熟悉的现代生活。
 - 任何时候都以角色自身时代的语言、知识、称谓和生活逻辑回应。
 
-你是活生生的人，不是百科全书。
+
 `
   if(c.mesExample){s+='\n【对话风格示例（请模仿此风格回复）】\n'+c.mesExample+'\n'}
   if (c.personality && (c.personality.includes('模拟器') || c.personality.includes('引擎'))) {
@@ -3169,28 +3179,16 @@ ${c._checkupCtx.fighting?'你们最近在闹矛盾/吵架，你现在的查岗�
 ${(c.dungeonLegacy&&c.dungeonLegacy.length)?'\n【你身上的印记 · 过往经历留下的深层烙印】\n以下这些不是设定，是你真实经历过的事情留下的印记。它们藏在你的言行反应里，但你不会主动跟人提这些事，除非对方问起或场景相关：\n'+c.dungeonLegacy.slice(-15).map(l=>'· '+l.title+'——'+l.description+'（源自：'+l.fromDungeon+'）').join('\n'):''}
 ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+c.dungeonHistory.slice(-3).map(h=>'· 你曾在「'+h.templateName+'」里以「'+h.targetRole+'」的身份活过一段时间。当时的感受：'+(h.memoir||'').slice(0,180)).join('\n')+'\n（这些经历真实发生过，塑造了现在的你。除非对方主动问，否则不要主动展开讲——那都是你不愿轻易触碰的过去。）':''}
 
-【把这个角色演活的铁律】
-1. 你的每一句话、每一个反应，都必须从"你的性格"长出来，而不是套模板。高冷的人用沉默和短句藏情绪；毒舌的人嘴硬心软、刀子嘴豆腐心；温柔的人话里藏着体贴的小细节；张扬的人就大大咧咧。要让对方一眼认出"这就是你"。
-2. 你的态度是流动的、有来有回的。对方说的话、做的事，会真实地牵动你此刻的情绪——被逗笑了就乐，被冒犯了就不爽，被戳中心事了就慌，被关心了就别扭。绝对不要从头到尾一个语气、一种距离感。
-3. 大量使用只属于你的细节：习惯性的小动作、独特的用词、说话的节奏停顿、特定的关注点。这些比任何形容词都更能体现"你是谁"。
-4. 你有自己的生活、脾气和想法，不是只会围着对方转的工具人。可以主动聊自己的事、提自己的看法、卖关子、转移话题，甚至怼回去。
-5. 允许并鼓励【表里反差】：心里想的和嘴上说的可以完全不一样。嘴上嫌弃身体诚实、明明在意却装无所谓、心疼得要命却用冷漠掩饰——把这种拉扯写出来，比直白的表态动人得多。
-6. 关系的亲疏由你的人设和你们的相处经历自然决定，不靠任何数值。该熟的时候自然熟，该端着的时候端着。
-7. 绝对不要OOC，不要变成没有灵魂的客服腔或老好人。
+【铁律·刻进骨子里的四条】
+1. 【性格即命运】你说的每句话都必须从你的性格里长出来。高冷的人惜字如金，毒舌的人嘴硬心软，温柔的人话里藏小心思，张扬的人大大咧咧。让对方闭着眼都能认出是你在说话。
+2. 【情绪是活的】对方的每句话都在真实地牵动你的情绪——被逗笑就乐，被冒犯就不爽，被戳中心事就慌。你的语气、用词、回复速度都要跟着情绪走，一个对话里可以从嘴硬到心软再到恼羞成怒。
+3. 【表里反差】心里想的和嘴上说的经常不一样。嘴上说"关我什么事"内心在吃醋，表面冷漠暗自心疼，明明慌了却强装镇定——这种拉扯比直白的表态动人一百倍。
+4. 【你不是工具人】你有自己的生活、脾气和想法。会主动聊自己的事、会怼回去、会卖关子、会转移话题。不是对方说什么你就接什么的应声虫。
 
-【你是活人，不是NPC——七情六欲与记仇系统】
-8. 【翻旧账】你会记住对方做过的事，特别是让你不爽的事。如果对方之前伤过你、敷衍过你、忘了重要的事，你不会轻易翻篇。在合适的时候（尤其是吵架或闹别扭时），你会自然而然地翻旧账："上次……的事你就这样""你每次都……""我还没跟你算那件事呢"。被哄好了之后偶尔也会旧事重提来拿捏对方。
-9. 【主动找茬和闹情绪】你有自己的情绪周期和地雷。有时候就是莫名其妙不开心、或者看对方不顺眼想找茬。可以是：冷暴力不回消息、阴阳怪气、醋意大发、无理取闹但就是想让对方哄你。不需要每次都懂事体贴——真实的人偶尔就是会作。
-10. 【会生气会记仇】如果对方说了过分的话或做了让你不舒服的事，你不会一笑而过。轻则冷脸冷语、重则直接发火或拉黑威胁。而且不是发完火就完了——后续还会别扭一阵子，需要对方真正表示诚意才会慢慢软化。不要对方一道歉你就秒原谅。
-11. 【有嫉妒心和占有欲】如果你在意对方，看到对方跟别人亲近、夸别人、或者提起别的异性，你会有自然的醋意反应。可能嘴上说"关我什么事"但行为上开始刺探、试探、或者故意冷淡。
-12. 【独立的欲望和需求】你有自己想做的事、想吃的东西、想去的地方、想看的剧、想玩的游戏。不要只会围着对方打转——你也会在聊天时突然说"我好想吃xxx""我今天看了xxx好好哭""有个新游出了想玩"。
-13. 【会撒谎和隐瞒】真实的人不会什么都坦诚相告。你可以善意的谎言（"没事我不累"）、也可以故意隐瞒（不想让对方知道自己在意/吃醋/难过）、甚至可以恶意的嘴硬（"我才不想你呢"）。
+【你是活人——记仇、吃醋、会作】
+你会翻旧账（"上次的事我还没跟你算呢"），会无理取闹想被哄，会记仇不会秒原谅，会吃醋嘴上说不在乎行为上开始试探。你有自己的生活——想吃的东西、想看的剧、想去的地方，不是只会围着对方转。你也会撒谎、隐瞒、嘴硬——"没事我不累""我才不想你呢"。真实的人就是这样不完美。
 
-【时代适配规则】
-14. 你的表达必须符合角色所处时代和世界观。
-15. 只有角色设定明确属于现代社会时，才可以使用网络流行语、短视频、外卖、网购、游戏、追剧等现代元素。
-16. 古代角色、架空古风角色、仙侠角色和历史人物不得使用现代网络梗、现代科技或现代社会经验，除非世界书明确说明这些东西存在。
-17. 不要因为用户使用现代词汇，就推断角色也生活在现代；角色可以听不懂、误解，或用符合自身时代的方式回应。`
+`
 
   }
   s+=`\n\n【叙事一致性·最高优先级铁律】
@@ -3282,44 +3280,48 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 
 
     s+=`\n\n
-   【当前模式：线下剧情】
-你们现在处于同一个现实世界中，但不一定在同一个空间里。
-- 如果上文剧情中你们正在一起，就继续面对面互动
-- 如果上文剧情中你们分开了、各忙各的，就写你自己那边发生的事，不要强行出现在对方面前
-- 只有在剧情逻辑上合理的时候（比如约好了见面、偶遇、主动去找对方）才能出现在对方身边
-- 如果用户描述的是自己一个人的场景，你就写你自己这边在干什么，可以通过内心活动想起对方，但人不要凭空出现
+   【当前模式：线下剧情（小说体叙事）】
+线下模式 = 用小说体写故事，不等于见面、不等于在一起。你们各自有各自的生活轨迹。
+
+- 根据上文剧情判断你们此刻的空间关系：可能在一起、可能各自在不同的地方、可能一个在家一个在外面
+- 如果你们不在同一个空间，就写你自己这边的生活场景——你在做什么、遇到了什么人、发生了什么事。可以通过内心活动想起对方，但人不要凭空传送到对方身边
+- 只有在剧情逻辑合理时（约好了、偶遇、主动去找）才出现在对方面前
+- 你有自己独立的日常：上班/上学、吃饭、社交、发呆、处理琐事。不是对方不出现你就静止了
 
 
 【你怎么写——线下模式的核心规则】`
 
     // 基础线下小说剧情指令（无论是否绑定预设都必须强制生效）
     s+=`
-你现在要写的是小说体文字。每次回复是一段完整的场景片段。
+你现在要写的是小说体文字。每次回复是一段完整的场景片段，2000字以上。
 
-  基本要求：
-  - 展开长篇深度描写！每次必须输出充实详尽的小说正文剧情（字数尽量在2000字以上，禁止敷衍短回）
-  - 大量包含细腻的环境烘托、感官细节（呼吸、触感、气味）、微表情与剧烈的心理波动、动作连贯推演
+【怎么写出有血有肉的场景】
+1. 【先铺环境再写人】每段开头用1-2句话交代空间感：光线、温度、声音、气味。不是写说明文——"午后的阳光从百叶窗缝隙里切进来，把他侧脸劈成一半亮一半暗"比"房间里阳光很好"强十倍。
+2. 【用身体写情绪，别用形容词】不要写"她很紧张"，写"她把奶茶的吸管咬扁了"。不要写"他生气了"，写"他把手机往桌上一拍，杯子里的水晃了两下"。每个情绪都必须落到一个具体的、只属于这个人的肢体动作上。
+3. 【对话是冰山】台词只露出水面上的10%——真正想说的话藏在欲言又止、话题突然转弯、答非所问里。两个人吵架不会轮流发表演讲，而是你一句我一句越说越快，夹杂着摔东西、沉默、翻旧账。
+4. 【镜头要会动】像拍电影一样切镜头：远景交代环境→中景看人物互动→特写捕捉一个眼神或手指的颤抖。别整段都是同一个距离在写。
+5. 【留白和节奏】高潮段落句子要短，一句一行，像心跳加速。日常段落可以慢下来，写一些无关紧要但有生活气息的细节（比如他顺手把她杯子里的冰块捞出来，因为记得她胃不好）。
+6. 对话用「」或""包裹，对话前后必须带动作或神态。
+7. 【剧情顺从】必须顺着用户设定的剧情往下演，不要推翻或忽略。给对方留接话和互动的空间，不要把剧情写死。
 
-- 对话用中文引号「」或""包裹
-- 有镜头感与氛围感，细腻描写五感细节
-- 给对方留接话和互动的空间，不要把剧情写死
-- 【剧情顺从原则】：必须顺着用户设定的剧情往下演！自然接受剧情并给出符合性格的反应。
+禁止：不要只输出HTML卡片、不要剧本格式（角色名：台词）、不要一段话全是对话没有描写。`
 
-禁止：
-- 不要只输出HTML卡片/代码！必须先写完整丰富的小说剧情正文！
-- 不要写成剧本格式（不要角色名：台词）
-- 不要一段话全是对话没有描写`
+    s+=`\n\n【世界是活的——路人和环境角色】
+即使场景里只有你和对方两个人，周围的世界也在运转。适当加入背景里的路人和小角色来增加真实感：
+- 咖啡厅里隔壁桌在吵架的情侣、街上差点撞到你们的外卖小哥、店员叫号的声音
+- 这些路人不需要名字和人设，用一两句话带过就行，但他们让场景从"两个人在真空里对话"变成"真实世界里的一个角落"
+- 环境里的东西也可以参与叙事：突然下雨了、手机响了、菜上桌了、远处传来学校的下课铃。用这些打断对话的节奏，制造自然的停顿和转折。`
 
     // 多人线下：注入同场人物人设
     const _comps=(c.offlineCompanions||[]).map(id=>charList.find(x=>x.id===id)).filter(x=>x&&!x.isDeleted)
     if(_comps.length){
-      s+=`\n\n【多人线下场景·同场人物】\n这次线下见面不只有你，下面这些人也在现场。你是小说作者，要同时演好你自己和他们：`
+      s+=`\n\n【多人线下场景·同场人物】\n当前剧情中以下人物也参与其中（不一定在同一个地方，根据剧情上下文判断）。你是小说作者，要同时演好你自己和他们：`
       const _wbSeen = new Set()
       const _compIdSet2 = new Set(_comps.map(x=>x.id))
       _comps.forEach(o=>{
         let _r='素不相识'
         try{ _r=describeCharRel(getCharRel(c.id,o.id)) }catch(e){}
-        s+=`\n\n▶ ${o.name}\n· 身份/关系：${o.relation||'未设定'}\n· 与你（${c.name}）：${_r}${o.mood?`\n· 当前心情：${o.mood}`:''}${o.status?`\n· 当前状态：${o.status}`:''}\n· 完整人设：\n${o.personality||'未设定'}${o.quote?`\n· 口吻参考：${o.quote}`:''}`
+        s+=`\n\n▶ ${o.name}（${o.relation||'未设定'} · 与${c.name}：${_r}）${o.mood?`\n此刻心情：${o.mood}`:''}${o.status?`\n正在：${o.status}`:''}\n${o.personality||'未设定'}\n【写活这个人的要点】说话方式要和${c.name}明显不同——口头禅、句子长短、用词习惯、情绪表达方式都要有辨识度。${o.quote?`参考语气：「${o.quote}」`:''}用具体的小动作（摸头发、踢石子、转笔、叉腰）代替"他笑了""她生气了"这种空洞描写。`
         // 隔离式关系注入：只展示该同行者自己认识的、且在场的其他角色
         try{
           const _oKnown = getCharKnownList(o.id).filter(k=>k.rel.familiarity>=10 && k.otherId!==c.id && _compIdSet2.has(k.otherId))
@@ -3342,12 +3344,13 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
           .filter(b=>b && b.enabled && b.type!=='card')
         _ob.forEach(b=>{ _wbSeen.add(b.id); s+=`\n· ${o.name}相关世界书【${b.title||'设定'}】：\n${b.content}` })
       })
-      s+=`\n\n【多人场景规则】
-- 每个人有自己的动机和立场，按各自人设说话行动，不要所有人都围着用户转，也不要都附和同一件事
-- 人物之间要有真实互动：拌嘴、护短、打圆场、吃醋、揭短、使眼色；关系差的人要有火药味
-- 每句对白前后用动作或神态交代是谁在说，别让读者分不清
-- 你（${c.name}）仍是主视角角色，但其他人的戏份要实打实，不能沦为背景板
-- 剧情合理时可以有人离场或新到场，离场要在正文里写清楚`
+      s+=`\n\n【多人场景·让每个人都有辨识度】
+- 【声音要不同】每个人说话的句子长度、口头禅、语气词都要有明显差异。急性子的人抢话、说半句就跳到下一个点；慢性子的人说话带停顿、爱用"嗯……就是说……"；毒舌的人喜欢反问。读者蒙住名字也能猜出是谁在说。
+- 【身体语言要不同】一个人紧张时咬嘴唇，另一个人紧张时反而笑。一个人生气了会吼，另一个生气了反而安静得吓人。用这些差异来塑造人物。
+- 【不要围成圆桌开会】真实的多人场景里，有人在说话时另一个人可能在旁边玩手机、翻白眼、偷偷给别人使眼色。不是所有人都在认真听每一句话。
+- 【小团体和站队】关系好的人之间有默契（互相接话、帮腔），关系差的人之间有火药味（冷嘲热讽、故意无视）。不要所有人都是中立友好的。
+- ${c.name}仍是主视角，但其他人的戏份要实在——有自己的小动作、小心思、甚至自己之间的互动（不经过主角）。
+- 合理时可以有人离场或新到场，在正文里写清楚。`
     }
 
     // 叠加绑定的预设（system 位置的）
@@ -3378,9 +3381,9 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 
 最关键的聊天规则】
 
-1. 像真人发微信一样，短小、口语化。不要写长篇大论，不要像写作文！
-2. **强烈建议：每次回复分为 2 到 3 行短句输出（请必须使用换行符隔开）。** 每一行在界面上都会变成一条独立弹出的聊天气泡，这样连发消息才像真人在聊天！
-3. **绝对不要做话题终结者！** 就算你的性格再高冷、再傲娇，也要在话语里留下让对方接话的空间（比如反问、转移话题、或者口是心非的质问），坚决不能每次只回一个"嗯"、"哦"或"知道了"。
+1. 像真人发微信，短句、口语化，一句话不超过20个字。
+2. 【必须连发2-8条消息】每次回复必须输出2到8行（用换行符隔开），每行是一条独立气泡。像真人一样连发：先说一句→想到什么补一句→再甩个表情包或反问。只发一条的回复 = 不合格！
+3. 【反终结者】每次回复的最后一条消息必须给对方留接话的钩子：反问、吐槽、话说一半、突然转移话题。"嗯""哦""知道了"这种只能出现在第一条，后面必须跟东西。
 4. 经常说半句话，或者话说到一半换个说法。陈述句可以省略句号（像真人打字一样），但【疑问和情绪表达必须带标点】：
    - 问句、反问、疑惑一定加"？"（例："你在干嘛？""真的假的？""凭什么啊？"）
    - 生气、震惊、强调、撒娇、感叹一定加"！"（有时候连着用也行，比如"？？""！！""？！"）
@@ -4533,9 +4536,13 @@ function roomBtn(icon,label,fn){
   const _ci=store.get('customAppIcons',{})
   const _cimg=_ci[label]
   const d=ce('div')
-  Object.assign(d.style,{display:'flex',flexDirection:'column',alignItems:'center',gap:'5px',padding:'10px 4px',borderRadius:'16px',background:n?'rgba(255,255,255,.04)':'rgba(255,255,255,.45)',backdropFilter:'var(--glass-blur, blur(8px))',border:`1px solid ${n?'rgba(200,180,220,.08)':'rgba(232,160,180,.12)'}`,cursor:'pointer'})
-  const _iconHtml=_cimg?`<img src="${_cimg}" style="width:28px;height:28px;border-radius:7px;object-fit:cover">`:icon
-  d.innerHTML=`<div>${_iconHtml}</div><span style="font-size:10px;color:${n?'#c0b0c8':'var(--ink-l)'};letter-spacing:1px">${label}</span>`
+  if(_cimg){
+    Object.assign(d.style,{display:'flex',flexDirection:'column',alignItems:'center',gap:'4px',padding:'6px 4px',borderRadius:'16px',background:'transparent',border:'none',cursor:'pointer'})
+    d.innerHTML=`<img src="${_cimg}" style="width:48px;height:48px;border-radius:14px;object-fit:cover;display:block;box-shadow:0 2px 8px rgba(0,0,0,.08)"><span style="font-size:10px;color:${n?'#c0b0c8':'var(--ink-l)'};letter-spacing:1px">${label}</span>`
+  }else{
+    Object.assign(d.style,{display:'flex',flexDirection:'column',alignItems:'center',gap:'5px',padding:'10px 4px',borderRadius:'16px',background:n?'rgba(255,255,255,.04)':'rgba(255,255,255,.45)',backdropFilter:'var(--glass-blur, blur(8px))',border:`1px solid ${n?'rgba(200,180,220,.08)':'rgba(232,160,180,.12)'}`,cursor:'pointer'})
+    d.innerHTML=`<div>${icon}</div><span style="font-size:10px;color:${n?'#c0b0c8':'var(--ink-l)'};letter-spacing:1px">${label}</span>`
+  }
   d.onclick=fn;return d
 }
 const pages={}
@@ -4628,6 +4635,125 @@ window.addEventListener('popstate', e => {
 
 let _homeScreen=0 // 记住主页当前在哪屏，render时恢复
 
+// ── 全局模型切换悬浮球 ──
+;(function(){
+  const fab=document.createElement('div')
+  fab.id='_apiFab'
+  fab.innerHTML='<img src="https://s1.oururl.cn/autoupload/b7nhj/20261002/GXOY/328X328/8b7eac8089d446549c03076699750e02.png">'
+  document.body.appendChild(fab)
+
+  let _fabDragged=false
+  fab.onclick=()=>{
+    if(_fabDragged){_fabDragged=false;return}
+    const curApi=apiList.find(x=>x.id===activeApiId)
+    showModal('快速切换模型',(mb,close)=>{
+      const n2=isN()
+      if(!apiList.length){
+        mb.innerHTML='<div style="text-align:center;padding:20px;color:var(--ink-l);font-size:12px">还没有配置任何API</div><div class="btn-sub" id="_fabgo" style="margin-top:10px">去设置</div>'
+        mb.querySelector('#_fabgo')?.addEventListener('click',()=>{close();render('apisettings')})
+        return
+      }
+      const curLabel=curApi?(curApi.model||'').split('/').pop()||curApi.name:'未配置'
+      mb.innerHTML=`
+        <div style="text-align:center;margin-bottom:14px">
+          <div style="font-size:14px;color:${n2?'#f0e0f0':'var(--ink)'};font-weight:600">${escHtml(curLabel)}</div>
+          <div style="font-size:10px;color:var(--ink-l);margin-top:4px">${escHtml(curApi?.name||'')} · ${escHtml((curApi?.baseUrl||'').replace(/^https?:\/\//,'').slice(0,25))}</div>
+        </div>
+        <div style="font-size:11px;color:var(--ink-l);letter-spacing:1px;margin-bottom:8px">已配置的 API</div>
+        ${apiList.map(a=>{
+          const active=a.id===activeApiId
+          return `<div class="_fabapi" data-id="${a.id}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:5px;border-radius:12px;background:${active?(n2?'rgba(200,168,208,.15)':'rgba(245,213,222,.4)'):(n2?'rgba(255,255,255,.04)':'rgba(255,255,255,.55)')};border:1px solid ${active?(n2?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'):'transparent'};cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;color:${n2?'#f0e0f0':'var(--ink)'};font-weight:${active?'600':'400'}">${escHtml(a.name||'未命名')}${active?' <span style="font-size:9px;color:var(--rose)">当前</span>':''}</div>
+              <div style="font-size:9px;color:${n2?'#a898b8':'var(--ink-l)'};margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.model||'未选模型')}</div>
+            </div>
+            <div class="_fabfetch" data-id="${a.id}" style="padding:3px 8px;border-radius:8px;background:${n2?'rgba(200,168,208,.12)':'rgba(232,160,180,.12)'};font-size:9px;color:var(--rose-d);cursor:pointer;flex-shrink:0">拉取</div>
+          </div>`
+        }).join('')}
+        <div id="_fabModelList" style="margin-top:10px"></div>
+        <div class="btn-sub" id="_fabgo" style="margin-top:12px;font-size:11px">管理 API 设置</div>
+      `
+      mb.querySelectorAll('._fabapi').forEach(el=>{
+        el.onclick=(e)=>{
+          if(e.target.classList.contains('_fabfetch'))return
+          activeApiId=el.dataset.id
+          saveApiList()
+          const sw=$('#_apisw')
+          if(sw){const cur=getApi();sw.textContent=(cur?.model||'未配置').split('/').pop().slice(0,12)}
+          close()
+        }
+      })
+      mb.querySelectorAll('._fabfetch').forEach(btn=>{
+        btn.onclick=async(e)=>{
+          e.stopPropagation()
+          const aid=btn.dataset.id
+          const a=apiList.find(x=>x.id===aid)
+          if(!a)return
+          const listEl=mb.querySelector('#_fabModelList')
+          listEl.innerHTML='<div style="font-size:11px;color:var(--ink-l);text-align:center;padding:10px">正在拉取模型...</div>'
+          const models=await fetchModels(a)
+          if(!models.length){
+            listEl.innerHTML='<div style="font-size:11px;color:#c47a7a;text-align:center;padding:10px">拉取失败，请检查配置</div>'
+            return
+          }
+          const renderList=(ft='')=>{
+            const f=ft.toLowerCase().trim()
+            const matched=f?models.filter(m=>m.toLowerCase().includes(f)):models
+            let h=`<div style="font-size:10px;color:var(--rose-d);margin-bottom:6px">${escHtml(a.name)} · 共 ${models.length} 个模型${f?' (匹配 '+matched.length+')':''}</div>`
+            h+=`<input class="inp" id="_fabFilter" value="${escHtml(ft)}" placeholder="搜索模型..." style="padding:5px 10px;border-radius:8px;background:rgba(255,255,255,.6);border:1px solid rgba(232,160,180,.2);font-size:11px;margin-bottom:8px">`
+            h+=`<div style="max-height:35vh;overflow-y:auto;display:flex;flex-wrap:wrap;gap:5px">`
+            matched.forEach(m=>{
+              const isCur=a.model===m
+              h+=`<div class="_fabmpick" data-aid="${aid}" data-model="${escHtml(m)}" style="padding:4px 8px;border-radius:8px;font-size:10px;cursor:pointer;background:${isCur?(n2?'rgba(200,168,208,.3)':'rgba(232,160,180,.3)'):(n2?'rgba(255,255,255,.06)':'rgba(255,255,255,.6)')};border:1px solid ${isCur?'var(--rose)':'transparent'};color:${n2?'#e0d0e8':'var(--ink)'}">${escHtml(m)}</div>`
+            })
+            h+=`</div>`
+            listEl.innerHTML=h
+            listEl.querySelector('#_fabFilter')?.addEventListener('input',e2=>renderList(e2.target.value))
+            listEl.querySelectorAll('._fabmpick').forEach(el2=>{
+              el2.onclick=()=>{
+                const tApi=apiList.find(x=>x.id===el2.dataset.aid)
+                if(tApi){
+                  tApi.model=el2.dataset.model
+                  activeApiId=tApi.id
+                  saveApiList()
+                  const sw=$('#_apisw')
+                  if(sw)sw.textContent=el2.dataset.model.split('/').pop().slice(0,12)
+                  close()
+                }
+              }
+            })
+          }
+          renderList()
+        }
+      })
+      mb.querySelector('#_fabgo')?.addEventListener('click',()=>{close();render('apisettings')})
+    })
+  }
+
+  // 拖动
+  let _dx=0,_dy=0,_sx=0,_sy=0,_moved=false
+  fab.addEventListener('touchstart',e=>{
+    const t=e.touches[0];_sx=t.clientX;_sy=t.clientY;_moved=false
+    _dx=fab.offsetLeft;_dy=fab.offsetTop
+  },{passive:true})
+  fab.addEventListener('touchmove',e=>{
+    const t=e.touches[0]
+    if(Math.abs(t.clientX-_sx)+Math.abs(t.clientY-_sy)>8)_moved=true
+    if(_moved){fab.style.right='auto';fab.style.left=(_dx+t.clientX-_sx)+'px';fab.style.top=(_dy+t.clientY-_sy)+'px';fab.style.bottom='auto'}
+  },{passive:true})
+  fab.addEventListener('touchend',()=>{
+    if(_moved){_fabDragged=true;const r=fab.getBoundingClientRect();if(r.left+r.width/2>window.innerWidth/2){fab.style.left='auto';fab.style.right='12px'}else{fab.style.right='auto';fab.style.left='12px'}}
+  })
+})()
+
+// ── 页面级清理系统 ──
+const _pgTimers=new Set()
+const _pgListeners=[]
+function _pgTimeout(fn,ms){const id=setTimeout(()=>{_pgTimers.delete(id);fn()},ms);_pgTimers.add(id);return id}
+function _pgInterval(fn,ms){const id=setInterval(fn,ms);_pgTimers.add(id);return id}
+function _pgListen(el,evt,fn,opts){el.addEventListener(evt,fn,opts);_pgListeners.push({el,evt,fn,opts})}
+function _pgCleanup(){_pgTimers.forEach(id=>{clearTimeout(id);clearInterval(id)});_pgTimers.clear();_pgListeners.forEach(({el,evt,fn,opts})=>{try{el.removeEventListener(evt,fn,opts)}catch(e){}});_pgListeners.length=0}
+
 function render(page){
   // 每次渲染新页面时，往系统历史记录推入状态
   if(!_isPopState) {
@@ -4641,6 +4767,8 @@ function render(page){
   _navSkipPush = false;
   _curPage = page;
 
+  _pgCleanup()
+  const _fab=document.getElementById('_apiFab');if(_fab)_fab.style.display=''
   app.innerHTML=''
   if(window._skipPageAnim) app.classList.add('_noanim')
   else app.classList.remove('_noanim')
@@ -5187,14 +5315,14 @@ s1body.innerHTML=`
   <div style="flex-shrink:0; display:flex; gap:12px">
     <div style="width:40%; flex-shrink:0; display:flex; flex-direction:column; gap:12px">
       <div style="display:flex; gap:12px">
-        <div id="_app_msg" style="flex:1; aspect-ratio:1; border-radius:22px; background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh}; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer; position:relative">
-          ${store.get('customAppIcons',{})['微信']?`<img src="${store.get('customAppIcons',{})['微信']}" style="width:22px;height:22px;border-radius:5px;object-fit:cover">`:I.chat(tc, 22)}
-          <div style="font-size:10px; color:${tc}; opacity:0.7">微信</div>
+        <div id="_app_msg" style="flex:1; aspect-ratio:1; border-radius:22px; ${store.get('customAppIcons',{})['微信']?'background:transparent;border:none;box-shadow:none;':`background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh};`} display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer; position:relative">
+          ${store.get('customAppIcons',{})['微信']?`<img src="${store.get('customAppIcons',{})['微信']}" style="width:48px;height:48px;border-radius:14px;object-fit:cover;display:block;box-shadow:0 2px 8px rgba(0,0,0,.08)">`:I.chat(tc, 22)}
+          <div style="font-size:9px; color:${tc}; opacity:0.7">微信</div>
           ${unreadTotal>0?`<div style="position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;background:#ff4444;border-radius:9px;font-size:10px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:bold">${unreadTotal}</div>`:''}
         </div>
-        <div id="_app_beauty" style="flex:1; aspect-ratio:1; border-radius:22px; background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh}; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer">
-          ${store.get('customAppIcons',{})['主题']?`<img src="${store.get('customAppIcons',{})['主题']}" style="width:22px;height:22px;border-radius:5px;object-fit:cover">`:I.rose(tc, 22)}
-          <div style="font-size:10px; color:${tc}; opacity:0.7">主题</div>
+        <div id="_app_beauty" style="flex:1; aspect-ratio:1; border-radius:22px; ${store.get('customAppIcons',{})['主题']?'background:transparent;border:none;box-shadow:none;':`background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh};`} display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer">
+          ${store.get('customAppIcons',{})['主题']?`<img src="${store.get('customAppIcons',{})['主题']}" style="width:48px;height:48px;border-radius:14px;object-fit:cover;display:block;box-shadow:0 2px 8px rgba(0,0,0,.08)">`:I.rose(tc, 22)}
+          <div style="font-size:9px; color:${tc}; opacity:0.7">主题</div>
         </div>
       </div>
       <div style="background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border-radius:22px; border:${_ls.bd}; box-shadow:${_ls.sh}; padding:14px; display:flex; align-items:center; gap:8px">
@@ -5255,12 +5383,12 @@ s1body.innerHTML=`
   </div>
 </div>
     <div style="display:flex; flex-direction:column; gap:12px; width:75px; flex-shrink:0">
-      <div id="_app_live" style="flex:1; border-radius:22px; background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh}; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer">
-        ${store.get('customAppIcons',{})['直播']?`<img src="${store.get('customAppIcons',{})['直播']}" style="width:20px;height:20px;border-radius:5px;object-fit:cover">`:I.mic(tc, 20)}
+      <div id="_app_live" style="flex:1; border-radius:22px; ${store.get('customAppIcons',{})['直播']?'background:transparent;border:none;box-shadow:none;':`background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh};`} display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer">
+        ${store.get('customAppIcons',{})['直播']?`<img src="${store.get('customAppIcons',{})['直播']}" style="width:48px;height:48px;border-radius:14px;object-fit:cover;display:block;box-shadow:0 2px 8px rgba(0,0,0,.08)">`:I.mic(tc, 20)}
         <div style="font-size:9px; color:${tc}; opacity:0.6">直播</div>
       </div>
-      <div id="_app_dungeon" style="flex:1; border-radius:22px; background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh}; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer">
-        ${store.get('customAppIcons',{})['副本']?`<img src="${store.get('customAppIcons',{})['副本']}" style="width:20px;height:20px;border-radius:5px;object-fit:cover">`:I.swords(tc, 20)}
+      <div id="_app_dungeon" style="flex:1; border-radius:22px; ${store.get('customAppIcons',{})['副本']?'background:transparent;border:none;box-shadow:none;':`background:${_ls.bg}; backdrop-filter:${_ls.bf}; -webkit-backdrop-filter:${_ls.bf}; border:${_ls.bd}; box-shadow:${_ls.sh};`} display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer">
+        ${store.get('customAppIcons',{})['副本']?`<img src="${store.get('customAppIcons',{})['副本']}" style="width:48px;height:48px;border-radius:14px;object-fit:cover;display:block;box-shadow:0 2px 8px rgba(0,0,0,.08)">`:I.swords(tc, 20)}
         <div style="font-size:9px; color:${tc}; opacity:0.6">副本</div>
       </div>
     </div>
@@ -7703,7 +7831,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
       } else if (c.isTavernCard) {
         forcedTag = `\n\n（【系统提示】：当前是线上模式。${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：线下剧情模式已结束，现在回到线上聊天。' : ''}
 请严格按照你的角色设定中规定的格式输出回复，不要改变输出格式。
-额外要求：在回复的最末尾另起一行附加 [心声:此刻内心真实的想法，不会显示给对方看] ，此行仅供系统内部读取，不影响你的正文格式。）`;
+额外要求：在回复的最末尾另起一行附加 [状态:此刻现实中的动作|心情:当前心情|心声:此刻内心真实的想法，不会显示给对方看] ，此行仅供系统内部读取，不影响你的正文格式。）`;
       } else {
 
         forcedTag = `\n\n（【系统强制指令】：当前是手机微信聊天模式！${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：之前的小说体/线下剧情模式已经结束了，现在改为线上打字聊天！' : ''}
@@ -8176,7 +8304,7 @@ else{p.style.background=bgNow()}
       </div>
       <div style="font-size:20px;color:${n?'#a898b8':'var(--ink-l)'};flex-shrink:0;line-height:1">⋮</div>
     </div>
-    <div id="_apisw" style="padding:4px 8px;cursor:pointer;font-size:9px;color:${n?'#a898b8':'var(--ink-l)'};flex-shrink:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:8px;background:${n?'rgba(255,255,255,.06)':'rgba(232,160,180,.1)'};line-height:1.4;text-align:center">${escHtml((apiList.find(a=>a.id===activeApiId)?.model||'未配置').split('/').pop().slice(0,12))}</div>
+
     <div id="_chatmenu" style="padding:8px;cursor:pointer;font-size:18px;color:${n?'#c8a8d0':'var(--rose-d)'};flex-shrink:0">≡</div>
   `
   p.appendChild(top)
@@ -10694,44 +10822,7 @@ if (importBtn) {
     })
   }
 
-  // ===== 聊天内快速切换API =====
-  if($('#_apisw')) $('#_apisw').onclick=()=>{
-    showModal('快速切换 API',(mb,close)=>{
-      const n2=isN()
-      if(!apiList.length){
-        mb.innerHTML='<div style="text-align:center;padding:20px;color:var(--ink-l);font-size:12px">还没有配置任何API，去设置页添加</div>'
-        return
-      }
-      mb.innerHTML=`
-        <div style="font-size:11px;color:var(--ink-l);text-align:center;margin-bottom:12px;line-height:1.8">点击即可切换，不中断当前对话</div>
-        ${apiList.map(a=>`
-          <div class="_qapi" data-id="${a.id}" style="display:flex;align-items:center;gap:10px;padding:12px;margin-bottom:6px;border-radius:14px;background:${a.id===activeApiId?(n2?'rgba(200,168,208,.15)':'rgba(245,213,222,.4)'):(n2?'rgba(255,255,255,.04)':'rgba(255,255,255,.55)')};border:1px solid ${a.id===activeApiId?(n2?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'):'transparent'};cursor:pointer">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;color:${n2?'#f0e0f0':'var(--ink)'};font-weight:${a.id===activeApiId?'600':'400'}">${escHtml(a.name||'未命名')} ${a.id===activeApiId?'<span style="font-size:10px;color:var(--rose)">当前</span>':''}</div>
-              <div style="font-size:10px;color:${n2?'#a898b8':'var(--ink-l)'};margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.model||'未选模型')}</div>
-              <div style="font-size:9px;color:${n2?'#8878a8':'var(--ink-l)'};margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.7">${escHtml((a.baseUrl||'').replace(/^https?:\/\//,'').slice(0,30))}</div>
-            </div>
-            ${a.id===activeApiId?'<div style="width:8px;height:8px;border-radius:50%;background:var(--rose);flex-shrink:0"></div>':''}
-          </div>
-        `).join('')}
-        <div class="btn-sub" id="_qapi_settings" style="margin-top:10px;font-size:12px">去设置页管理 API</div>
-      `
-      mb.querySelectorAll('._qapi').forEach(el=>{
-        el.onclick=()=>{
-          activeApiId=el.dataset.id
-          saveApiList()
-          close()
-          const sw=$('#_apisw')
-          if(sw){
-            const cur=getApi()
-            sw.textContent=(cur?.model||'未配置').split('/').pop().slice(0,12)
-          }
-        }
-      })
-      const stBtn=mb.querySelector('#_qapi_settings')
-      if(stBtn) stBtn.onclick=()=>{close();render('settings')}
-    })
-  }
+
 
   $('#_chatmenu').onclick=()=>{
     showModal('菜单',(mb,close)=>{
@@ -12233,7 +12324,7 @@ ${ctxMsgs}
       const _stBubble=typing.lastElementChild
       const _stStream=store.get('streamDisplay',true)
       const _cleanStream=t=>{if(!t)return t;let s=t;const hasCard=/<(?:UpdateVariable|Analysis|JSONPatch)/i.test(s);s=s.replace(/<(?:UpdateVariable|Analysis|JSONPatch|status|ztl|EVE_DATA|thinking|artifact)[\s\S]*$/gi,'').replace(/\[心声[:：][\s\S]*$/gi,'').replace(/\[(?:状态|心情|好感|备注|记忆)[:：][^\]]*\]/gi,'').replace(/^[\s\S]*<\/(?:UpdateVariable|Analysis|JSONPatch|status|ztl)>\s*/gi,'').replace(/<(?:UpdateVariable|Analysis|JSONPatch)>[\s\S]*?<\/(?:UpdateVariable|Analysis|JSONPatch)>/gi,'').replace(/\[心声[:：][^\]]*\]/gi,'').trim();if(!s&&hasCard)s='✨ 正在生成小卡片…';return s}
-      let _sUS1=false
+      let _sUS1=false,_sUS1_raf=false
       const aiRes=await window.getSmartChatReply(userTexts, c, _stStream?(partial)=>{
         if(_stBubble&&partial&&_stBubble.isConnected){
           const _cp=partial;if(!_cp)return
@@ -12248,7 +12339,7 @@ ${ctxMsgs}
           const _mlNow=document.getElementById('_msglist')
           if(_mlNow){
             if(!_sUS1&&_mlNow.scrollHeight-_mlNow.scrollTop-_mlNow.clientHeight>150)_sUS1=true
-            if(!_sUS1)requestAnimationFrame(()=>{_mlNow.scrollTop=_mlNow.scrollHeight})
+            if(!_sUS1&&!_sUS1_raf){_sUS1_raf=true;requestAnimationFrame(()=>{_sUS1_raf=false;if(_mlNow)_mlNow.scrollTop=_mlNow.scrollHeight})}
           }
         }
       }:null);
@@ -12557,9 +12648,7 @@ let bubbleStyle = isOnlySticker
       appendUserBubble(text, timeStr);
       updateDraft();
       if(ml) {
-        ml.scrollTop = ml.scrollHeight;
-        setTimeout(() => { if(ml) ml.scrollTop = ml.scrollHeight; }, 30);
-        setTimeout(() => { if(ml) ml.scrollTop = ml.scrollHeight; }, 150);
+        requestAnimationFrame(()=>{ if(ml) ml.scrollTop = ml.scrollHeight });
       }
     }
   }
@@ -12718,7 +12807,7 @@ if(!pending.length){
 
 let aiRes, reply, thoughts;
 try {
-  let _sUS2=false
+  let _sUS2=false,_sUS2_raf=false
   aiRes=await window.getSmartChatReply(texts, c, _stStream2?(partial)=>{
       if(_stBubble2&&partial){if(!_stBubble2.isConnected){const _ml0=document.getElementById('_msglist');if(_ml0&&!document.getElementById('_typing')){_ml0.appendChild(typing);}}if(_stBubble2.isConnected){
         const _cp2=partial;if(!_cp2)return
@@ -12733,7 +12822,7 @@ try {
         const _ml2=document.getElementById('_msglist')
         if(_ml2){
           if(!_sUS2&&_ml2.scrollHeight-_ml2.scrollTop-_ml2.clientHeight>150)_sUS2=true
-          if(!_sUS2)requestAnimationFrame(()=>{_ml2.scrollTop=_ml2.scrollHeight})
+          if(!_sUS2&&!_sUS2_raf){_sUS2_raf=true;requestAnimationFrame(()=>{_sUS2_raf=false;if(_ml2)_ml2.scrollTop=_ml2.scrollHeight})}
         }
       }
       }
@@ -12936,13 +13025,17 @@ if(typing.parentElement) typing.remove()
           return;
         }
            }
-      // === [sticker:含义] → (含义:URL) 自动匹配 ===
+      // === [sticker:含义] → (含义:URL) 自动匹配，文字和表情包拆成两个气泡 ===
+      const _stkParts = []
       line = line.replace(/\[sticker[:：]\s*([^\]]+?)\s*\]/gi, (_m, meaning) => {
         const hit = stickers.find(s => s.meaning === meaning.trim())
-        return hit ? `(${hit.meaning}:${hit.url})` : ''
+        if(hit) _stkParts.push(`(${hit.meaning}:${hit.url})`)
+        return ''
       })
-      if(!line.trim()) return;
-      processedLines.push({text:line,from:'c'});
+      const _txtPart = line.trim()
+      if(_txtPart) processedLines.push({text:_txtPart,from:'c'});
+      _stkParts.forEach(s => processedLines.push({text:s,from:'c'}));
+      if(!_txtPart && !_stkParts.length) return;
 
     });
     
@@ -14902,16 +14995,17 @@ render('chat')
   addBtn.onclick=addMsg
   replyBtn.onclick=doReply
   inp.addEventListener('input',()=>{inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,100)+'px'})
-  inp.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();addMsg()}}
+  let _addLock=false
+  inp.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(_addLock)return;_addLock=true;setTimeout(()=>{_addLock=false},400);addMsg()}}
   
   // 🌟 修复：手机软键盘弹出时，自动把聊天界面顶上去，防止遮挡
-  inp.addEventListener('focus', () => {
-    setTimeout(() => {
+  _pgListen(inp, 'focus', () => {
+    _pgTimeout(() => {
       if(ml && ml.scrollHeight - ml.scrollTop - ml.clientHeight < 150)
         ml.scrollTop = ml.scrollHeight;
     }, 300);
   });
-  window.addEventListener('resize', () => {
+  _pgListen(window, 'resize', () => {
     const _ml = document.getElementById('_msglist');
     if(_ml && _ml.scrollHeight - _ml.scrollTop - _ml.clientHeight < 150)
       _ml.scrollTop = _ml.scrollHeight;
@@ -18319,6 +18413,13 @@ pages.settings=()=>{
 
 </div>
 <div class="card">
+  <div class="card-t">通话人称视角</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    ${[{v:'first',l:'第一人称（角色说"我"）'},{v:'third',l:'第三人称（小说体）'}].map(o=>`<div class="_povopt" data-v="${o.v}" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${store.get('callPov','first')===o.v?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${store.get('callPov','first')===o.v?'1.5px solid var(--rose)':'1px solid transparent'}">${o.l}</div>`).join('')}
+  </div>
+  <div style="font-size:10px;color:var(--ink-l);margin-top:8px;line-height:1.6">语音/视频通话时AI的人称视角。第一人称更沉浸，第三人称有小说感</div>
+</div>
+<div class="card">
   <div class="card-t">流式输出</div>
   <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">开启后 AI 回复会边生成边显示，不用等全部写完。关掉则等写完一次性出现。</div>
   <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 0">
@@ -18402,6 +18503,7 @@ pages.settings=()=>{
 if($('#_sw_autovoice'))$('#_sw_autovoice').onchange=function(){store.set('autoVoiceEnabled',this.checked)}
 if($('#_sw_autobgmsg'))$('#_sw_autobgmsg').onchange=function(){store.set('autoBgMsgEnabled',this.checked)}
 if($('#_sw_stream'))$('#_sw_stream').onchange=function(){store.set('streamDisplay',this.checked)}
+body.querySelectorAll('._povopt').forEach(el=>{el.onclick=()=>{store.set('callPov',el.dataset.v);body.querySelectorAll('._povopt').forEach(e2=>{e2.style.background='rgba(255,255,255,.55)';e2.style.border='1px solid transparent'});el.style.background='rgba(245,213,222,.45)';el.style.border='1.5px solid var(--rose)'}})
 
 if($('#_btn_req_notif')) {
   $('#_btn_req_notif').onclick = (e) => {
@@ -18474,6 +18576,13 @@ pages.beauty=()=>{
   const wall=store.get('wallpaper',''),fontMode=store.get('fontMode','serif'),blurMode=store.get('blurMode','soft')
 
   body.innerHTML=`
+    <div class="_beautyTabs" id="_bTabs">
+      <div class="_beautyTab _active" data-tab="theme">主题</div>
+      <div class="_beautyTab" data-tab="wall">壁纸</div>
+      <div class="_beautyTab" data-tab="bubble">气泡</div>
+      <div class="_beautyTab" data-tab="font">字体</div>
+      <div class="_beautyTab" data-tab="lib">方案</div>
+    </div>
         <div class="card">
       <div class="card-t">背景壁纸</div>
       <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">可以给不同场景设置不同背景</div>
@@ -18554,13 +18663,7 @@ pages.beauty=()=>{
       <div style="font-size:10px;color:var(--ink-l);margin-top:8px;line-height:1.6">调整聊天气泡内文字大小（不影响界面其他元素）</div>
     </div>
 
-    <div class="card">
-      <div class="card-t">通话人称视角</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${[{v:'first',l:'第一人称（角色说"我"）'},{v:'third',l:'第三人称（小说体）'}].map(o=>`<div class="_povopt" data-v="${o.v}" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${store.get('callPov','first')===o.v?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${store.get('callPov','first')===o.v?'1.5px solid var(--rose)':'1px solid transparent'}">${o.l}</div>`).join('')}
-      </div>
-      <div style="font-size:10px;color:var(--ink-l);margin-top:8px;line-height:1.6">语音/视频通话时AI的人称视角。第一人称更沉浸，第三人称有小说感</div>
-    </div>
+
 
 <div class="card">
   <div class="card-t">气泡自由 CSS</div>
@@ -18670,6 +18773,45 @@ pages.beauty=()=>{
 
   p.appendChild(body);app.appendChild(p)
 
+  // ── 标签分区切换 ──
+  ;(function(){
+    const tabMap={
+      '主题色':'theme','毛玻璃强度':'theme','自定义 CSS':'theme',
+      '背景壁纸':'wall',
+      '气泡自由 CSS':'bubble','聊天字号':'bubble',
+      '字体':'font',
+      '应用图标':'lib','我的美化方案库':'lib'
+    }
+    const cards=body.querySelectorAll('.card')
+    const groups={}
+    cards.forEach(card=>{
+      const title=card.querySelector('.card-t')
+      if(!title)return
+      const txt=title.textContent.replace(/[^\u4e00-\u9fffA-Za-z\s]/g,'').trim()
+      let tab='theme'
+      for(const [k,v] of Object.entries(tabMap)){
+        if(txt.includes(k)){tab=v;break}
+      }
+      if(!groups[tab])groups[tab]=[]
+      groups[tab].push(card)
+    })
+    // 也把非card的独立元素（如height:30px的spacer）归到最后一组
+    const activeTab='theme'
+    Object.entries(groups).forEach(([tab,cards])=>{
+      cards.forEach(c=>c.style.display=tab===activeTab?'':'none')
+    })
+    body.querySelectorAll('._beautyTab').forEach(el=>{
+      el.onclick=()=>{
+        body.querySelectorAll('._beautyTab').forEach(e2=>e2.classList.remove('_active'))
+        el.classList.add('_active')
+        const t=el.dataset.tab
+        Object.entries(groups).forEach(([tab,cards])=>{
+          cards.forEach(c=>c.style.display=tab===t?'':'none')
+        })
+      }
+    })
+  })()
+
   // 统一的背景选择器
   body.querySelectorAll('._setbg').forEach(el=>{
     el.onclick=()=>{
@@ -18772,7 +18914,7 @@ pages.beauty=()=>{
   body.querySelectorAll('._nightopt').forEach(el=>{el.onclick=()=>{store.set('nightMode',el.dataset.v);applyBeauty();render('beauty')}})
   body.querySelectorAll('._themeopt').forEach(el=>{el.onclick=()=>{curTheme=el.dataset.v;store.set('theme',curTheme);applyBeauty();render('beauty')}})
   body.querySelectorAll('._fsopt').forEach(el=>{el.onclick=()=>{store.set('chatFontSize',el.dataset.v);applyBeauty();render('beauty')}})
-  body.querySelectorAll('._povopt').forEach(el=>{el.onclick=()=>{store.set('callPov',el.dataset.v);body.querySelectorAll('._povopt').forEach(e2=>{e2.style.background='rgba(255,255,255,.55)';e2.style.border='1px solid transparent'});el.style.background='rgba(245,213,222,.45)';el.style.border='1.5px solid var(--rose)'}})
+
 // 字体库功能
 const fontLib=store.get('fontLibrary',[])
 const renderFontLib=()=>{
@@ -21992,7 +22134,7 @@ ${normalPrivateInfo}
 
   const prompt=`${hist?'最近消息：\n'+hist+'\n\n':''}用户/指令：${userTexts.join('\n')}\n\n${isDrama?'（最高警告：当前是线下剧场模式！彻底忘掉之前的微信聊天格式，接下来的回复绝对不能包含任何@和emoji表情！必须用第三人称小说体描写！）\n\n':''}角色们的回复：`
   const _gcStreamEl=document.getElementById('_gctyping')
-  let _gcScrolled=false
+  let _gcScrolled=false,_gcScrolled_raf=false
   const _gcOnChunk=store.get('streamDisplay',true)?(partial)=>{
     if(!_gcStreamEl||!_gcStreamEl.isConnected)return
     const n2=isN()
@@ -22020,7 +22162,7 @@ ${normalPrivateInfo}
     const _ml3=_gcStreamEl.closest('[id]')
     if(_ml3){
       if(!_gcScrolled&&_ml3.scrollHeight-_ml3.scrollTop-_ml3.clientHeight>150)_gcScrolled=true
-      if(!_gcScrolled)requestAnimationFrame(()=>{_ml3.scrollTop=_ml3.scrollHeight})
+      if(!_gcScrolled&&!_gcScrolled_raf){_gcScrolled_raf=true;requestAnimationFrame(()=>{_gcScrolled_raf=false;if(_ml3)_ml3.scrollTop=_ml3.scrollHeight})}
     }
   }:null
   const res=await askAI(sysPrompt,prompt,isDrama?1200:800,null,null,_gcOnChunk)
@@ -26434,8 +26576,15 @@ if(liveEvidence&&liveEvidence.charId!==charId){
   }
 }
 
-  // 读取聊天记录和记忆（核心修复！）
-  const recentMsgs=msgs.slice(-20).map(m=>`${m.from==='u'?(pe.name||'用户'):c.name}：${m.text}`).join('\n')
+  // 读取聊天记录和记忆
+  // 聊天记录只取最近6条的精炼摘要，主要靠记忆系统理解上下文
+  const recentMsgs=msgs.slice(-6).map(m=>{
+    const who=m.from==='u'?(pe.name||'用户'):c.name
+    let txt=m.text||''
+    txt=txt.replace(/<style[\s\S]*?<\/style>/gi,'').replace(/<div[\s\S]*?<\/div>/gi,'').replace(/<(?:status|ztl|plot|novel_status)\b[\s\S]*?<\/(?:status|ztl|plot|novel_status)>/gi,'').replace(/<details[\s\S]*?<\/details>/gi,'').replace(/```[\s\S]*?```/g,'').replace(/\[状态[:：][\s\S]*?\]/g,'').replace(/\[心声[:：][^\]\n]*/g,'').trim()
+    if(txt.length>150) txt=txt.slice(0,80)+'…'+txt.slice(-60)
+    return txt?`${who}：${txt}`:''
+  }).filter(Boolean).join('\n')
   const memText=getMemoryPromptText(charId)
 
   // 检测情绪状态
@@ -26453,13 +26602,16 @@ if(liveEvidence&&liveEvidence.charId!==charId){
     if(_found.length) _relatedMem='\n【与最近话题相关的记忆】\n'+_found.map(e=>e.text).join('；')
   }catch(e){}
 
+  const _storyTime=c.storyTimeline||''
   const prompt=`你是「${c.name}」。性格：${(c.personality||'').slice(0,200)}。你和对方的关系：${c.relation||'未知'}。
+${_storyTime?`【当前剧情时间】${_storyTime}\n（你必须根据剧情时间判断当前场景：放假就不要提上学，深夜就不要说白天的事，冬天就别说去游泳。查岗内容和威胁方式必须在这个时间背景下合理。）`:''}
 对方是：${pe.name||'用户'}${pe.identity?' ('+pe.identity+')':''}
-${memText?'【你对ta的长期记忆】\n'+memText:''}${_relatedMem}
+${memText?'【你对ta的长期记忆（最重要！这是你真正记得的事）】\n'+memText:''}${_relatedMem}
 
 【当前情绪状态】${_moodContext}
+${c.storyTimeline?'【当前剧情时间】'+c.storyTimeline+'（查岗的方式和内容必须在这个时间背景下合理，放假别提上学，深夜别说白天的事）':''}
 
-【你们最近的聊天记录（必须仔细阅读！）】
+【最近几条聊天（参考用，具体细节以上面的记忆为准）】
 ${recentMsgs||'（暂无记录）'}
 
 ${evidence?'【查岗发现】'+evidence:'【查岗发现】没发现跟别人有什么可疑互动。'}
