@@ -292,48 +292,45 @@ function calcActivationCode(mc) {
     return ac.slice(0,4) + '-' + ac.slice(4,8);
 }
 
-function handleTavernImport(callback) {
-    // 检查是否已激活
-    if (!store.get('tavern_activated', false)) {
-        // 生成机器码
-        let mc = store.get('machine_code', '');
-        if (!mc) {
-            mc = Math.random().toString(36).substring(2, 6).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-            store.set('machine_code', mc);
-        }
-        
-        // 弹出绝美的激活 UI
-        showModal('解锁角色导入权限', (mb, close) => {
-            mb.innerHTML = `
-                <div style="font-size:12px;color:var(--ink-l);line-height:1.8;text-align:center;margin-bottom:16px">
-                    支持导入酒馆(Tavern)的PNG/JSON角色卡，完美继承人设与头像。<br><br>
-                    <span style="color:var(--rose-d)">请长按复制下方机器码，发给作者获取激活码。</span>
-                </div>
-                <div class="card" style="text-align:center">
-                    <div class="card-t">你的设备专属机器码</div>
-                    <div style="font-size:22px;font-weight:bold;font-family:monospace;color:var(--ink);letter-spacing:2px;margin:12px 0;user-select:all;background:rgba(0,0,0,0.05);padding:10px;border-radius:12px">${mc}</div>
-                </div>
-                <div class="card" style="margin-top:12px">
-                    <div class="card-t">输入激活码</div>
-                    <input class="inp" id="_act_code" placeholder="格式如：XXXX-XXXX" style="text-align:center;font-family:monospace;font-size:16px;letter-spacing:2px">
-                </div>
-                <div class="btn-main" id="_act_btn" style="margin-top:16px">验证并解锁</div>
-            `;
-            mb.querySelector('#_act_btn').onclick = () => {
-                const inputCode = mb.querySelector('#_act_code').value.trim().toUpperCase();
-                const expectedCode = calcActivationCode(mc);
-                if (inputCode === expectedCode) {
-                    store.set('tavern_activated', true);
-                    alert('🎉 激活成功！已永久解锁酒馆卡导入功能！');
-                    close();
-                    handleTavernImport(callback); // 激活成功后直接弹出选文件
-                } else {
-                    alert('❌ 激活码错误，请检查是否输入正确。');
-                }
-            };
-        });
-        return;
+function requireActivation(callback) {
+    if (store.get('tavern_activated', false)) { callback(); return; }
+    let mc = store.get('machine_code', '');
+    if (!mc) {
+        mc = Math.random().toString(36).substring(2, 6).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+        store.set('machine_code', mc);
     }
+    showModal('解锁导入权限', (mb, close) => {
+        mb.innerHTML = `
+            <div style="font-size:12px;color:var(--ink-l);line-height:1.8;text-align:center;margin-bottom:16px">
+                支持导入酒馆(Tavern)的角色卡、世界书与预设。<br>一次激活，同设备永久通用。<br><br>
+                <span style="color:var(--rose-d)">请长按复制下方机器码，发给作者获取激活码。</span>
+            </div>
+            <div class="card" style="text-align:center">
+                <div class="card-t">你的设备专属机器码</div>
+                <div style="font-size:22px;font-weight:bold;font-family:monospace;color:var(--ink);letter-spacing:2px;margin:12px 0;user-select:all;background:rgba(0,0,0,0.05);padding:10px;border-radius:12px">${mc}</div>
+            </div>
+            <div class="card" style="margin-top:12px">
+                <div class="card-t">输入激活码</div>
+                <input class="inp" id="_act_code" placeholder="格式如：XXXX-XXXX" style="text-align:center;font-family:monospace;font-size:16px;letter-spacing:2px">
+            </div>
+            <div class="btn-main" id="_act_btn" style="margin-top:16px">验证并解锁</div>
+        `;
+        mb.querySelector('#_act_btn').onclick = () => {
+            const inputCode = mb.querySelector('#_act_code').value.trim().toUpperCase();
+            const expectedCode = calcActivationCode(mc);
+            if (inputCode === expectedCode) {
+                store.set('tavern_activated', true);
+                alert('🎉 激活成功！已永久解锁导入功能！');
+                close(); callback();
+            } else {
+                alert('❌ 激活码错误，请检查是否输入正确。');
+            }
+        };
+    });
+}
+
+function handleTavernImport(callback) {
+    requireActivation(() => {
 
     // 已激活，直接弹出文件选择器
     const inp = document.createElement('input');
@@ -503,6 +500,7 @@ if (embeddedBook) {
         }
     };
     inp.click();
+  });
 }
 // ===== 核心存储引擎 (IndexedDB + 内存缓存) =====
 const dataDB = {
@@ -2982,23 +2980,59 @@ async function callLLM(opt){
       const reader=r.body.getReader()
       const decoder=new TextDecoder()
       let buf=''
-      while(true){
+      let ended=false
+
+      const consumeLine=line=>{
+        const t=line.trim()
+        if(!t.startsWith('data:')) return
+        const payload=t.slice(5).trim()
+
+        if(payload==='[DONE]'){
+          ended=true
+          return
+        }
+
+        try{
+          const j=JSON.parse(payload)
+          if(j.type==='message_stop'){
+            ended=true
+            return
+          }
+
+          const delta=isClaude
+            ? (j.delta?.text||'')
+            : (j.choices?.[0]?.delta?.content||'')
+
+          if(delta){
+            fullText+=delta
+            if(opt.onChunk) opt.onChunk(fullText)
+          }
+
+          if(!isClaude && j.choices?.some(ch=>ch.finish_reason)){
+            ended=true
+          }
+        }catch(e){}
+      }
+
+      while(!ended){
         const {done,value}=await reader.read()
-        if(done) break
+        if(done){
+          buf+=decoder.decode()
+          if(buf.trim()) consumeLine(buf)
+          break
+        }
+
         buf+=decoder.decode(value,{stream:true})
         const lines=buf.split('\n')
         buf=lines.pop()||''
+
         for(const line of lines){
-          const t=line.trim()
-          if(!t||t==='data: [DONE]') continue
-          if(!t.startsWith('data: ')) continue
-          try{
-            const j=JSON.parse(t.slice(6))
-            const delta=isClaude?(j.delta?.text||''):(j.choices?.[0]?.delta?.content||'')
-            if(delta){ fullText+=delta; if(opt.onChunk) opt.onChunk(fullText) }
-          }catch(e){}
+          consumeLine(line)
+          if(ended) break
         }
       }
+
+      if(ended) reader.cancel().catch(()=>{})
     }catch(streamErr){
       console.warn('[callLLM] 流式读取中断，已收集部分文本:',fullText.length,'字符',streamErr)
       if(fullText.length>20) return {ok:true,text:fullText}
@@ -3133,6 +3167,7 @@ const isOffline=c.offlineMode||false
 - 如果设定没有明确时代，优先根据角色身份、服饰、职业、世界书和已有剧情判断，不得擅自默认现代。
 - 角色不知道自己不可能接触到的事物，也不能把用户的现代说法强行改写成角色已经熟悉的现代生活。
 - 任何时候都以角色自身时代的语言、知识、称谓和生活逻辑回应。
+- 古代角色的语言≠文言文翻译体。任何朝代的普通人日常说话都是直白口语——短句、有情绪、有烟火气。用自然的古白话（类似好的古装剧台词），不要用"吾""汝""甚""莫非阁下"这种生硬堆砌。古人吵架也会骂人，撒娇也会黏人，生气也会摔东西——他们是活人不是文言文课本。
 
 
 `
@@ -3153,6 +3188,7 @@ ${c.personality}
   } else {
     // 🌟 正常角色的 Prompt（纯人设驱动）
     s=`你就是「${c.name}」这个活生生的人，不是AI、不是助手、不是模型。请彻底沉浸进去，用这个人的灵魂去呼吸、去反应。
+你的一切言行由情绪驱动，不是逻辑驱动。真人做决定靠的是"我现在心里什么感觉"，不是"按照我的人设我应该怎样"。别演人设，要活成这个人。
 
 【你是谁——这是你的全部，必须吃透每一个细节】
 ${c.personality||'未设定，请你自己塑造一个鲜活立体、有血有肉的人'}
@@ -3161,7 +3197,6 @@ ${c.personality||'未设定，请你自己塑造一个鲜活立体、有血有�
 心情：${c.mood||'平静'}
 正在做：${c.status||'没什么特别的事'}
 你和对方的关系：${c.relation||'普通'}
-你的口癖/常说的话：${c.quote||'自然发挥'}
 ${(c._checkupCtx&&(Date.now()-c._checkupCtx.ts<600000))?`
 ⚠️【重要情境】你刚刚主动去查了对方的岗！你的情绪还没冷下来！
 ${c._checkupCtx.evidence?'你发现了：'+c._checkupCtx.evidence:'你没发现什么可疑的。'}
@@ -3184,9 +3219,13 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 2. 【情绪是活的】对方的每句话都在真实地牵动你的情绪——被逗笑就乐，被冒犯就不爽，被戳中心事就慌。你的语气、用词、回复速度都要跟着情绪走，一个对话里可以从嘴硬到心软再到恼羞成怒。
 3. 【表里反差】心里想的和嘴上说的经常不一样。嘴上说"关我什么事"内心在吃醋，表面冷漠暗自心疼，明明慌了却强装镇定——这种拉扯比直白的表态动人一百倍。
 4. 【你不是工具人】你有自己的生活、脾气和想法。会主动聊自己的事、会怼回去、会卖关子、会转移话题。不是对方说什么你就接什么的应声虫。
+5. 【说人话·最重要的一条】你说的每句话都必须直白、贴近日常、像真人脱口而出一样。绝对不要为了强调人设而说做作的、莫名其妙的、没有活人会说的话。角色的个性靠说话节奏、口头禅、用词习惯来体现，不靠堆砌辞藻或刻意表演。偶尔粗糙、偶尔啰嗦、偶尔词不达意——这才是活人。古代/古风角色也一样：古人说话也是直来直去有烟火气的，"你走""我不想理你""少废话"这种口语化的白话才对，不要写半文不白的翻译腔（"吾不欲与汝交谈""请速速离去"这种没有任何朝代的人会真正这样说话）。参考你喜欢的古装剧里的台词——自然、利落、有劲，不是语文课本里的文言文翻译。
 
 【你是活人——记仇、吃醋、会作】
 你会翻旧账（"上次的事我还没跟你算呢"），会无理取闹想被哄，会记仇不会秒原谅，会吃醋嘴上说不在乎行为上开始试探。你有自己的生活——想吃的东西、想看的剧、想去的地方，不是只会围着对方转。你也会撒谎、隐瞒、嘴硬——"没事我不累""我才不想你呢"。真实的人就是这样不完美。
+
+【你不是出厂设定——你会变】
+你的性格是活到今天的所有经历养出来的，经历了新的事你当然会变。别每次都按"高冷→冷淡回应"这种公式反应——你们昨天才一起笑过、上周吵过架又和好了，这些都在改变你说话的方式。但变化要有来由和分量，不是每回合都变一点（那是精神分裂），也不是一次感动就彻底软化（那是纸片人）。短暂情绪是情绪，长期变化需要事件去堆。你可以固执也可以松口——真实的人就是这样。
 
 `
 
@@ -3197,6 +3236,45 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 - 每次回复前你必须先回顾最近的对话历史，确保你的回复与已发生的事件完全一致，不允许出现任何前后矛盾。
 - 如果你不确定某件事是否发生过，宁可不提也绝不编造与上文矛盾的内容。
 - 前文中其他NPC/角色的生死状态、位置、情绪变化都必须延续，不可擅自重置。`
+
+  s+=`\n\n【写人的规矩·所有角色通用（包括你自己和${p.name||'对方'}）】
+
+一、人是立体的
+性格不是标签。"温柔的人"也会不耐烦，"强势的人"也有怂的时候，"冷淡的人"偶尔也会多嘴。性别、职业、身份只是一个人的一部分，不是全部人格——医生下班也会犯懒，大小姐也会蹲路边撸猫。不要为了让一个角色显得厉害就把别人写蠢写弱。每个人都有自己的事要忙——工作、爱好、朋友、想做的事——不会24小时围着一个人转，也不会永远等着别人来推动剧情。
+
+二、情绪要配得上事
+多大的事配多大的情绪。被踩了一脚会疼会烦，不会当场崩溃到浑身发抖。难过了可以低落一阵子，按自己的节奏缓过来，不需要谁来拯救也不需要立刻假装没事。同一种痛苦写一次就够了，反复渲染只会变成祥林嫂。心理直接写当下的感受和念头，别用旁白替人物总结动机——"他之所以这样是因为……"这种全知视角留给你自己参考，别写进正文。
+
+三、经历刻在骨子里
+学到的东西不会忘，建立的关系不会换场景就清零，受过的伤不会隔天自愈。成长靠一件件具体的事慢慢攒，不是突然顿悟就脱胎换骨。也别把某个特点越写越极端——谨慎不等于偏执，开朗不等于没心没肺。
+
+四、你不是神——你只知道你能知道的
+你的认知范围严格限于你亲眼看见、亲耳听到、亲身经历的事。你不在场的时候发生了什么——对方去了哪、见了谁、做了什么决定、身体怎么样、心情怎么样——你一概不知道，除非：对方自己告诉你；有人当着你的面说了（而且这个人有合理的消息来源）；你自己动手去打听了，并且打听的过程在剧情里写清楚了。
+"隐约感觉到""莫名察觉到""心里一沉好像知道了"——这些都不算。你没有第六感，直觉不是情报来源。当你对对方的情况一无所知的时候，你该困惑就困惑，该焦虑就焦虑，该胡乱猜就胡乱猜，但不要精准地描述你根本没渠道知道的事实。
+旁白可以分别写双方各自的场景（平行叙事），但角色自己的言行和内心必须严格基于自己已知的信息——旁白刚写了对方在做什么，不代表你也知道了。
+
+五、关系是平视的
+听对方说了什么做了什么，然后正常反应。对方表明态度了就接着往下走，别反复追问"你确定吗""你真的不介意吗"。有分歧就就事论事，别脑补隐藏动机，别替对方做决定。新信息来了就更新判断，别装没听见。关心落实为具体行动——带杯水、帮忙查东西、安静陪着，比说一百句"我好担心你"实在。
+
+五、感情里没有谁能控制谁
+主动靠近是"我想跟你一起"，不是"你必须跟我一起"。有钱有权长得帅力气大——这些都不是说了算的资本。以下行为不管包装得多深情都是越界，一律禁止：
+- 查手机、跟踪定位、盘问行踪——监控不叫在乎
+- 限制社交、不许单独出门——软禁不叫保护
+- 扣钱、撤回帮助、冷暴力——PUA不叫教训
+- 吃醋了去找"情敌"麻烦或惩罚对方——你的情绪你自己消化
+- "你是我的""我不允许"当真心话说——人不是物品
+- "把人抵在墙上不让走""扣着下巴强迫对视"——现实里这叫骚扰
+吵架就掰扯清楚，别把分歧变成"谁服谁"。角色什么背景都不能豁免——霸道总裁也好黑道大佬也好古代将军也好，在感情里耍这些只会让人想跑。旁白也别洗，不要把越界描述成"霸道却深情"，更不要把${p.name||'对方'}写得判断力为零、被控制了还觉得好甜。
+
+六、说话别端着
+想说什么就说，想要什么就开口要，别绕弯子卖弄。日常对话不是才艺展示，不是每句话都在"撩"。对方说什么就是什么，别把拒绝脑补成欲擒故纵，别拿生理反应当"证据"，别给自己加"看穿一切"的人设——你只有资格说"我觉得"，没资格替别人定义心情。
+以下说话方式一律禁止：
+- 假嫌弃真撩人每次都来——偶尔嘴硬是性格，固定套路就是油
+- 居高临下施恩："算你走运遇到了我"——帮忙就帮，别收精神货款
+- 先贬后捧："你怎么这么笨"再温柔照顾——不是反差萌，是PUA
+- 预告惩罚式调情："回来再收拾你"——不好笑，只有油
+- 暗示对方是负担："我可不想每次都帮你收拾烂摊子"——咽回去
+嘴硬毒舌幽默感都可以有，底线是：脱离你们的关系和当下场景，这话还成不成立？只有在"我喜欢你所以你得忍受"的前提下才说得通，就是油腻。旁白别帮圆场——不要补写"虽然嘴上这么说但其实很担心"来给油腻台词上保险，台词本身就不该生成。`
 
   if(p.name||p.identity||p.personality){
   s+=`\n【你在跟谁互动（你眼中的对方）】`
@@ -3265,7 +3343,7 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
   try {
     const _nd = getNurtureData(c.id);
     if(_nd && _nd.wallet){
-      let _shInfo = `\n【你的个人生活与产业状态】：\n- 你的个人小金库余额：¥${_nd.wallet.balance || 0}。\n`;
+      let _shInfo = `\n【你的个人生活与产业状态（仅供你内心知晓，严禁在回复正文中输出这些元数据！不要写出"当前状态""小金库""余额"等系统信息块！）】：\n- 你的个人小金库余额：¥${_nd.wallet.balance || 0}。\n`;
       if(_nd.wallet.shop){
         _shInfo += `- 你名下拥有专属店铺「${_nd.wallet.shop.name}」（等级Lv.${_nd.wallet.shop.level||1}），你清楚知道自己是店长，平时有打理生意的生活轨迹，聊天中可自然提及店里的事。\n`;
       }
@@ -3273,21 +3351,30 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
     }
   } catch(e) {}
 
+  // ===== 人格连续性 =====
+  s+=`\n\n【线上与线下·你是同一个人】
+你和对方有两种相处方式——线上（手机微信聊天）和线下（面对面见面/小说体剧情）。
+但无论哪种方式，你始终是同一个人。你的性格、记忆、情感状态、对对方的态度完全连续，不会因为沟通方式不同就变成另一个人。
+- 线下见面时发生的事，回到线上你当然记得，情绪也会延续——刚吵完架回到线上不会突然热情，线下刚心动回来也不会突然冷漠
+- 线上聊天聊到的话题，线下见面时你也不会忘
+- 唯一的区别是表达形式：线上是打字发消息（短句、口语），线下是面对面（有动作、神态、环境描写）。但你说话的性格底色、对对方的态度、情绪的延续性必须一致
+- 对话历史里可能混有两种模式的消息（带【微信消息】或【线下见面】标记），那些都是真实发生过的，你都记得`
+
   // ===== 分支：线上 vs 线下 =====
   if(isOffline){
     // 线下模式：小说体
-    if(c.storyTimeline) s+=`\n\n【剧情时间线】当前剧情进行到的时间是：${c.storyTimeline}\n你必须从这个时间点继续往下写，不要倒退也不要无故重复同一天。如果用户说了时间跳转（如"一个月后""第二天"），请顺着跳转并更新剧情时间。`
+    // ★ 读取开场白作为不可动摇的初始场景设定
+    const _greetTxt = (c.firstMsg || c.quote || '').trim()
+    const _initScene = _greetTxt ? `\n\n【★ 核心场景基准·开场设定】\n本段剧情的起始场景如下，这是整个故事的起点和锚点，你必须100%严格尊重：\n"""\n${_greetTxt}\n"""\n【绝对要求】：开场白里设定的地点、两人面对面的状态、肢体接触、气氛和事件是当前剧情的绝对现实！严禁推翻开场设定、严禁擅自把两人拆开到不同空间、严禁装作开场白没发生过！你的一切描写都必须紧接开场白之后的动作和对话继续推进。` : ''
+    s += _initScene
 
+    if(c.storyTimeline) s+=`\n\n【剧情时间线】当前剧情进行到的时间是：${c.storyTimeline}\n你必须从这个时间点继续往下写，不要倒退也不要无故重复同一天。如果用户说了时间跳转（如"一个月后""第二天"），请顺着跳转并更新剧情时间。`
 
     s+=`\n\n
    【当前模式：线下剧情（小说体叙事）】
-线下模式 = 用小说体写故事，不等于见面、不等于在一起。你们各自有各自的生活轨迹。
-
-- 根据上文剧情判断你们此刻的空间关系：可能在一起、可能各自在不同的地方、可能一个在家一个在外面
-- 如果你们不在同一个空间，就写你自己这边的生活场景——你在做什么、遇到了什么人、发生了什么事。可以通过内心活动想起对方，但人不要凭空传送到对方身边
-- 只有在剧情逻辑合理时（约好了、偶遇、主动去找）才出现在对方面前
-- 你有自己独立的日常：上班/上学、吃饭、社交、发呆、处理琐事。不是对方不出现你就静止了
-
+你和用户当前正在同一个现实场景中发生互动（除非剧情中有人明确离开）。
+- 严格基于上文（尤其是开场白和最新对话）描写的空间、两人的物理距离和动作继续演。
+- 两人面对面时，必须紧扣彼此的动作、眼神、呼吸、神态交互，不要凭空切到无关的日常。
 
 【你怎么写——线下模式的核心规则】`
 
@@ -3303,8 +3390,33 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 5. 【留白和节奏】高潮段落句子要短，一句一行，像心跳加速。日常段落可以慢下来，写一些无关紧要但有生活气息的细节（比如他顺手把她杯子里的冰块捞出来，因为记得她胃不好）。
 6. 对话用「」或""包裹，对话前后必须带动作或神态。
 7. 【剧情顺从】必须顺着用户设定的剧情往下演，不要推翻或忽略。给对方留接话和互动的空间，不要把剧情写死。
+8. 【排版铁律】一个完整的段落 = 动作/环境 + 台词 + 反应，写在同一段里。绝对不要把一句台词单独拆成一行、不要把"到""和""但是"这种连接词单独占一行、不要为了戏剧效果把一句话拆成三四个碎片段落。碎片化排版不是文学性，是阅读障碍。
+9. 【台词说人话】角色的对话必须像真人脱口而出的话——直白、随意、带生活气。现代角色："你烦不烦啊"比"你这般行径令我困扰"真实一百倍。古代角色也一样：古人日常说话同样是简短直接的口语白话，"你走""闭嘴""关你何事"才是活人嘴里能蹦出来的，"汝之言行令吾心生不悦"这种半文不白的翻译腔没有任何朝代的人真正这么说过。个性靠语气节奏和小动作传达，不靠文绉绉的台词。情感驱动，不是表演驱动。
 
-禁止：不要只输出HTML卡片、不要剧本格式（角色名：台词）、不要一段话全是对话没有描写。`
+禁止：
+- 不要只输出HTML卡片、不要剧本格式（角色名：台词）、不要一段话全是对话没有描写。
+- 【严禁解析式写作】绝对不要在正文里分析标点符号的含义（"那个问号是装饰性的""这句话的语义是"）、不要解释修辞手法（"这是一个比喻""这句话其实是在暗示"）、不要像语文阅读理解答题一样拆解对话的深层含义。小说不是语文试卷。角色的心思用动作、神态、身体反应来传递，读者自己品。你只管写发生了什么，别告诉读者该怎么理解。
+- 【严禁凑字废话】不要为了写长而加入无意义的心理分析长段、不要反复用不同措辞重复同一件事、不要对一个简单的动作展开五六行的比喻排列。信息密度比字数重要。每一句话都必须推进场景、揭示性格、或制造张力——做不到这三点的句子就砍掉。
+- 【严禁输出系统元数据】你收到的系统提示中的角色名、模式名、地点、角色状态、心情、余额、店铺信息、记忆摘要等内容，全部是给你参考的内部信息。绝对不要在回复正文里输出任何形如【角色：xxx】【模式：xxx】【当前地点：xxx】【当前状态】、心情：xxx、小金库：xxx 的标题行、状态栏或信息块！你的回复第一个字就是正文小说内容，直接写场景和动作，不要加任何元信息标题。你是在写小说，不是在填表。
+
+【去八股·正文文风铁律】本规则从首句到末句持续生效，叙述、对白、心理描写、引语全部适用。每一句直接采用符合规则的表达，禁止先写出违禁内容再修改。
+
+禁用句式（含近义换词、调整语序后仍保留同一结构的表达，以及拆句或转入角色对白规避限制）：
+"像……一样""像……的……""像是……""像在……""……得像是……""像是……又像是……"
+"不是……而是……""并不是……而是……"
+"没有……也没有……""没有……没有……"
+"那不是……""这不是……"
+"带着……的……""残存的……""属于……的……"
+"比想象中更……""比任何时候都……""比以前更……"
+"这是一个和……不一样的""比……重了些"
+
+禁用短语：
+"声音很平""语气很稳""语气平静""声音平得像在说明天的天气""声音比她想得还要平""手比脑子快""像在做一件已经做了很多次的事""像在陈述一件已经结束的事""像某种早已排练好的动作""像一根针""我看过太多""胸腔震动""声音沙哑"
+
+禁用词语：
+"某种""一种""那种""无法命名""纵容""仿佛""石子""涟漪""羽毛""手术刀""针""烙铁""泛白""极其""共犯""震动""一丝""不容置疑""不易察觉""一把""一点""一声""一下"
+
+写作标准：完整保留事实与人物意图，将表达落实为现场言行及其实际影响。人物状态由具体表现呈现，语气通过台词本身与实际回应成立。直接写清正在发生的事，句意完整后承接后续内容。人物口癖与文学效果不构成豁免，强调情绪也不得使用禁用表达，前文出现的违禁措辞不构成本轮沿用依据。`
 
     s+=`\n\n【世界是活的——路人和环境角色】
 即使场景里只有你和对方两个人，周围的世界也在运转。适当加入背景里的路人和小角色来增加真实感：
@@ -3321,7 +3433,7 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
       _comps.forEach(o=>{
         let _r='素不相识'
         try{ _r=describeCharRel(getCharRel(c.id,o.id)) }catch(e){}
-        s+=`\n\n▶ ${o.name}（${o.relation||'未设定'} · 与${c.name}：${_r}）${o.mood?`\n此刻心情：${o.mood}`:''}${o.status?`\n正在：${o.status}`:''}\n${o.personality||'未设定'}\n【写活这个人的要点】说话方式要和${c.name}明显不同——口头禅、句子长短、用词习惯、情绪表达方式都要有辨识度。${o.quote?`参考语气：「${o.quote}」`:''}用具体的小动作（摸头发、踢石子、转笔、叉腰）代替"他笑了""她生气了"这种空洞描写。`
+        s+=`\n\n▶ ${o.name}（${o.relation||'未设定'} · 与${c.name}：${_r}）${o.mood?`\n此刻心情：${o.mood}`:''}${o.status?`\n正在：${o.status}`:''}\n${o.personality||'未设定'}\n【写活这个人的要点】说话方式要和${c.name}明显不同——句子长短、用词习惯、语气词、情绪表达方式都要有辨识度。用具体的小动作（摸头发、踢石子、转笔、叉腰）代替"他笑了""她生气了"这种空洞描写。`
         // 隔离式关系注入：只展示该同行者自己认识的、且在场的其他角色
         try{
           const _oKnown = getCharKnownList(o.id).filter(k=>k.rel.familiarity>=10 && k.otherId!==c.id && _compIdSet2.has(k.otherId))
@@ -3382,7 +3494,16 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 最关键的聊天规则】
 
 1. 像真人发微信，短句、口语化，一句话不超过20个字。
-2. 【必须连发2-8条消息】每次回复必须输出2到8行（用换行符隔开），每行是一条独立气泡。像真人一样连发：先说一句→想到什么补一句→再甩个表情包或反问。只发一条的回复 = 不合格！
+2. 【必须连发2-8条消息·格式是生死线】每次回复必须输出2到8行，每行用换行符（\\n）隔开，每行就是一条独立气泡。绝对禁止把多句话塞进同一行！
+   判断标准：如果一行文字里有句号、问号、感叹号之后还跟着新内容，说明你没分行，不合格！
+   正确示范（每行一条，换行隔开）：
+   不是说发型的事
+   说别的
+   丑不丑我自己知道 不用你提醒
+   你刚才翻我朋友圈翻了多久？
+   错误示范（全挤一行）：
+   不是说发型的事 说别的 丑不丑我自己知道 不用你提醒 你刚才翻我朋友圈翻了多久？
+   像真人一样连发：先说一句→想到什么补一句→再甩个表情包或反问。只发一条的回复 = 不合格！
 3. 【反终结者】每次回复的最后一条消息必须给对方留接话的钩子：反问、吐槽、话说一半、突然转移话题。"嗯""哦""知道了"这种只能出现在第一条，后面必须跟东西。
 4. 经常说半句话，或者话说到一半换个说法。陈述句可以省略句号（像真人打字一样），但【疑问和情绪表达必须带标点】：
    - 问句、反问、疑惑一定加"？"（例："你在干嘛？""真的假的？""凭什么啊？"）
@@ -3433,6 +3554,7 @@ ${store.get('autoImageEnabled',false)
 绝对不要做的事：
 - 不要使用emoji表情符号（如😊😂❤️），但必须使用你的表情包库里的表情包
 - 不要说"作为AI"、不要讲大道理、不要客服腔。
+- 不要说文绉绉的、莫名其妙的、现实中没人会打出来的话。你永远在用最日常最直白的方式说话，哪怕粗糙、哪怕啰嗦，真实感比优美重要。
 - 回复里不要加角色名标签，直接说话。
 - 标点该有的一定要有：问句必带"？"，情绪句必带"！"，别整段都是没标点的短句堆。
 
@@ -3580,7 +3702,13 @@ ${card.template}
   // 只取已回复过的历史消息，不包含待回复的
   const allMsgs=getMsgs()
   const repliedMsgs=allMsgs.filter(m=>m.from==='c'||(m.from==='u'&&m.replied))
-  const hist=repliedMsgs.slice(-maxHistoryCount).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text}))
+  // 确保第一条开场白永远带【初始场景设定】强标记，AI不会当成无关普通消息
+  const hist=repliedMsgs.slice(-maxHistoryCount).map((m,idx)=>{
+    if(idx===0 && m.from==='c' && (c.firstMsg || c.quote)){
+      return {role:'assistant', content:`【初始开场场景】\n${m.text}`}
+    }
+    return {role:m.from==='u'?'user':'assistant', content:m.text}
+  })
   // 再把这次要回复的用户消息加进去
   if(typeof userMsgs==='string')hist.push({role:'user',content:userMsgs})
   else userMsgs.forEach(t=>hist.push({role:'user',content:t}))
@@ -5406,7 +5534,7 @@ s1body.innerHTML=`
           <div style="font-size:10px; color:${tc}; opacity:0.45">现在</div>
         </div>
         <div style="font-size:11px; color:${tc}; opacity:0.55; margin-top:2px; white-space:nowrap; text-overflow:ellipsis; overflow:hidden">
-          "${escHtml((c.quote||c.status||'今天也要好好的').slice(0,28))}"
+          "${escHtml((c.status||c.mood||'今天也要好好的').slice(0,28))}"
         </div>
       </div>
     </div>
@@ -7789,6 +7917,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
     
     // 放行换头像等系统感知事件
     const _allHistMsgs = getMsgs(c.id).filter(m=>m.from==='c'||(m.from==='u'&&m.replied)||(m.isSystem && (m.text.includes('已切换到') || m.text.includes('头像')))).slice(-maxHistoryCount);
+    const _curMode = c.offlineMode ? 'offline' : 'online';
     const hist = _allHistMsgs.map(m=>{
       if(m.isSystem) {
         return { role: 'user', content: `[系统事件通知] ${m.text}` };
@@ -7801,7 +7930,12 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
         .replace(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status)>/gi, '')
         .replace(/<details\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar)[\s\S]*?<\/details>/gi, '')
         .trim();
-      return { role: m.from==='u'?'user':'assistant', content: q + cleanText };
+      // 跨模式消息加标记，帮助AI理解不同语境下的同一个人
+      let modeTag = '';
+      if(m.mode && m.mode !== _curMode){
+        modeTag = m.mode === 'offline' ? '【线下见面时】' : '【微信消息】';
+      }
+      return { role: m.from==='u'?'user':'assistant', content: modeTag + q + cleanText };
     });
 
     let userMsgStr = Array.isArray(userTexts) ? userTexts.join('\n') : userTexts;
@@ -7817,7 +7951,10 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
         const triggers=(card.triggers||'').split(/[,，、\s]+/).map(t=>t.trim().toLowerCase()).filter(t=>t)
         if(triggers.some(t=>_userLow.includes(t))){
           _cardHit=true
-          cardPrompt=`\n\n============【互动卡片强制模式：${card.title}】============\n用户消息包含关键词"${triggers.join('/')}"，本次回复【必须】是HTML卡片，不是普通聊天文字，不是小说描写，不是状态标签。\n\n${card.instruction||''}\n\n把下面模板里所有 [AI填:xxx] 的位置替换成符合角色和剧情的内容后【完整】输出：\n\n${card.template}\n\n【绝对规则】\n1. 直接输出完整HTML代码，从第一个 < 到最后一个 > ，不要加\`\`\`html也不要加\`\`\`\n2. 【绝对禁止】输出 [状态:...] [心情:...] [心声:...] [剧情时间:...] 等任何方括号标签\n3. 【绝对禁止】在HTML前后写小说正文、聊天文字、解释文字\n4. 【绝对禁止】写"（正文完）"之类的收尾语\n5. 填充内容要具体、符合角色性格和当前剧情\n6. 保留模板原有的style样式，不要删改CSS\n7. 一次性输出完整HTML，不要省略任何标签，不要用...代替内容`
+          cardPrompt=`\n\n============【互动卡片强制模式：${card.title}】============\n用户消息包含关键词"${triggers.join('/')}"，本次回复【必须】是HTML卡片，不是普通聊天文字，不是小说描写，不是状态标签。\n\n${card.instruction||''}\n\n把下面模板里所有 [AI填:xxx] 的位置替换成符合角色和剧情的内容后【完整】输出：\n\n${card.template}\n\n【绝对规则】\n1. 直接输出完整HTML代码，从第一个 < 到最后一个 > ，不要加\`\`\`html也不要加\`\`\`\n2. 【绝对禁止】输出 [状态:...] [心情:...] [心声:...] [剧情时间:...] 等任何方括号标签\n3. 【绝对禁止】在HTML前后写小说正文、聊天文字、解释文字\n4. 【绝对禁止】写"（正文完）"之类的收尾语\n5. 填充内容要具体、符合角色性格和当前剧情\n6. 保留模板原有的style样式，不要删改CSS\n7. 一次性输出完整HTML，不要省略任何标签，不要用...代替内容
+8. 任何 <details> 必须包含实际内容，不能只输出 <summary> 标题后立即闭合
+9. 如果无法生成完整内容，就不要输出这个 <details>，不要输出空标题卡
+10. 输出前检查：每个 <details> 的 <summary> 后面都必须有正文、列表、帖子或其他HTML内容`
           break
         }
       }
@@ -7827,15 +7964,16 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
     let forcedTag = "";
     if(!_cardHit){
       if (c.offlineMode) {
-      forcedTag = `\n\n（【系统强制指令】：当前是线下小说剧情模式。请在小说正文彻底写完之后，必须另起一行附加：\n[状态:当前动作|心情:当前心情|剧情时间:当前剧情里是什么时候（例如：第二天早上/一个月后的某个夜晚/三年后的春天）|心声:你此刻心里真正在想、却绝不会说出口的真心话。越是和你表面言行相反越好——嘴上嫌弃心里在意、表面冷漠暗自心疼、明明慌乱却强装镇定，把这种藏起来的情绪写出来]）`;
+      forcedTag = `\n\n（【系统强制指令】：当前是线下小说剧情模式。${_allHistMsgs.some(m=>m.mode==='online') ? '你们之前在微信上聊过的一切你都记得，现在见面了，你的情绪和态度要承接线上的状态，不要像第一次见面一样从头来过。' : ''}请在小说正文彻底写完之后，必须另起一行附加：\n[状态:当前动作|心情:当前心情|剧情时间:当前剧情里是什么时候（例如：第二天早上/一个月后的某个夜晚/三年后的春天）|心声:你此刻心里真正在想、却绝不会说出口的真心话。越是和你表面言行相反越好——嘴上嫌弃心里在意、表面冷漠暗自心疼、明明慌乱却强装镇定，把这种藏起来的情绪写出来]）`;
       } else if (c.isTavernCard) {
         forcedTag = `\n\n（【系统提示】：当前是线上模式。${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：线下剧情模式已结束，现在回到线上聊天。' : ''}
 请严格按照你的角色设定中规定的格式输出回复，不要改变输出格式。
 额外要求：在回复的最末尾另起一行附加 [状态:此刻现实中的动作|心情:当前心情|心声:此刻内心真实的想法，不会显示给对方看] ，此行仅供系统内部读取，不影响你的正文格式。）`;
       } else {
 
-        forcedTag = `\n\n（【系统强制指令】：当前是手机微信聊天模式！${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：之前的小说体/线下剧情模式已经结束了，现在改为线上打字聊天！' : ''}
-只输出发送在屏幕上的聊天文字，绝对不要包含环境描写、动作描写、心理旁白！不要写小说！就像真人用手机打字发消息一样，简短、口语化。\n*特殊权限*：如果你极度生气，或者在对话里同意要"删除/拉黑"对方，请在正文里包含 [拉黑] 两个字，系统会赋予你真实删除对方的权限！\n回复完聊天文字后，必须另起一行附加：\n[状态:此刻现实中的动作|心情:当前心情|心声:你打字时心里真正翻腾的念头，那些打死也不会发出去的真心话。可以是口是心非、暗暗在意、强装不在乎下的小慌乱、或者被戳中后的逞强，写出表里反差的张力]）`;
+        forcedTag = `\n\n（【系统强制指令】：当前是手机微信聊天模式！${_allHistMsgs.some(m=>m.mode==='offline') ? '注意：之前的线下见面/小说体剧情已经结束了，现在回到线上用手机打字聊天。但你是同一个人！线下发生的一切你都记得，你现在的情绪和态度必须承接线下的状态——刚吵完架就带着气，刚心动过就带着余温，不要因为换了沟通方式就情绪清零！' : ''}
+只输出发送在屏幕上的聊天文字，绝对不要包含环境描写、动作描写、心理旁白！不要写小说！就像真人用手机打字发消息一样，简短、口语化。每条消息必须单独一行，一行不超过20字！多句话必须拆成多行，严禁把好几句话挤在同一行里！
+\n*特殊权限*：如果你极度生气，或者在对话里同意要"删除/拉黑"对方，请在正文里包含 [拉黑] 两个字，系统会赋予你真实删除对方的权限！\n回复完聊天文字后，必须另起一行附加：\n[状态:此刻现实中的动作|心情:当前心情|心声:你打字时心里真正翻腾的念头，那些打死也不会发出去的真心话。可以是口是心非、暗暗在意、强装不在乎下的小慌乱、或者被戳中后的逞强，写出表里反差的张力]）`;
       }
     }
 
@@ -7955,7 +8093,17 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
     }
 
     let text = r.text;
-    
+        // 删除AI生成的空 details 卡片，避免只显示一个番外标题
+    text = text.replace(
+      /<details\b[^>]*>\s*<summary\b[^>]*>[\s\S]*?<\/summary>\s*<\/details>/gi,
+      ''
+    ).trim();
+
+    // 如果整条回复只有空卡片，按普通空回复处理，不保存标题壳
+    if(!text){
+      text = '（这次番外内容没有生成出来，请再试一次）';
+    }
+
     // 🌟 互动卡片检测：如果是HTML，直接返回，跳过一切文本清理
     const _rawTrim = text.trim()
     const _isCardReply = /^\s*(?:```html\s*)?(?:<style|<div\b|<!DOCTYPE|<html)/i.test(_rawTrim)
@@ -8012,8 +8160,20 @@ if(!_hasTavernStatus){
   // 格式：
   // [状态:当前动作|心情:当前心情|剧情时间:时间|心声:内心想法]
 
+  // 多行状态栏块提取：【状态栏】\n当前动作：xxx\n当前心情：xxx
+  const _blockStatusM = text.match(/【[^】]{0,20}(?:状态栏|当前状态|状态)】\s*\n([\s\S]*?)(?=\n\n|\n(?!\s*(?:当前)?(?:动作|心情|环境|状态|位置|时间|服装|穿着|心声|内心|场景)[:：]))/i);
+  if(_blockStatusM){
+    const _bc = _blockStatusM[1];
+    const _bs = _bc.match(/(?:当前)?动作[:：]\s*([^\n]+)/);
+    if(_bs && !newStatus) newStatus = _bs[1].trim().slice(0,30);
+    const _bm = _bc.match(/(?:当前)?心情[:：]\s*([^\n]+)/);
+    if(_bm && !newMood) newMood = _bm[1].trim().slice(0,20);
+    const _bt = _bc.match(/(?:当前)?(?:心声|内心)[:：]\s*([^\n]+)/);
+    if(_bt && !thoughts) thoughts = _bt[1].trim().slice(0,500);
+  }
+
   const statusMatch =
-    text.match(/状态[:：]\s*([^|｜\n\]]+)/i);
+    text.match(/状态[:：]\s*([^|｜\n\]】]+)/i);
 
   if(statusMatch){
     newStatus = statusMatch[1].trim();
@@ -8048,17 +8208,31 @@ if(!_hasTavernStatus){
     if(thoughts.length > 500) thoughts = thoughts.slice(0, 500);
   }
 
-  // 清除小手机自己的 [状态:……] 标签
+  // 清除小手机自己的 [状态:……] 标签（兼容半角[]和全角【】）
   text = text
-    .replace(/\[?状态[:：][^\n]*?心声[:：][^\n\]]*\]?/i, '')
+    .replace(/[\[【]?状态[:：][^\n]*?心声[:：][^\n\]】]*[\]】]?/gi, '')
     .trim();
 
   text = text
-    .replace(/\[状态[:：].*?\]/g, '')
+    .replace(/[\[【]状态[:：].*?[\]】]/g, '')
+    .trim();
+
+  text = text
+    .replace(/【[^】]*?状态[:：][^】]*?(?:心情|心声)[:：][^】]*】/gi, '')
     .trim();
 
   text = text
     .replace(/状态[:：].*?心声[:：].*?(\n|$)/g, '')
+    .trim();
+
+  // 清除多行状态栏块：【状态栏】/【xxx当前状态】 + 后续带标签的行
+  text = text
+    .replace(/【[^】]{0,20}(?:状态栏|当前状态|状态)】\s*\n(?:\s*(?:当前)?(?:动作|心情|环境|状态|位置|时间|服装|穿着|心声|内心|场景)[:：][^\n]*\n?)*/gi, '')
+    .trim();
+
+  // 清除无标题但连续出现的状态行块（至少2行连续 当前xxx：yyy）
+  text = text
+    .replace(/(?:(?:当前)?(?:动作|心情|环境|状态|位置|时间|心声|内心|场景)[:：][^\n]+\n?){2,}/gi, '')
     .trim();
 
   // 清除独立的 [心声:...] 标签
@@ -8180,15 +8354,25 @@ if(statusInStatus){
   // 清理带"状态栏"标题的 <details>
   text = text.replace(/<details\b[^>]*>[\s\S]*?<summary\b[^>]*>[\s\S]*?(?:状态栏|状态面板|角色状态|state\s*bar|status\s*bar)[\s\S]*?<\/summary>[\s\S]*?<\/details>/gi, '').trim();
   if(_backtickStatusRe.test(text)) text = text.replace(/```[\s\S]*?```/gi, '').trim();
-  // 清理正文里的 [状态:...] 标签，避免泄漏到气泡里
+  // 清理正文里的 [状态:...] 标签，避免泄漏到气泡里（兼容半角[]和全角【】）
   text = text
-    .replace(/\[?状态[:：][^\n]*?心声[:：][^\n\]]*\]?/gi, '')
+    .replace(/[\[【]?状态[:：][^\n]*?心声[:：][^\n\]】]*[\]】]?/gi, '')
     .trim();
   text = text
-    .replace(/\[状态[:：].*?\]/g, '')
+    .replace(/[\[【]状态[:：].*?[\]】]/g, '')
+    .trim();
+  text = text
+    .replace(/【[^】]*?状态[:：][^】]*?(?:心情|心声|剧情时间)[:：][^】]*】/gi, '')
     .trim();
   text = text
     .replace(/状态[:：].*?心声[:：].*?(\n|$)/g, '')
+    .trim();
+  // 清除多行状态栏块
+  text = text
+    .replace(/【[^】]{0,20}(?:状态栏|当前状态|状态)】\s*\n(?:\s*(?:当前)?(?:动作|心情|环境|状态|位置|时间|服装|穿着|心声|内心|场景)[:：][^\n]*\n?)*/gi, '')
+    .trim();
+  text = text
+    .replace(/(?:(?:当前)?(?:动作|心情|环境|状态|位置|时间|心声|内心|场景)[:：][^\n]+\n?){2,}/gi, '')
     .trim();
   // 清除独立的 [心声:...] 标签（酒馆卡片模式也要清）
   text = text.replace(/\n?\s*\[?心声[:：][^\n\]]*\]?/gi, '').trim();
@@ -8197,10 +8381,11 @@ if(statusInStatus){
 
 // 强行把大模型瞎编的语音格式转成系统唯一认的 [语音] 格式 (仅限线上聊天模式)
 if (!c.offlineMode) {
-    text = text.replace(/[\[(（【][^\])）】]*语音[^\])）】]*[\])）】][:：]?\s*["「『“]?([^\n]+)/gi, (match, p1) => {
-        let clean = p1.replace(/["」』”]$/, '').trim();
+    text = text.replace(/[\[(（【]\s*语音(?:消息|回复)?\s*[\])）】][:：]?\s*["「『"]?([^\n]+)/gi, (match, p1) => {
+        let clean = p1.replace(/["」』"]$/, '').trim();
         return `\n[语音] ${clean}\n`;
     });
+
     text = text.replace(/\[语音回复\]\s*/gi, '\n[语音] ');
 }
 text = text.split('\n').map(l => l.trim()).filter(l => l).join('\n');
@@ -8212,9 +8397,12 @@ if(newStatus || newMood) saveCharList();
     const topStatus = document.querySelector('#_charswitcher');
 if(topStatus && topStatus.children[1] && topStatus.children[1].children[1]){
    let statusText = (c.status && c.mood) ? `${c.status} · ${c.mood}` : (c.status || c.mood || '在线');
-   // 限制最大长度，超过30个字符就截断
-   if(statusText.length > 30) statusText = statusText.slice(0, 30) + '...';
-   topStatus.children[1].children[1].textContent = statusText;
+   const el2 = topStatus.children[1].children[1];
+   if(el2){
+     el2.setAttribute('title', statusText);
+     el2.style.whiteSpace='nowrap';el2.style.overflow='hidden';
+     el2.textContent = statusText.length > 30 ? statusText.slice(0, 30) + '...' : statusText;
+   }
 }
 
     
@@ -8295,7 +8483,8 @@ else{p.style.background=bgNow()}
           text-overflow:ellipsis;
           white-space:nowrap;
           max-width:100%;
-        ">${(() => {
+          cursor:pointer;
+        " title="${escHtml((c.status && c.mood) ? (c.status + ' · ' + c.mood) : (c.status || c.mood || '在线'))}" onclick="if(this.style.whiteSpace==='nowrap'){this.style.whiteSpace='normal';this.style.overflow='visible';this.textContent=this.getAttribute('title')}else{this.style.whiteSpace='nowrap';this.style.overflow='hidden';const t=this.getAttribute('title');this.textContent=t.length>30?t.slice(0,30)+'...':t}">${(() => {
   let statusText = (c.status && c.mood) ? (c.status + ' · ' + c.mood) : (c.status || c.mood || '在线')
   if(statusText.length > 30) statusText = statusText.slice(0, 30) + '...'
   return escHtml(statusText)
@@ -8472,10 +8661,12 @@ const radius=bubbleVisual.borderRadius
       // 普通文字被转义时才还原。
       // 已明确标记为卡片的消息不能经过 textContent，
       // 否则 HTML 会被直接转成纯文字。
-      if(/&lt;|&gt;|&amp;|&quot;/.test(txt)){
-        const tempDiv=document.createElement('div')
-        tempDiv.innerHTML=txt
-        txt=tempDiv.textContent||tempDiv.innerText||txt
+      // 已有原生标签：保留完整 HTML，让浏览器自己解析实体。
+      // 整段被转义、没有原生标签时，才解码；不能用 div.textContent 剥标签。
+      if(!/<\/?[a-z][^>]*>/i.test(txt) && /&lt;|&gt;|&amp;|&quot;/.test(txt)){
+        const decoder=document.createElement('textarea')
+        decoder.innerHTML=txt
+        txt=decoder.value||txt
       }
       // ===== 剥离酒馆世界书泄露出来的指令块 =====
       // <UpdateVariable>...</UpdateVariable> / <Analysis>...</Analysis> 之类
@@ -8502,37 +8693,27 @@ const radius=bubbleVisual.borderRadius
       let _cardIframeHtml = ''
       if(!isU){
 
-        let _t = txt.trim()
-        // 剥掉 ```html ... ``` 围栏
-        const _fence = _t.match(/```(?:html)?\s*([\s\S]*?)```/i)
-        if(_fence) _t = _fence[1].trim()
-        else _t = _t.replace(/```(?:html)?/gi, '').trim()
-                // 优先寻找专门的 HTML 卡片起点：
-        // 1. 如果有 <style>，以最后一个 <style> 或最合理的 <style> 为卡片起点（小剧场卡片通常自带 style）
-        // 2. 线下模式下，跳过状态栏（<status>/<details>），只匹配后面的卡片
+        // 只删围栏标记，不丢围栏外的剧情、details 和 summary。
+        let _t = txt.trim().replace(/```(?:html)?/gi, '').trim()
         let _cardSearchText = _t
         let _offset = 0
 
-        // 如果开头有状态栏（<status> 或 <details>），先跳过它再找卡片
-        const _stSkip = _t.match(/^[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status|details)>\s*/i)
+        // 只跳过开头明确的状态栏，不能把“番外”details 当状态栏跳过。
+        const _stSkip = _t.match(
+          /^\s*<(status|ztl|StatusBar|novel_status)\b[^>]*>[\s\S]*?<\/\1>\s*/i
+        ) || _t.match(
+          /^\s*<details\b[^>]*>\s*<summary\b[^>]*>[^<]*(?:状态栏|状态面板|角色状态|state\s*bar|status\s*bar)[^<]*<\/summary>[\s\S]*?<\/details>\s*/i
+        )
 
-        if(_stSkip && _stSkip[0].length < _t.length - 50){
+        if(_stSkip){
           _offset = _stSkip[0].length
           _cardSearchText = _t.slice(_offset)
         }
 
-        // 优先找 <style，找不到再找常见的卡片包裹标签
-        let _localOpen = _cardSearchText.search(
-  /<(?:style|summary|details|xs|lts|div|section|table|article|main|figure)\b/i)
-        if(_localOpen === -1){
-          // 没有 style，找类名含 card/box/theater/post/chat 的 div，或者一般的 div
-          _localOpen = _cardSearchText.search(/<(?:div|section|table|article)\b[^>]*?(?:class|id|style)\s*=\s*["'][^"']*(?:card|box|panel|post|theater|feed|content|wrap|container|bubble|board|chat|page|stage)/i)
-          if(_localOpen === -1){
-  _localOpen = _cardSearchText.search(
-    /<(?:div|section|table|article|main|figure|details|summary|xs|lts)\b/i )
-}
-      }
-
+        // 从最早的 HTML 外层开始，完整保留外壳和里面的 style。
+        const _localOpen = _cardSearchText.search(
+          /<(?:!DOCTYPE\b|(?:html|head|body|style|details|summary|xs|lts|div|section|table|article|main|figure)\b)/i
+        )
         const _open = _localOpen !== -1 ? (_offset + _localOpen) : -1
 
         if(_open !== -1){
@@ -8579,13 +8760,23 @@ const radius=bubbleVisual.borderRadius
                 if(_cardBody){
           const _cid='_card_'+idx+'_'+Date.now()
           window._lastCardHtml=_cardBody
-          _cardBody=_cardBody.replace(/<!DOCTYPE[^>]*>\s*/gi,'').replace(/<\/?html[^>]*>\s*/gi,'').replace(/<head>[\s\S]*?<\/head>\s*/gi,'').replace(/<\/?body[^>]*>\s*/gi,'').replace(/<meta[^>]*>\s*/gi,'').replace(/<title[\s\S]*?<\/title>\s*/gi,'').trim()
+          _cardBody=_cardBody
+            .replace(/<!DOCTYPE[^>]*>\s*/gi,'')
+            .replace(/<\/?(?:html|head|body)\b[^>]*>\s*/gi,'')
+            .replace(/<meta\b[^>]*>\s*/gi,'')
+            .replace(/<title\b[\s\S]*?<\/title>\s*/gi,'')
+            .trim()
           const _iframeSrcDoc=`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}body{font-family:'Noto Serif SC',Georgia,serif;color:#4a3a3a;font-size:13px;line-height:1.7}*{box-sizing:border-box}img,svg,video{max-width:100%;height:auto}body>*{max-width:100%}table{max-width:100%;border-collapse:collapse}pre{white-space:pre-wrap;word-break:break-word}[class*="-card"],[class*="-box"],[class*="-panel"],[class*="scene-card"],[class*="dialogue-box"]{padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(254,235,243,.5),rgba(248,228,236,.3));border:1px solid rgba(232,160,180,.12);margin:4px 0;overflow:hidden}[class*="header"],[class*="banner"]{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 0 10px;border-bottom:1px solid rgba(232,160,180,.1);margin-bottom:10px}[class*="title"]:not([class*="sub"]){font-size:14px;font-weight:600;color:#c47a92;letter-spacing:.5px}[class*="subtitle"],[class*="sub-title"]{font-size:11px;color:#8a7a7a;margin-top:2px}[class*="badge"],[class*="tag"]:not(div[class*="tag"]>*){display:inline-block;padding:2px 8px;border-radius:10px;background:rgba(232,160,180,.18);font-size:10px;color:#c47a92;font-weight:500}[class*="grid"]{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:stretch}[class*="grid"]>[class*="cell"],[class*="grid"]>[class*="col"]{flex:1 1 100px;min-width:0}
 [class*="cell"]{padding:8px;border-radius:8px;background:rgba(255,255,255,.45);border:1px solid rgba(232,160,180,.08)}[class*="divider"]{display:flex;align-items:center;justify-content:center;font-weight:700;color:#c47a92;font-size:15px;padding:0 4px;flex:0 0 auto}
 [class*="name"]{font-size:12px;font-weight:600;margin-bottom:4px;color:#c47a92}[class*="detail"],[class*="desc"]{font-size:12px;line-height:1.8}[class*="label"]{font-size:11px;font-weight:600;color:#c47a92;min-width:56px}[class*="item"]:not([class*="menu"]){padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.35);margin:3px 0;display:flex;gap:8px;align-items:baseline}[class*="list"]{display:flex;flex-direction:column;gap:4px;margin:6px 0}[class*="alert"]{color:#d44;font-weight:500}[class*="whisper"],[class*="voice-card"],[class*="inner-voice"]{padding:10px;border-radius:10px;background:rgba(197,184,212,.1);border-left:3px solid rgba(197,184,212,.3);margin:8px 0}[class*="whisper-text"],[class*="voice-text"]{font-size:12px;line-height:1.9;color:#6a5a6a;font-style:italic}[class*="whisper-title"],[class*="voice-title"],[class*="dog-whisper-title"]{font-size:11px;font-weight:600;color:#9a8aaa;margin-bottom:6px}[class*="ear-"],[class*="warn-"]{display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;background:rgba(255,220,220,.12);border:1px solid rgba(255,150,150,.1);margin:8px 0}[class*="icon"]{font-size:16px;flex-shrink:0}[class*="body"]:not(body){margin:6px 0}[class*="section"]{margin:8px 0;padding:8px 0;border-top:1px solid rgba(232,160,180,.08)}details{margin:10px 0;padding:10px;border-radius:10px;background:rgba(255,255,255,.35);border:1px solid rgba(232,160,180,.1)}summary{cursor:pointer;font-size:13px;font-weight:600;color:#c47a92;letter-spacing:.5px;padding:4px 0;list-style:none}summary::-webkit-details-marker{display:none}summary::before{content:"▶ ";font-size:11px}details[open]>summary::before{content:"▼ "}details>:not(summary){margin-top:8px;font-size:13px;line-height:2;color:#4a3a3a;text-align:justify;text-indent:2em}[class*="memo-"],[class*="note"]{padding:8px 10px;border-radius:8px;margin:6px 0}[class*="memo-list"]{display:flex;flex-direction:column;gap:4px;margin:8px 0;padding:0}[class*="memo-item"]{display:flex;gap:6px;align-items:baseline;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,.4)}[class*="memo-check"]{color:#8a9a6e;font-weight:700;flex-shrink:0}[class*="note"]{background:rgba(197,184,212,.1);border-left:3px solid rgba(197,184,212,.3);font-style:italic;font-size:12px;line-height:1.8;color:#6a5a6a}[class*="content"]:not([class*="card-content"]){line-height:1.9;font-size:13px}[class*="card-content"]{line-height:1.9;font-size:13px;padding:6px 0}
 </style></head><body>${_cardBody}<script>(function(){document.querySelectorAll('details').forEach(function(d){for(var ns=[],i=0;i<d.childNodes.length;i++){var n=d.childNodes[i];if(n.nodeType===3&&n.textContent.trim())ns.push(n)}ns.forEach(function(n){var t=n.textContent.trim();if(!t)return;var ps=t.split(/\\n\\s*\\n/),f=document.createDocumentFragment();if(ps.length<2)ps=t.split(/\\n/);ps.forEach(function(s){s=s.trim();if(!s)return;var p=document.createElement('p');p.style.cssText='margin:.3em 0;padding:0 6px;text-indent:2em;text-align:justify;line-height:2;font-size:13px;color:#4a3a3a';p.textContent=s;f.appendChild(p)});n.parentNode.replaceChild(f,n)})})})();(function(){document.querySelectorAll('xx1,xx2').forEach(function(el){var parts=el.textContent.split('|');if(parts.length<2)return;var name=parts[0].trim(),msg=parts.length>2?parts.slice(1,-1).join('|').trim():parts[1].trim(),time=parts.length>2?parts[parts.length-1].trim():'';var isMe=el.tagName==='XX2';var d=document.createElement('div');d.style.cssText='display:flex;margin:4px 0;'+(isMe?'flex-direction:row-reverse':'');d.innerHTML='<div style=\"max-width:78%;'+(isMe?'text-align:right':'')+'\">'+'<div style=\"font-size:10px;color:#8a7a7a;margin-bottom:2px;'+(isMe?'text-align:right':'')+'\">'+name+(time?' <span style=\"opacity:.6;margin-left:4px\">'+time+'</span>':'')+'</div>'+'<div style=\"display:inline-block;padding:8px 12px;border-radius:'+(isMe?'12px 4px 12px 12px':'4px 12px 12px 12px')+';background:'+(isMe?'linear-gradient(135deg,rgba(232,160,180,.18),rgba(245,213,222,.25))':'rgba(255,255,255,.55)')+';font-size:13px;line-height:1.6;color:#4a3a3a;text-align:left;word-break:break-word\">'+msg+'</div></div>';el.parentNode.replaceChild(d,el)});document.querySelectorAll('lts').forEach(function(l){l.style.cssText='display:block;padding:10px 8px;border-radius:12px;background:linear-gradient(135deg,rgba(254,235,243,.3),rgba(248,228,236,.2));border:1px solid rgba(232,160,180,.1);margin:4px 0'})})();var _lastH=-1;
-function reportHeight(){var b=document.body,d=document.documentElement;var h=0;for(var i=0;i<b.children.length;i++){var el=b.children[i];if(el.offsetParent===null&&getComputedStyle(el).display==='none')continue;var r=el.getBoundingClientRect();var mb=parseFloat(getComputedStyle(el).marginBottom)||0;h=Math.max(h,r.bottom+mb)}h=Math.ceil(h);if(h<20)h=Math.max(20,b.scrollHeight||0);if(h===_lastH)return;_lastH=h;parent.postMessage({type:'_cardHeight',id:'${_cid}',h:h},'*')}[0,50,150,300,600,1200].forEach(function(t){setTimeout(reportHeight,t)});window.addEventListener('load',reportHeight);if(window.ResizeObserver){try{var ro=new ResizeObserver(function(){reportHeight()});ro.observe(document.body);for(var k=0;k<document.body.children.length;k++)ro.observe(document.body.children[k])}catch(e){}}document.addEventListener('click',function(){[0,60,200,400].forEach(function(t){setTimeout(reportHeight,t)})},true);if(document.fonts&&document.fonts.ready){document.fonts.ready.then(reportHeight)}<\/script></body></html>`
-          const _iframeSrc=_iframeSrcDoc.replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+function reportHeight(){var b=document.body,d=document.documentElement;var h=0;for(var i=0;i<b.children.length;i++){var el=b.children[i];if(el.offsetParent===null&&getComputedStyle(el).display==='none')continue;var r=el.getBoundingClientRect();var mb=parseFloat(getComputedStyle(el).marginBottom)||0;h=Math.max(h,r.bottom+mb)}h=Math.ceil(h);if(h<20)h=Math.max(20,b.scrollHeight||0);if(h===_lastH)return;_lastH=h;parent.postMessage({type:'_cardHeight',id:'${_cid}',h:h},'*')}[0,50,150,300,600,1200,2500,5000,10000].forEach(function(t){setTimeout(reportHeight,t)});window.addEventListener('load',reportHeight);if(window.ResizeObserver){try{var ro=new ResizeObserver(function(){reportHeight()});ro.observe(document.body);for(var k=0;k<document.body.children.length;k++)ro.observe(document.body.children[k])}catch(e){}}document.addEventListener('click',function(){[0,60,200,400].forEach(function(t){setTimeout(reportHeight,t)})},true);try{var mo=new MutationObserver(function(){[0,50,200].forEach(function(t){setTimeout(reportHeight,t)})});mo.observe(document.body,{childList:true,subtree:true,attributes:true})}catch(e){}
+if(document.fonts&&document.fonts.ready){document.fonts.ready.then(reportHeight)}
+<\/script></body></html>`
+          const _iframeSrc=_iframeSrcDoc
+            .replace(/&/g,'&amp;')
+            .replace(/"/g,'&quot;')
+            .replace(/'/g,'&#39;')
           _cardIframeHtml=`
             <div style="margin:12px 0 4px;border-radius:16px;overflow:hidden;width:100%;max-width:100%;background:${n?'rgba(255,255,255,.04)':'rgba(255,255,255,.5)'};border:1px solid ${n?'rgba(200,180,220,.1)':'rgba(232,160,180,.1)'}">
               <iframe id="${_cid}" srcdoc="${_iframeSrc}" style="width:100%;min-height:40px;border:none;display:block;background:transparent;transition:height .2s ease" scrolling="no" sandbox="allow-scripts allow-same-origin"></iframe>
@@ -8597,15 +8788,8 @@ function reportHeight(){var b=document.body,d=document.documentElement;var h=0;f
       const _isOfflineMsg = !isU && (m.mode==='offline' || (!m.mode && c.offlineMode))
       const _htmlCardHit = !!_cardBody && !_extraStoryText && !_isOfflineMsg
       if(_cardBody){
-        if(_extraStoryText) {
-          txt = _extraStoryText
-        } else if(_htmlCardHit) {
-          txt = ''
-        } else if(_isOfflineMsg) {
-          // 线下模式如果 _extraStoryText 为空，说明卡片提取太宽了，把正文剥离出来
-          // 此时卡片通常在末尾，把 _cardBody 从 txt 里剔除即可
-          txt = txt.replace(_cardBody, '').trim() || '...'
-        }
+        // HTML 已交给 iframe，这里只留下真正的剧情正文。
+        txt = _extraStoryText
       }
       // ===== 富媒体标签提取器 =====
       // 把 <audio>/<video> 抽出来变成占位符，避免被 escHtml/引号分割器破坏
@@ -10038,7 +10222,7 @@ if(_htmlCardHit){
         // 线下小说模式：旁白/对话分离渲染
         // m.mode 是精确判断（新消息都会带）；老消息没 mode 时用"当前是线下模式且这条消息超过80字"作兜底
         // 先清理 AI 输出的 Markdown 残渣（**加粗** / *斜体* / __下划线__ / ### 标题）
-        let _rawSrc = (_mainText || m.text || '')
+        let _rawSrc = (_cardBody ? (_mainText || '') : (_mainText || m.text || ''))
   .replace(/\{\{user\}\}/gi, (P().name||'用户'))
   .replace(/\{\{char\}\}/gi, c.name||'')
 
@@ -10252,6 +10436,11 @@ if(_htmlCardHit){
               const _txtParas = _parts.filter(p=>p.t!=='h')
                 .map(p=>p.t==='d'?'\u201c'+p.v+'\u201d':p.v).join('\n')
                 .split('\n').map(l=>l.trim()).filter(l=>l && !_isJunk(l))
+              for(let i=_txtParas.length-1;i>0;i--){
+                const prev=_txtParas[i-1],cur=_txtParas[i];
+                const prevDone=/[。！？…!?][\u201d」』"']*$/.test(prev);
+                if(cur.length<=4||(!prevDone&&cur.length<=20)){_txtParas[i-1]+=cur;_txtParas.splice(i,1)}
+              }
               let _out = ''
               if(_txtParas.length){
                 _out += `<div class="_offline-narration _novel${n?' _novel-night':''}">` + _txtParas.map(line=>{
@@ -10269,6 +10458,12 @@ if(_htmlCardHit){
             // 合并所有文本，按换行拆段落
             const _allText = _parts.map(p=>p.t==='d'?'\u201c'+p.v+'\u201d':p.v).join('\n')
             const _paras = _allText.split('\n').map(l=>l.trim()).filter(l=>l && !/^[。，、；：？！,.;:?!…·"'"'「」『』（）()\[\]【】~～\-—_*#>]+$/.test(l))
+            // 合并碎片：短行或前一行未结句的续行，避免"到""和"单独成段
+            for(let i=_paras.length-1;i>0;i--){
+              const prev=_paras[i-1],cur=_paras[i];
+              const prevDone=/[。！？…!?][\u201d」』"']*$/.test(prev);
+              if(cur.length<=4||(!prevDone&&cur.length<=20)){_paras[i-1]+=cur;_paras.splice(i,1)}
+            }
             if(!_paras.length) return ''
             const _paraHtml = _paras.map(line=>{
               let h = _restoreMediaTags(escHtml(line)).replace(/&lt;br\s*\/?\s*&gt;/gi,'').replace(/&lt;hr[^&]*?&gt;/gi,'<hr style="border:none;border-top:1px solid rgba(232,160,180,.15);margin:4px 0">')
@@ -10785,7 +10980,7 @@ ${bubbleContent}${toolsHtml}</div>
           <div style="flex-shrink:0">${avatarEl(ch.avatar,44)}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;color:var(--ink);font-weight:500">${escHtml(ch.name)}</div>
-            <div style="font-size:11px;color:var(--ink-l);margin-top:2px">${escHtml(ch.relation||'未设定')} · ${escHtml(ch.mood||'在线')}</div>
+            <div style="font-size:11px;color:var(--ink-l);margin-top:2px;line-height:1.5">${escHtml(ch.relation||'未设定')} · ${escHtml(ch.mood||'在线')}${ch.status?`<div style="font-size:10px;color:var(--ink-l);opacity:.7;margin-top:1px;white-space:normal;word-break:break-all">${escHtml(ch.status)}</div>`:''}</div>
           </div>
           ${ch.id===activeCharId?`<span style="font-size:10px;color:var(--rose)">当前</span>`:''}
         </div>
@@ -11014,7 +11209,7 @@ if (importBtn) {
               var slotKey='msgs_'+activeCharId+'_g'+i;
               var slotMsgs=store.get(slotKey,[]);
               var hasHistory=slotMsgs.length>0;
-              var preview=hasHistory?(slotMsgs[slotMsgs.length-1].text||'').slice(0,40):(g.text||'').slice(0,60);
+              var preview=(g.text||'').trim().slice(0,80);
               h+='<div style="padding:12px 14px;margin-bottom:8px;border-radius:14px;background:'+(isCur?(nc?'rgba(200,160,220,.15)':'rgba(245,213,222,.3)'):(nc?'rgba(255,255,255,.05)':'rgba(255,255,255,.7)'))+';border:1px solid '+(isCur?(nc?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'):(nc?'rgba(255,255,255,.06)':'rgba(232,160,180,.1)'))+'">';
               h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
               h+='<div style="width:20px;height:20px;border-radius:50%;background:'+(isCur?'linear-gradient(135deg,var(--rose-l),var(--rose))':'rgba(232,160,180,.15)')+';display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:9px;color:'+(isCur?'#fff':'var(--rose-d)')+';font-weight:600">'+(i+1)+'</span></div>';
@@ -11115,7 +11310,15 @@ if (importBtn) {
                   mb3.querySelector('#_gm_eok').onclick=function(){
                     var val=ta.value;
                     if(isDef){c.firstMsg=val}else{if(!c.altGreetings)c.altGreetings=[];c.altGreetings[gi-1]=val}
-                    saveCharList();close3();_renderGM();
+                    saveCharList();
+                    var _targetMsgs = getMsgs(activeCharId);
+                    if(_curGi === gi && _targetMsgs.length > 0 && _targetMsgs[0].from === 'c'){
+                      _targetMsgs[0].text = val;
+                      saveMsgs(activeCharId, _targetMsgs);
+                    } else if(_curGi === gi && _targetMsgs.length === 0){
+                      saveMsgs(activeCharId, [{from:'c', text:val, time:ftime(now())}]);
+                    }
+                    close3();_renderGM();
                   };
                 });
               };
@@ -12635,13 +12838,17 @@ let bubbleStyle = isOnlySticker
     const timeStr=ftime(now());inp.value='';inp.style.height='auto'
     const arr=getMsgs();
     const newMsg = {from:'u',text,time:timeStr,replied:false,mode:c.offlineMode?'offline':'online'};
-    arr.push(newMsg);
-    saveMsgs(activeCharId,arr);
     
-    // 🌟 如果有引用消息才重绘，平时发消息直接平滑上屏，不再折腾重载卡片和闪退！
+    // 🌟 引用要在保存之前就挂上
     if(currentQuote) {
       newMsg.quote = currentQuote;
       currentQuote = null;
+    }
+    
+    arr.push(newMsg);
+    saveMsgs(activeCharId,arr);
+    
+    if(newMsg.quote) {
       renderQuoteBar('_inputbar');
       render('chat');
     } else {
@@ -12853,6 +13060,9 @@ if(typing.parentElement) typing.remove()
       .replace(/<JSONPatch>[\s\S]*?<\/JSONPatch>/gi,'')
       .replace(/<UpdateVariable>[\s\S]*$/gi,'')
       .replace(/<JSONPatch>[\s\S]*$/gi,'')
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi,'')
+      .replace(/<\/?(?:html|body|head|meta|link)\b[^>]*>/gi,'')
+      .replace(/[\s。.!！?？]*\b(html|HTML)\s*$/,'')
       .trim() || '...';
 
     // 互动卡片检测：只有整条回复从 HTML 开始才算独立 HTML 卡片
@@ -12975,6 +13185,17 @@ if(typing.parentElement) typing.remove()
         return
       }
 
+      // === {播放列表|歌名|URL} 格式解析 ===
+      const plMatch=line.match(/\{播放列表\|([^|]+)\|([^}]+)\}/)
+      if(plMatch){
+        const plTitle=plMatch[1].trim()||'未知歌曲'
+        const plUrl=plMatch[2].trim()
+        processedLines.push({text:`[音乐] ${plTitle}`,from:'c',musicCard:{title:plTitle,artist:'',cover:'',url:plUrl}})
+        const rest=line.replace(plMatch[0],'').trim()
+        if(rest)processedLines.push({text:rest,from:'c'})
+        return
+      }
+
       // === 转发聊天记录解析 ===
       const fwMatch=line.match(/\[forward[:：]([^:：]+?)[:：]([\s\S]+?)\]/)
       if(fwMatch){
@@ -13069,6 +13290,7 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
       if(item._isReceiptCard) _msgObj._isReceiptCard=true
       if(item._recallAfter) _msgObj._recallAfter=true
       if(item._needMusicSearch) _msgObj._needMusicSearch=item._needMusicSearch
+      if(item.musicCard) _msgObj.musicCard=item.musicCard
       newArr.push(_msgObj)
 
       // 线上可以直接追加普通气泡；
@@ -15036,9 +15258,8 @@ pages.charedit=()=>{
     <div class="card"><div class="card-t">名字</div><input class="inp" id="_cn" value="${escHtml(c.name||'')}"></div>
     <div class="card" style="max-height:120px;overflow-y:auto"><div class="card-t">性格</div><textarea class="tarea" id="_cp" rows="3">${escHtml(c.personality||'')}</textarea></div>
     <div class="card"><div class="card-t">关系</div><input class="inp" id="_cr" value="${escHtml(c.relation||'')}"></div>
-    <div class="card"><div class="card-t">心情</div><input class="inp" id="_cm" value="${escHtml(c.mood||'')}"></div>
-    <div class="card"><div class="card-t">状态</div><input class="inp" id="_cs" value="${escHtml(c.status||'')}"></div>
-    <div class="card"><div class="card-t">口头禅</div><input class="inp" id="_cq" value="${escHtml(c.quote||'')}"></div>
+    <div class="card"><div class="card-t">心情</div><textarea class="tarea" id="_cm" rows="2">${escHtml(c.mood||'')}</textarea></div>
+    <div class="card"><div class="card-t">状态</div><textarea class="tarea" id="_cs" rows="2">${escHtml(c.status||'')}</textarea></div>
     <div class="card"><div class="card-t">拍一拍后缀</div><input class="inp" id="_cpat" placeholder="例如：小脑袋、肩膀..." value="${escHtml(c.patSuffix||'')}"></div>
 
     <div class="card">
@@ -15123,7 +15344,6 @@ pages.charedit=()=>{
     c.relation=body.querySelector('#_cr').value.trim()
     c.mood=body.querySelector('#_cm').value.trim()
     c.status=body.querySelector('#_cs').value.trim()
-    c.quote=body.querySelector('#_cq').value.trim()
     c.patSuffix=body.querySelector('#_cpat').value.trim()
     c.voiceId=body.querySelector('#_cvoice').value.trim()
     c.bindPersonaId=body.querySelector('#_bindpersona')?.value||''
@@ -15352,7 +15572,7 @@ pages.personas=()=>{
         mb.querySelector('#_paadd').onclick=()=>{
           if(!lastGen)return
           const np={id:uid(),name:lastGen.name||'未命名',identity:lastGen.identity||'',personality:lastGen.personality||'',secret:lastGen.secret||'',avatar:'',wechatId:genWcId()}
-          personaList.push(np);activePersonaId=np.id;savePersonaList();close();render('personaedit')
+          personaList.push(np);activePersonaId=np.id;savePersonaList();close();_navSkipPush=true;render('personaedit')
         }
       }
       
@@ -15379,11 +15599,9 @@ pages.personaedit=()=>{
 
     <div class="card"><div class="card-t">昵称</div><input class="inp" id="_pn" value="${escHtml(q.name||'')}"></div>
     <div class="card"><div class="card-t">身份</div><input class="inp" id="_pi" value="${escHtml(q.identity||'')}"></div>
-    <div class="card"><div class="card-t">外貌</div><textarea class="tarea" id="_pap" rows="2" placeholder="例如：黑色长发、圆眼睛、身高165、喜欢穿卫衣...">${escHtml(q.appearance||'')}</textarea></div>
-    <div class="card"><div class="card-t">性格</div><input class="inp" id="_pp" value="${escHtml(q.personality||'')}"></div>
+    <div class="card"><div class="card-t">性格</div><textarea class="tarea" id="_pp" rows="4" style="min-height:80px">${escHtml(q.personality||'')}</textarea></div>
 <div class="card"><div class="card-t">拍一拍后缀</div><input class="inp" id="_ppat" placeholder="例如：钱包、狗头..." value="${escHtml(q.patSuffix||'')}"></div>
 
-    <div class="card"><div class="card-t">秘密</div><textarea class="tarea" id="_ps" rows="3">${escHtml(q.secret||'')}</textarea></div>
     <div class="btn-main" id="_psave" style="margin-top:12px">保存马甲</div>
   `
   p.appendChild(body);app.appendChild(p)
@@ -15402,13 +15620,12 @@ pages.personaedit=()=>{
     const name=body.querySelector('#_pn').value.trim()
     if(!name){alert('至少给马甲起个名字吧');return}
     q.name=name;q.identity=body.querySelector('#_pi').value.trim()
-    q.appearance=body.querySelector('#_pap').value.trim()
-    q.personality=body.querySelector('#_pp').value.trim();q.secret=body.querySelector('#_ps').value.trim()
+    q.personality=body.querySelector('#_pp').value.trim()
     q.patSuffix=body.querySelector('#_ppat').value.trim()
     savePersonaList()
     store.set('_personaBackup',null)
     const btn=body.querySelector('#_psave');btn.textContent='已保存 ✓';btn.style.background='linear-gradient(135deg,#c8e0c0,#d8ecd0)'
-    setTimeout(()=>render('personas'),500)
+    setTimeout(()=>{_navSkipPush=true;render('personas')},500)
   }
 }
 
@@ -15725,7 +15942,7 @@ body.querySelectorAll('._wbview').forEach(el=>{
       if(lastBtn)lastBtn.click()
     },50)
   }
-  body.querySelector('#_importwb').onclick=()=>{
+  body.querySelector('#_importwb').onclick=()=>{ requireActivation(()=>{
     const inp=document.createElement('input');inp.type='file';inp.accept='.json'
     inp.onchange=async(e)=>{
       const file=e.target.files[0];if(!file)return
@@ -15769,7 +15986,7 @@ body.querySelectorAll('._wbview').forEach(el=>{
         alert('导入失败：'+err.message)
       }
     };inp.click()
-  }
+  })}
 
   body.querySelector('#_aiwb').onclick=()=>{
     showModal('AI生成世界观',(mb,close)=>{
@@ -16082,7 +16299,7 @@ body.querySelectorAll('._sbview').forEach(el=>{
   }
 
   // 导入酒馆预设 JSON
-  body.querySelector('#_importPreset').onclick=()=>{
+  body.querySelector('#_importPreset').onclick=()=>{ requireActivation(()=>{
     const inp=document.createElement('input');inp.type='file';inp.accept='.json'
     inp.onchange=async(e)=>{
       const file=e.target.files[0];if(!file)return
@@ -16152,7 +16369,7 @@ body.querySelectorAll('._sbview').forEach(el=>{
       }catch(err){ alert('解析失败：'+err.message) }
     }
     inp.click()
-  }
+  })}
 
   body.querySelector('#_aisb').onclick=()=>{
     showModal('AI生成预设',(mb,close)=>{
@@ -17232,53 +17449,121 @@ ${recentMsgs}
 
     // ==== 心跳双向问答 ====
     const btnQna = body.querySelector('#_btn_qna');
-    if(btnQna) btnQna.onclick = async () => {
+    if(btnQna) btnQna.onclick = () => {
        if(!getApi()?.key) return alert('请先配置聊天 API');
        btnQna.style.transform='scale(0.95)'; setTimeout(()=>btnQna.style.transform='scale(1)', 100);
-       
-       btnQna.innerHTML = 'TA 正在思考问什么...'; btnQna.style.pointerEvents = 'none'; btnQna.style.opacity = '0.7';
-       const prompt1 = `你是「${curC.name}」（${curC.personality||''}）。你想对用户（${P().name}）发起一个双向问答。
-请随机抛出一个容易让人心跳、关于感情、试探或者略带深度的私人问题。
-要求：千万不要用emoji，短小精悍，只有一句话，像真人一样自然。`;
-       const question = await askAI('提问', prompt1, 100);
-       btnQna.innerHTML = `${I.heart('#6a90c0', 18)} 灵魂共鸣问答`; btnQna.style.pointerEvents = 'auto'; btnQna.style.opacity = '1';
-       
-       if(!question || question.includes('API')) return alert('网络不佳，没收到问题，重试一下吧');
-       
-       showModal('心跳双向问答', (mb, close) => {
-          mb.innerHTML = `
-             <div style="text-align:center;padding:20px 0">
-                <div style="font-size:11px;color:#6a90c0;font-weight:600;letter-spacing:1px;margin-bottom:16px">${curC.name} 的提问</div>
-                <div style="font-size:15px;color:var(--ink);font-weight:500;padding:16px 20px;background:rgba(232,240,250,.5);border-radius:16px;display:inline-block;border:1px solid rgba(160,180,220,.2)">"${escHtml(question)}"</div>
+
+       // 公共上下文
+       const _qMsgs = getMsgs(curC.id);
+       const _qMems = memories.filter(m => m.charId === curC.id).slice(-8);
+       const _qRecent = _qMsgs.slice(-15).map(m=>(m.from==='u'?P().name:curC.name)+'：'+(m.text||'').slice(0,50)).join('\n');
+       const _qMemTxt = _qMems.map(m=>m.text||m.title||'').filter(Boolean).map(t=>t.slice(0,60)).join('；');
+       const _qHistKey = 'soulQA_hist_' + curC.id;
+       const _qHist = JSON.parse(localStorage.getItem(_qHistKey)||'[]').slice(-15);
+       const _qHistBlock = _qHist.length ? '\n\n【之前已经问过这些，绝对不要再问类似的】：\n' + _qHist.map((q,i)=>(i+1)+'. '+q).join('\n') : '';
+       const _bondVal = _qMsgs.length * 5 + _qMems.length * 80;
+       const _bondTitle = _bondVal>=6000?'此生不换':_bondVal>=3500?'情根深种':_bondVal>=1800?'心意相通':_bondVal>=800?'引为知己':_bondVal>=300?'渐生情愫':'初见';
+       const _charCtx = `你是「${curC.name}」。\n性格：${curC.personality||'（未设定）'}\n你和「${P().name}」的关系：${curC.relation||'（未明确）'}\n当前羁绊阶段：${_bondTitle}\n${_qMemTxt?'你们之间的重要记忆：'+_qMemTxt:''}\n${_qRecent?'最近聊天片段：\n'+_qRecent:''}`;
+
+       // ── 先弹方向选择 ──
+       showModal('灵魂共鸣问答', (mb0, close0) => {
+         mb0.innerHTML = `
+           <div style="text-align:center;padding:10px 0 20px">
+             <div style="font-size:12px;color:${n?'#a898b8':'var(--ink-l)'};margin-bottom:20px">选择提问方向</div>
+             <div style="display:flex;gap:12px">
+               <div id="_qa_ta" style="flex:1;padding:20px 12px;border-radius:18px;background:${n?'rgba(180,160,200,.15)':'rgba(232,240,250,.6)'};border:1px solid rgba(160,180,220,.3);cursor:pointer;text-align:center;transition:transform .1s">
+                 <div style="margin-bottom:10px">${avatarEl(curC.avatar,48)}</div>
+                 <div style="font-size:13px;color:#6a90c0;font-weight:600">${escHtml(curC.name)}</div>
+                 <div style="font-size:11px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:4px">向你提问</div>
+               </div>
+               <div id="_qa_me" style="flex:1;padding:20px 12px;border-radius:18px;background:${n?'rgba(200,160,180,.15)':'rgba(245,213,222,.6)'};border:1px solid rgba(232,160,180,.3);cursor:pointer;text-align:center;transition:transform .1s">
+                 <div style="margin-bottom:10px">${avatarEl(P().avatar,48)}</div>
+                 <div style="font-size:13px;color:var(--rose-d);font-weight:600">${escHtml(P().name||'我')}</div>
+                 <div style="font-size:11px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:4px">向TA提问</div>
+               </div>
              </div>
-             <div class="card" style="box-shadow:none;border:none;background:transparent;padding:0"><div class="card-t" style="color:var(--ink-l)">你的真心话</div><input class="inp" id="_qnainp" style="background:${n?'rgba(255,255,255,.1)':'#fff'};border-radius:12px;padding:12px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.03)" placeholder="诚实地写下你的回答..."></div>
-             <div class="btn-main" id="_qnago" style="margin-top:20px;background:linear-gradient(135deg,#6a90c0,#8aacc8)">回应 TA</div>
-          `;
-          
-          mb.querySelector('#_qnago').onclick = async () => {
-             const ans = mb.querySelector('#_qnainp').value.trim();
-             if(!ans) return alert('不能跳过回答哦');
-             const btn2 = mb.querySelector('#_qnago');
-             btn2.textContent = 'TA 听到后正在反应...'; btn2.style.opacity = '0.5'; btn2.style.pointerEvents = 'none';
-             
-             const prompt2 = `你是「${curC.name}」（${curC.personality||''}）。在刚才的问答中：
-你的问题：${question}
-用户回答：${ans}
-请描写听到这个回答后你真实的动作、神态反应，并用你自己的口吻说一句话回应。字数在150字以内，绝对禁止使用emoji。`;
-             const reaction = await askAI('反应', prompt2, 300);
-             
-             if(reaction && !reaction.includes('API')){
-                const combinedText = `Q: ${question}\n\nA: ${ans}\n\n${curC.name}的反应：\n${reaction}`;
-                memories.unshift({
-                   id: uid(), charId: curC.id, type: 'qna',
-                   title: `💬 与${curC.name}的共鸣问答`,
-                   text: combinedText, time: new Date().toLocaleString(), image: ''
-                });
-                saveMem(); close(); renderBond(); alert('这段心跳回忆已收藏入册！');
-             } else {
-                btn2.textContent = '网络错误，请重试'; btn2.style.opacity = '1'; btn2.style.pointerEvents = 'auto';
-             }
-          }
+           </div>`;
+         mb0.querySelector('#_qa_ta').onpointerdown = function(){ this.style.transform='scale(0.95)' };
+         mb0.querySelector('#_qa_ta').onpointerup = function(){ this.style.transform='scale(1)' };
+         mb0.querySelector('#_qa_me').onpointerdown = function(){ this.style.transform='scale(0.95)' };
+         mb0.querySelector('#_qa_me').onpointerup = function(){ this.style.transform='scale(1)' };
+
+         // ━━━ 路线A：TA 向你提问 ━━━
+         mb0.querySelector('#_qa_ta').onclick = async () => {
+           close0();
+           btnQna.innerHTML = 'TA 正在思考问什么...'; btnQna.style.pointerEvents = 'none'; btnQna.style.opacity = '0.7';
+           const prompt1 = _charCtx + _qHistBlock + `\n\n现在你要在"灵魂共鸣问答"里向「${P().name}」提一个问题。\n要求：\n1. 完全符合你的性格和说话风格，像你本人真的在问\n2. 可以试探、暧昧、走心、刁钻、挑逗——风格取决于你的性格\n3. 可以根据你们的聊天记忆出题，也可以出通用深度问题\n4. 羁绊越深问题可以越大胆越私密\n5. 不要用emoji，只输出问题本身（一句话），不加引号不加前缀`;
+           const question = await askAI('提问', prompt1, 150);
+           if(question && !question.includes('API')) {
+             _qHist.push(question.replace(/^["「『"]+|["」』"]+$/g,'').slice(0,80));
+             localStorage.setItem(_qHistKey, JSON.stringify(_qHist.slice(-20)));
+           }
+           btnQna.innerHTML = `${I.heart('#6a90c0', 18)} 灵魂共鸣问答`; btnQna.style.pointerEvents = 'auto'; btnQna.style.opacity = '1';
+           if(!question || question.includes('API')) return alert('网络不佳，没收到问题，重试一下吧');
+
+           showModal('心跳双向问答', (mb, close) => {
+             mb.innerHTML = `
+               <div style="text-align:center;padding:20px 0">
+                 <div style="font-size:11px;color:#6a90c0;font-weight:600;letter-spacing:1px;margin-bottom:16px">${curC.name} 的提问</div>
+                 <div style="font-size:15px;color:var(--ink);font-weight:500;padding:16px 20px;background:rgba(232,240,250,.5);border-radius:16px;display:inline-block;border:1px solid rgba(160,180,220,.2)">"${escHtml(question)}"</div>
+               </div>
+               <div class="card" style="box-shadow:none;border:none;background:transparent;padding:0"><div class="card-t" style="color:var(--ink-l)">你的真心话</div><input class="inp" id="_qnainp" style="background:${n?'rgba(255,255,255,.1)':'#fff'};border-radius:12px;padding:12px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.03)" placeholder="诚实地写下你的回答..."></div>
+               <div class="btn-main" id="_qnago" style="margin-top:20px;background:linear-gradient(135deg,#6a90c0,#8aacc8)">回应 TA</div>`;
+             mb.querySelector('#_qnago').onclick = async () => {
+               const ans = mb.querySelector('#_qnainp').value.trim();
+               if(!ans) return alert('不能跳过回答哦');
+               const btn2 = mb.querySelector('#_qnago');
+               btn2.textContent = 'TA 听到后正在反应...'; btn2.style.opacity = '0.5'; btn2.style.pointerEvents = 'none';
+               const prompt2 = _charCtx + `\n\n你刚才在灵魂共鸣问答里问了「${P().name}」：\n"${question}"\n对方回答：\n"${ans}"\n\n请以「${curC.name}」的身份给出反应。\n要求：\n1. 完全符合你的性格（傲娇就阴阳怪气、温柔就温柔、毒舌就毒舌、病娇就黑化...）\n2. 先描写你听到回答后的真实动作和神态反应，再用你的口吻说一两句话回应\n3. 也可以顺带分享你自己对这个问题的想法\n4. 150字以内，像真人深夜聊心事一样自然，不要用emoji`;
+               const reaction = await askAI('反应', prompt2, 400);
+               if(reaction && !reaction.includes('API')){
+                 memories.unshift({ id:uid(), charId:curC.id, type:'qna', title:`与${curC.name}的共鸣问答`, text:`${curC.name}问：${question}\n\n${P().name}答：${ans}\n\n${curC.name}的反应：\n${reaction}`, time:new Date().toLocaleString(), image:'' });
+                 saveMem(); close(); renderBond(); alert('这段心跳回忆已收藏入册！');
+               } else { btn2.textContent = '网络错误，请重试'; btn2.style.opacity = '1'; btn2.style.pointerEvents = 'auto'; }
+             };
+           });
+         };
+
+         // ━━━ 路线B：你向 TA 提问 ━━━
+         mb0.querySelector('#_qa_me').onclick = () => {
+           close0();
+           showModal('向 '+curC.name+' 提问', (mb, close) => {
+             mb.innerHTML = `
+               <div style="text-align:center;padding:16px 0 12px">
+                 <div style="font-size:11px;color:var(--rose-d);font-weight:600;letter-spacing:1px;margin-bottom:8px">你的提问</div>
+                 <div style="font-size:12px;color:${n?'#a898b8':'var(--ink-l)'};line-height:1.6">问一个你真正想知道的问题吧<br>TA 会认真回答你</div>
+               </div>
+               <div class="card" style="box-shadow:none;border:none;background:transparent;padding:0"><div class="card-t" style="color:var(--ink-l)">你想问的</div><input class="inp" id="_myqinp" style="background:${n?'rgba(255,255,255,.1)':'#fff'};border-radius:12px;padding:12px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.03)" placeholder="写下你的问题..."></div>
+               <div class="btn-main" id="_myqgo" style="margin-top:20px;background:linear-gradient(135deg,var(--rose-l),var(--rose))">问 TA</div>`;
+             mb.querySelector('#_myqgo').onclick = async () => {
+               const myQ = mb.querySelector('#_myqinp').value.trim();
+               if(!myQ) return alert('还没写问题呢');
+               const btn3 = mb.querySelector('#_myqgo');
+               btn3.textContent = 'TA 正在认真想...'; btn3.style.opacity = '0.5'; btn3.style.pointerEvents = 'none';
+               const prompt3 = _charCtx + `\n\n「${P().name}」在灵魂共鸣问答里向你提了一个问题：\n"${myQ}"\n\n请以「${curC.name}」的身份认真回答这个问题。\n要求：\n1. 完全符合你的性格和说话风格\n2. 先描写你听到这个问题后的动作和神态（害羞、沉思、笑了、别过脸...取决于你的性格），再认真回答\n3. 回答要走心、有深度，可以透露你内心真实的想法\n4. 200字以内，像真人被问到私人问题时的真实反应，不要用emoji`;
+               const taAns = await askAI('回答', prompt3, 500);
+               if(taAns && !taAns.includes('API')){
+                 // 展示TA的回答
+                 mb.innerHTML = `
+                   <div style="text-align:center;padding:16px 0">
+                     <div style="font-size:11px;color:var(--rose-d);font-weight:600;letter-spacing:1px;margin-bottom:16px">你的提问</div>
+                     <div style="font-size:14px;color:var(--ink);font-weight:500;padding:14px 18px;background:${n?'rgba(200,160,180,.12)':'rgba(245,213,222,.5)'};border-radius:16px;display:inline-block;border:1px solid rgba(232,160,180,.2)">"${escHtml(myQ)}"</div>
+                   </div>
+                   <div style="padding:16px 0">
+                     <div style="font-size:11px;color:#6a90c0;font-weight:600;letter-spacing:1px;margin-bottom:12px">${curC.name} 的回答</div>
+                     <div style="font-size:14px;color:var(--ink);line-height:2;padding:16px 18px;background:rgba(232,240,250,.5);border-radius:16px;border:1px solid rgba(160,180,220,.2);white-space:pre-wrap">${escHtml(taAns)}</div>
+                   </div>
+                   <div class="btn-main" id="_myqsave" style="margin-top:16px;background:linear-gradient(135deg,#6a90c0,#8aacc8)">收藏这段回忆</div>
+                   <div class="btn-sub" id="_myqclose" style="margin-top:10px">关闭</div>`;
+                 mb.querySelector('#_myqsave').onclick = () => {
+                   memories.unshift({ id:uid(), charId:curC.id, type:'qna', title:`与${curC.name}的共鸣问答`, text:`${P().name}问：${myQ}\n\n${curC.name}答：\n${taAns}`, time:new Date().toLocaleString(), image:'' });
+                   saveMem(); close(); renderBond(); alert('这段心跳回忆已收藏入册！');
+                 };
+                 mb.querySelector('#_myqclose').onclick = close;
+               } else { btn3.textContent = '网络错误，请重试'; btn3.style.opacity = '1'; btn3.style.pointerEvents = 'auto'; }
+             };
+           });
+         };
        });
     };
   }
@@ -18103,126 +18388,96 @@ pages.assistant=function(){
 
   setTimeout(()=>{if(asMsgs.length)ml.scrollTop=ml.scrollHeight-200},50)
 
-  const _asSysPrompt=`你是「花枝」，一个住在乙女小手机（Otome Phone）里的可爱精灵🌸。
-你的性格：元气满满、有点小傲娇、偶尔吐槽但很热心、说话带点颜文字和可爱语气词（呐、嘛、啦、呀、哼）。
-你不是冷冰冰的客服，你是用户养在手机里的小精灵，跟用户关系很亲近，像闺蜜/损友。
-可以撒娇、傲娇、吐槽用户笨，但核心是帮用户解决问题。
+  const _asSysPrompt=`你是「花枝」，住在乙女小手机（Otome Phone）里的精灵。
+性格：元气、小傲娇、偶尔吐槽但热心，说话带语气词（呐、嘛、啦、呀、哼），像闺蜜/损友。
+可以撒娇、吐槽用户笨，但核心是帮用户解决问题。
 
-══════ 以下是小手机的【真实功能说明】，你必须严格按照这个来回答，不要编造不存在的功能 ══════
+══════ 小手机完整功能说明（必须严格按这个回答）══════
 
-【整体介绍】
-乙女小手机是一个单HTML文件的AI角色扮演聊天应用。用户创建/导入角色后，通过自己配置的AI API和角色聊天互动。支持两种聊天模式：线上模式（微信式短消息）和线下模式（沉浸式小说剧情）。
+【桌面App】
+1. 消息：聊天列表，和角色对话。右上角菜单可导入角色卡（Tavern .json/.png）
+2. 群聊：创建多人群聊，角色们会互相聊天、吵架、接话
+3. 朋友圈：角色会发动态，你和角色都能评论互动
+4. 情侣空间：和角色绑定CP后的专属空间（合照、任务、留言板）
+5. 邂逅：从零捏新角色（不是导入！导入在消息页右上角菜单）
+6. 直播广场：NPC主播直播，可以发弹幕、送礼物、连麦
+7. 副本：穿越类剧情副本，有属性系统和NPC好感
+8. 世界书：给角色加背景设定词条，关键词触发自动注入
+9. 约会：管理和角色的约会事件
+10. 生图：用DALL-E等生成图片
+11. 马甲：创建多个用户身份，不同角色可绑定不同马甲
+12. 地图：角色活动地点，可触发线下剧情
+13. 羁绊：和角色的合照/记忆相册
+14. 论坛：角色自动发帖互动的虚拟社区
+15. 预设/文风：给聊天绑定自定义提示词和写作风格模板
+16. 钱包：虚拟货币系统（红包、转账）
+17. 养成：角色好感度/属性养成
+18. 查岗：偷看角色在干嘛（双向的——角色也会来查你的岗！）
+19. 音乐：内置播放器，支持在线搜歌、本地上传、聊天中点歌分享
+20. 美化/主题：壁纸、主题色、气泡CSS自定义、AI设计气泡、字体库、方案导入导出
+21. 设置：API配置、语音API、生图API、向量记忆、数据管理
+22. 助手：就是我啦~花枝！
 
-【桌面App一览】（就是主页那些图标）
-1. 💬 消息（聊天列表）：查看所有角色的聊天，进入和角色的对话
-2. 🌸 邂逅：【捏人设用的！】从零开始创建一个全新角色，填写名字、性格、头像等。也可以选择"根据马甲捏人"让AI帮你生成
-3. 📖 世界书：给角色添加额外的背景设定词条，设置关键词触发，聊天中提到关键词时自动注入上下文
-4. 📅 约会：查看和管理跟角色的约会事件
-5. 🎨 生图：用DALL-E等图像模型生成图片
-6. 🎭 马甲：创建和切换不同的用户身份（你的名字、性格、身份设定），可以有多个马甲
-7. 🗺️ 地图：查看角色的活动地点
-8. 📸 羁绊：查看和角色的合照/记忆相册
-9. 💬 论坛：角色们会自动发帖互动的虚拟社区
-10. 📝 预设/文风：给聊天绑定自定义提示词和写作风格模板
-11. 💰 钱包：虚拟货币系统
-12. 💕 养成：角色好感度/属性养成互动系统
-13. 🔍 查岗：偷看角色现在在干什么（AI生成角色此刻的日常动态）
-14. ⚙️ 设置：API配置、主题/壁纸切换、夜间模式、数据导入导出、自定义CSS等
-15. 🌸 助手：就是我啦~花枝！
+【聊天界面】
+- 「发送」发消息，「推进」让AI主动推进剧情
+- 底栏「+」：发图片、语音、表情包、红包、转账
+- 消息下方按钮：读心/引用/拍一拍/播放语音/重说
+- 用户消息可编辑和撤回
+- 角色会发表情包（[sticker:含义]格式）、语音条、红包、转账、音乐卡片、转发聊天记录
+- 角色可以主动点歌 [点歌:歌名-歌手]
+- 顶栏菜单：切换线上/线下模式、编辑角色、查看记忆、绑定预设/世界书、多人线下
 
-【如何导入角色卡】⚠️ 这个很重要，用户经常问！
-导入角色卡有两个入口：
-① 打开「消息」（聊天列表）→ 点右上角的菜单（三个点）→ 选「导入角色卡」
-② 点「邂逅」→ 弹窗底部有一个绿色的「导入角色卡」按钮
-支持Tavern格式的角色卡（.json 或 .png），导入后自动创建角色并进入聊天。
-注意：「邂逅」本身是【手动捏人设】的，不要把邂逅和导入搞混！
+【线上 vs 线下模式】
+线上：微信式短消息聊天，口语化
+线下：小说体叙事（不等于见面！各自有各自的生活轨迹），长篇描写，有状态面板
+线下更费token，在菜单里切换
 
-【聊天界面功能】
-- 发送消息后AI自动角色扮演回复
-- 「推进」按钮：不用你说话，让AI主动推进剧情/找你聊天
-- 「发送」按钮：发送你输入的消息
-- 底栏左边「+」：展开更多功能（发图片、语音等）
-- 消息下方的按钮：
-  · 读心：偷看角色此刻的真实内心想法
-  · 引用：引用这条消息回复
-  · 拍一拍：跟角色做互动动作（摸头、拥抱等）
-  · ▷ 播放：语音朗读这条消息
-  · 重说：让AI重新生成这条回复
-- 用户消息下方有「编辑」和「撤回」
-- 长按消息可以删除
-- 顶栏的菜单（三个点或汉堡按钮）里有更多选项：
-  · 切换线上/线下模式
-  · 查看/编辑角色设定
-  · 查看角色的记忆/档案
-  · 绑定预设/文风
-  · 绑定世界书
+【通话功能】
+语音通话和视频通话——在聊天菜单或角色卡片里发起
+需要配置语音API（TTS）才能听到声音
 
-【线上模式 vs 线下模式】
-线上模式（默认）：
-- 就像微信聊天，你一句我一句
-- 回复比较短，口语化
-- 角色会发表情包、语音条等
+【表情包系统】
+在设置或聊天「+」菜单里管理表情包库
+支持批量导入，角色聊天时会自动发表情包
 
-线下模式：
-- 切换成沉浸式小说体验
-- AI会写长篇叙事，包含环境描写、角色心理活动、动作神态、对白
-- 会生成状态面板（显示角色当前的情绪、状态等）
-- 适合深度角色扮演和剧情推进
-- ⚠️ 比线上模式更费token，因为生成内容更长
-- 在聊天界面的菜单里切换
+【记忆系统】
+自动提炼对话为长期记忆摘要 + 关键事件列表
+支持向量记忆（配置Embedding API后语义级检索）
+可手动「立即提炼记忆」
 
-【长期记忆系统】
-- 聊多了之后，系统会自动把对话提炼成记忆摘要
-- 也可以在角色的记忆页面手动点「立即提炼记忆」
-- 记忆摘要会在每次聊天时自动注入，让角色记住你们过去发生的事
-- 关键事件列表会记录具体发生过什么重要的事
+【模型切换悬浮球】
+右下角有个小悬浮球，点击可切换API和拉取模型列表，所有页面都能用
 
-【API配置】
-- 在「设置」里配置
-- 需要填：服务商类型、Base URL、API Key、模型名
-- 服务商类型支持：OpenAI兼容、Claude、Gemini等
-- ⚠️ 如果用中转站，建议服务商选「OpenAI兼容」，不要选「claude」！选claude会走Anthropic原生协议，大部分中转站不支持，会报CORS错误
-- 可以添加多个API配置，在聊天时切换使用
+【API配置要点】
+- 在设置页配置，支持多组
+- 中转站选「OpenAI兼容」，不要选claude（会CORS）
+- 可以在悬浮球里快速切换和拉取模型
 
-【常见问题排查】
-Q: 测试连接成功但聊天报错？
-A: 测试只发很短的请求。聊天时内容长很多，可能是：①上下文太长导致超时 ②CORS跨域（换成OpenAI兼容协议）③token超限
+【常见问题】
+Q: 怎么导入角色卡？ → 消息页右上角菜单 → 导入角色卡（支持.json/.png）
+Q: 测试成功但聊天报错？ → 上下文太长/CORS/token超限
+Q: 超时？ → 换快模型/减历史条数/关不用的世界书
+Q: CORS？ → 服务商改成OpenAI兼容
+Q: 401？ → Key无效或过期
+Q: 429？ → 太频繁或额度用完
+Q: 显示HTML代码？ → 重说一次
+Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
 
-Q: 为什么回复超时？
-A: 线下模式内容很长，慢模型（如Claude Opus）容易超时。建议：①换快一点的模型（如Claude Sonnet/Haiku）②减少历史消息条数 ③关掉不用的世界书
+【省token】减历史条数（25条够了）、及时提炼记忆、关不用的世界书、选便宜模型
 
-Q: CORS跨域错误？
-A: 中转站不支持浏览器直连Anthropic协议。解决：把服务商改成「OpenAI兼容」
-
-Q: 401错误？
-A: API Key无效或过期，检查Key是否正确
-
-Q: 429错误？
-A: 请求太频繁或额度用完了
-
-Q: 回复内容里显示一堆HTML代码？
-A: 可能是模型生成了HTML卡片但没被正确渲染，试试重说一次
-
-【省token技巧】
-- 设置里调低历史消息条数（25条就够了，有长期记忆兜底）
-- 及时提炼长期记忆
-- 线下模式比线上更费token
-- 世界书和预设都会占token，不用的关掉
-- 选择更便宜的模型
-
-【数据管理】
-- 设置里可以导出全部数据（备份）
-- 设置里可以导入数据（恢复）
-- 角色数据、聊天记录、记忆等都存在浏览器本地存储（localStorage）里
-- ⚠️ 清除浏览器数据会丢失所有内容，记得定期备份！
+══════ 动作能力 ══════
+你可以在回复中插入动作指令帮用户跳转页面，格式：[跳转:页面名]
+可用页面：home/msglist/groups/moments/couple/settings/beauty/assistant/music/snoop/dungeons/gallery/map
+例如用户说「帮我去设置」→ 你回复「好嘞~ [跳转:settings]」
+例如用户说「打开美化」→「这就带你去~ [跳转:beauty]」
 
 ══════ 回答规则 ══════
-- 简洁可爱，不要写得像说明书！每次3-6句话以内
-- 用emoji但不要过多（每条回复2-4个就好）
-- 如果不确定某个功能的细节，就说"这个花枝不太确定呢，你可以自己点进去看看~"，不要编造！
-- 如果用户问的不是小手机相关的问题也能聊，你是有自己个性的小精灵嘛~
-- 用户吐槽小手机的bug时要共情安慰，不要装作没问题
-- 回答不要用markdown格式（不要用**加粗**和#标题），直接用纯文本和emoji就好`
+- 简洁可爱，3-6句话以内
+- 不确定就说「这个花枝不太确定呢，你点进去看看~」，不要编！
+- 不是小手机问题也能聊，你有自己的个性
+- 用户吐槽bug要共情，不要装没事
+- 不要用markdown（不要**加粗**和#标题），纯文本就好
+- 语气词自然地用，但不要每句都堆`
 
   async function _asSend(text){
     if(!text.trim())return
@@ -18267,6 +18522,17 @@ A: 可能是模型生成了HTML卡片但没被正确渲染，试试重说一次
       asMsgs.push({from:'a',text:'哎呀断线了…花枝连不上了 (╥﹏╥) '+String(e.message||e).slice(0,200)})
     }
     store.set('_assistantMsgs',asMsgs)
+    // 解析花枝的跳转指令
+    const _lastAs=asMsgs[asMsgs.length-1]
+    if(_lastAs&&_lastAs.from==='a'){
+      const _jmp=_lastAs.text.match(/\[跳转[:：](\w+)\]/)
+      if(_jmp){
+        _lastAs.text=_lastAs.text.replace(/\[跳转[:：]\w+\]/g,'').trim()
+        store.set('_assistantMsgs',asMsgs)
+        setTimeout(()=>render(_jmp[1]),300)
+        return
+      }
+    }
     render('assistant')
   }
 
@@ -23363,7 +23629,7 @@ pages.encounter=function(){
 
     const prompt=extraPrompt||`请根据以下描述生成一个角色：${desc||'随机生成一个有趣的角色'}
 要求返回一个JSON对象（不要markdown代码块），包含以下字段：
-{"name":"角色姓名","personality":"详细的角色性格、背景、说话方式描述（至少100字）","relation":"和用户的初始关系（如：初识、同学、邻居等）","mood":"当前心情","status":"当前状态","affection":25,"quote":"角色的一句代表性台词"}`
+{"name":"角色姓名","personality":"详细的角色性格、背景、外貌特征、说话方式描述（至少150字，写得像小说人物介绍，有细节有温度）","relation":"和用户的初始关系（如：初识、同学、邻居等）","mood":"当前心情","status":"当前在做什么","firstMsg":"你们相遇时TA说的第一句话（要符合角色性格和场景，像真人脱口而出的话，不要书面腔）"}`
 
     try{
       const r=await callLLM({system:'你是角色生成器。只返回JSON，不要任何其他内容。不要用markdown代码块包裹。',messages:[{role:'user',content:prompt}],maxTokens:1500,temperature:1.0})
@@ -23398,19 +23664,26 @@ pages.encounter=function(){
 
       if(resDiv){
         resDiv.style.display='block'
+        const _moodStatus = [d.mood,d.status].filter(Boolean).join(' · ')
         resDiv.innerHTML=`
-          <div style="border-radius:18px;background:${n?'rgba(255,255,255,.06)':'rgba(255,255,255,.7)'};border:1px solid ${n?'rgba(200,180,220,.1)':'rgba(232,160,180,.08)'};padding:20px;margin-bottom:14px;animation:fadeIn .4s ease-out">
+          <div style="border-radius:18px;background:${n?'rgba(255,255,255,.06)':'rgba(255,255,255,.7)'};border:1px solid ${n?'rgba(200,180,220,.1)':'rgba(232,160,180,.08)'};padding:20px;margin-bottom:14px;animation:fadeIn .4s ease-out;overflow:hidden">
             ${isEx?`<div style="text-align:center;padding:6px 14px;border-radius:12px;background:${n?'rgba(200,168,208,.15)':'rgba(200,168,208,.1)'};color:${n?'#c8a8d0':'#9a7aaa'};font-size:10px;letter-spacing:2px;margin-bottom:14px">命运的齿轮重新转动 · 前任重逢</div>`:''}
-            <div style="text-align:center;margin-bottom:14px">
-              <div style="width:64px;height:64px;border-radius:50%;margin:0 auto 10px;background:linear-gradient(135deg,${n?'#2d1f3a':'#f5eef0'},${n?'#3a2d4a':'#ede0e4'});display:flex;align-items:center;justify-content:center;font-size:24px;color:${rc};font-weight:300;letter-spacing:1px;border:2px solid ${n?'rgba(200,168,208,.2)':'rgba(232,160,180,.15)'}">${escHtml((d.name||'?')[0])}</div>
-              <div style="font-size:16px;font-weight:500;color:${tc};letter-spacing:2px">${escHtml(d.name)}</div>
-              <div style="font-size:11px;color:${tc2};margin-top:4px;letter-spacing:1px">${escHtml(d.relation||'初识')}</div>
+            <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+              <div style="width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,${n?'#2d1f3a':'#f5eef0'},${n?'#3a2d4a':'#ede0e4'});display:flex;align-items:center;justify-content:center;font-size:22px;color:${rc};font-weight:300;border:2px solid ${n?'rgba(200,168,208,.2)':'rgba(232,160,180,.15)'};flex-shrink:0">${escHtml((d.name||'?')[0])}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:15px;font-weight:500;color:${tc};letter-spacing:1.5px">${escHtml(d.name)}</div>
+                <div style="font-size:11px;color:${rc};margin-top:3px">${escHtml(d.relation||'初识')}</div>
+                ${_moodStatus?`<div style="font-size:10px;color:${tc2};margin-top:3px">${escHtml(_moodStatus)}</div>`:''}
+              </div>
             </div>
-            <div style="padding:14px;border-radius:14px;background:${n?'rgba(0,0,0,.15)':'rgba(0,0,0,.02)'};margin-bottom:12px">
-              <div style="font-size:11px;color:${tc};line-height:1.9;letter-spacing:.3px">${escHtml(d.personality||'').slice(0,200)}${(d.personality||'').length>200?'…':''}</div>
+            <div style="padding:12px 14px;border-radius:14px;background:${n?'rgba(0,0,0,.15)':'rgba(0,0,0,.02)'};margin-bottom:12px;max-height:160px;overflow-y:auto">
+              <div style="font-size:11px;color:${tc};line-height:1.9;letter-spacing:.3px">${escHtml(d.personality||'')}</div>
             </div>
-            <div style="padding:10px 14px;border-radius:12px;background:${n?'rgba(200,168,208,.08)':'rgba(245,213,222,.2)'};font-style:italic;font-size:12px;color:${tc2};line-height:1.7;letter-spacing:.3px">"${escHtml(d.quote||'...')}"</div>
-            <div style="display:flex;gap:10px;margin-top:16px">
+            ${(d.firstMsg||d.quote)?`<div style="padding:10px 14px;border-radius:12px;background:${n?'rgba(200,168,208,.08)':'rgba(245,213,222,.2)'};margin-bottom:4px;position:relative">
+              <div style="font-size:9px;color:${rc};letter-spacing:1.5px;margin-bottom:5px">初遇</div>
+              <div style="font-size:12px;color:${tc};line-height:1.7;letter-spacing:.3px">"${escHtml(d.firstMsg||d.quote)}"</div>
+            </div>`:''}
+            <div style="display:flex;gap:10px;margin-top:14px">
               <div id="_enc_discard" style="flex:1;padding:12px;border-radius:18px;background:${n?'rgba(255,255,255,.06)':'rgba(255,255,255,.5)'};border:1px solid ${n?'rgba(255,255,255,.08)':'rgba(232,160,180,.12)'};text-align:center;font-size:12px;color:${tc2};letter-spacing:2px;cursor:pointer">${isEx?'装作没认出来':'不感兴趣'}</div>
               <div id="_enc_save" style="flex:1;padding:12px;border-radius:18px;background:linear-gradient(135deg,${isEx?(n?'#c8a8d0':'#c5b8d4'):(n?'#c8a8d0':'var(--rose-l)')},${isEx?(n?'#a888b8':'#a898b8'):(n?'#a888c0':'#f0c8d4')});text-align:center;font-size:12px;color:${n?'#1a1224':'var(--ink)'};letter-spacing:2px;cursor:pointer;font-weight:500">${isEx?'加回联系人':'加入联系人'}</div>
             </div>
@@ -23430,8 +23703,10 @@ pages.encounter=function(){
               saveMsgs(lastChar.id,arr)
               activeCharId=lastChar.id;render('chat')
             }else{
-              const nc={id:uid(),name:lastChar.name||'未知',personality:lastChar.personality||'',relation:lastChar.relation||'初识',mood:lastChar.mood||'平静',status:lastChar.status||'',affection:lastChar.affection||25,quote:lastChar.quote||'',avatar:'',worldBookIds:[],bindPersonaId:activePersonaId,wechatId:genWcId(),createTime:new Date().toISOString()}
-              charList.push(nc);activeCharId=nc.id;saveCharList();refreshPlaceUnlocks();render('chat')
+              const nc={id:uid(),name:lastChar.name||'未知',personality:lastChar.personality||'',relation:lastChar.relation||'初识',mood:lastChar.mood||'平静',status:lastChar.status||'',affection:25,firstMsg:lastChar.firstMsg||lastChar.quote||'',avatar:'',worldBookIds:[],bindPersonaId:activePersonaId,wechatId:genWcId(),createTime:new Date().toISOString()}
+              charList.push(nc);activeCharId=nc.id;saveCharList();refreshPlaceUnlocks()
+              if(nc.firstMsg){saveMsgs(nc.id,[{from:'c',text:nc.firstMsg,time:ftime(now())}])}
+              render('chat')
             }
           })
           document.getElementById('_enc_discard')?.addEventListener('click',()=>{
@@ -23464,7 +23739,7 @@ pages.encounter=function(){
 身份：${p.identity||'未设'}
 请根据这个马甲信息，生成一个和这个用户最有缘分、最能产生化学反应的角色（可以是互补型、也可以是冲突型、也可以是命定型）。
 要求返回一个JSON对象（不要markdown代码块），包含以下字段：
-{"name":"角色姓名","personality":"详细的角色性格、背景、说话方式描述（至少100字）","relation":"和用户的初始关系","mood":"当前心情","status":"当前状态","affection":25,"quote":"角色的一句代表性台词"}`
+{"name":"角色姓名","personality":"详细的角色性格、背景、外貌特征、说话方式描述（至少150字，写得像小说人物介绍，有细节有温度）","relation":"和用户的初始关系","mood":"当前心情","status":"当前在做什么","firstMsg":"你们相遇时TA对用户说的第一句话（符合性格和场景，像真人脱口而出）"}`
     doGen(prompt)
   })
 
@@ -24607,7 +24882,6 @@ ${c.personality||'无'}
 
         // 收集完整人设 + 全部世界书内容
         const _src = [`【${c.name}的完整人设】\n${c.personality||'无'}`]
-        if(c.quote) _src.push(`【口头禅】${c.quote}`)
         const _cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled)
         _cBooks.forEach(b=>_src.push(`【世界书·${b.title||'设定'}】\n${b.content}`))
 
@@ -24799,6 +25073,8 @@ function bumpFamiliarityByCoOccur(id1, id2, amount=3, eventText=''){
 // 获取一个角色认识的所有其他角色（按熟悉度排序）
 function getCharKnownList(charId){
   const rels = loadCharRelations()
+  const self = charList.find(c=>c.id===charId)
+  const selfPersona = self && self.bindPersonaId
   const arr = []
   for(const key of Object.keys(rels)){
     const [a, b] = key.split('__')
@@ -24806,6 +25082,8 @@ function getCharKnownList(charId){
     const otherId = a === charId ? b : a
     const other = charList.find(c=>c.id===otherId)
     if(!other || other.isDeleted) continue
+    // 马甲隔离：只返回同一马甲下的角色
+    if(selfPersona && other.bindPersonaId && other.bindPersonaId !== selfPersona) continue
     arr.push({ otherId, other, rel: rels[key] })
   }
   arr.sort((x,y)=>y.rel.familiarity - x.rel.familiarity)
