@@ -279,14 +279,14 @@ const now=()=>new Date(),pad=n=>(n<10?'0':'')+n,ftime=d=>pad(d.getHours())+':'+p
 const fdate=d=>{const w='日一二三四五六'[d.getDay()];return(d.getMonth()+1)+'月'+d.getDate()+'日 星期'+w}
 const greet=()=>{const h=now().getHours();return h<6?'夜深了':h<9?'早安':h<12?'上午好':h<14?'午安':h<18?'下午好':h<21?'晚上好':'夜深了'}
 const tod=()=>{const h=new Date().getHours();return h<6?'night':h<8?'dawn':h<17?'day':h<19?'dusk':'night'}
-const isN=()=>document.getElementById('app')?.classList.contains('night')||false
+const isN=()=>{const nm=store.get('nightMode','auto');if(nm==='dark')return true;if(nm==='light')return false;const h=new Date().getHours();return h<6||h>=19}
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6)// ===== 酒馆卡解析与一机一码激活系统 =====
 function calcActivationCode(mc) {
     let hash = 0;
     let str = mc.toUpperCase().replace(/[^A-Z0-9]/g, '') + "MISORA_OTOME_SECRET_KEY_2024";
     for(let i = 0; i < str.length; i++) {
         hash = (hash << 5) - hash + str.charCodeAt(i);
-        hash = hash & hash;
+        hash = hash | 0;
     }
     let ac = Math.abs(hash).toString(36).toUpperCase().padStart(8, 'X');
     return ac.slice(0,4) + '-' + ac.slice(4,8);
@@ -501,6 +501,85 @@ if (embeddedBook) {
     };
     inp.click();
   });
+}
+
+// ===== TXT 角色卡导入（免审核，宽松解析） =====
+function importTxtCharacterCard(callback){
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.txt,text/plain';
+  inp.onchange = async (e) => {
+    const f = e.target.files[0];
+    if(!f) return;
+    try{
+      const text = (await f.text()).trim();
+      if(!text) throw new Error('文件为空');
+
+      let name = '', quote = '', relation = '';
+      const lines = text.split(/\r?\n/);
+      const firstLine = (lines.find(l => l.trim()) || '').trim();
+      const personalityLines = [];
+      const nameRe = /^(名字|姓名|昵称|角色名|name)\s*[:：=]\s*(.+)$/i;
+      const quoteRe = /^(开场白|问候语|打招呼|问候|first_mes|first\s*mes)\s*[:：=]\s*([\s\S]+)$/i;
+      const relRe = /^(关系|relation)\s*[:：=]\s*(.+)$/i;
+
+      for(const raw of lines){
+        const line = raw.trim();
+        if(!line) continue;
+        let m;
+        if(!name && (m = line.match(nameRe))){ name = m[2].trim(); continue; }
+        if(!quote && (m = line.match(quoteRe))){ quote = m[2].trim(); continue; }
+        if(!relation && (m = line.match(relRe))){ relation = m[2].trim(); continue; }
+        personalityLines.push(raw);
+      }
+
+      if(!name){
+        if(firstLine && firstLine.length <= 14 && !/[。！？.!?，,：:]/.test(firstLine)){
+          name = firstLine;
+          const idx = personalityLines.findIndex(l => l.trim() === firstLine);
+          if(idx >= 0) personalityLines.splice(idx, 1);
+        } else {
+          name = f.name.replace(/\.txt$/i, '').trim();
+        }
+      }
+
+      const personality = personalityLines.join('\n').trim();
+      if(!personality && !quote) throw new Error('未能识别到角色设定内容，请确认文件格式');
+
+      const nc = {
+        id: uid(),
+        name: name.slice(0, 20) || '导入角色',
+        personality: personality,
+        relation: relation || '初识',
+        mood: '平静',
+        status: '在线',
+        affection: 0,
+        quote: quote,
+        avatar: '',
+        worldBookIds: [],
+        bindPersonaId: activePersonaId,
+        wechatId: genWcId(),
+        altGreetings: [],
+        mesExample: '',
+        createTime: new Date().toISOString()
+      };
+      charList.push(nc);
+      activeCharId = nc.id;
+      saveCharList();
+
+      if(nc.quote){
+        const msgs = getMsgs(nc.id);
+        msgs.push({from: 'c', text: nc.quote, time: ftime(now())});
+        saveMsgs(nc.id, msgs);
+      }
+
+      alert('TXT 角色卡导入成功：' + nc.name);
+      if(callback) callback();
+    }catch(err){
+      alert('TXT 角色卡解析失败：\n' + err.message);
+    }
+  };
+  inp.click();
 }
 // ===== 核心存储引擎 (IndexedDB + 内存缓存) =====
 const dataDB = {
@@ -814,7 +893,12 @@ function _hasCustomCss(){
 let curTheme=store.get('theme','sakura')
 function bgNow(){
   const t=themes[curTheme]||themes.sakura
-  return t.home[1]
+  const nm=store.get('nightMode','auto')
+  if(nm==='dark')return t.home[3]||t.home[1]
+  if(nm==='light')return t.home[1]
+  const h=new Date().getHours()
+  const idx=h<6?3:h<8?0:h<17?1:h<19?2:3
+  return t.home[idx]||t.home[1]
 }
 function petalColor(){return(themes[curTheme]||themes.sakura).petal}
 
@@ -1448,7 +1532,7 @@ async function useItemOnChar(bagIndex,charId,silent=false){
   store.set('user_bag',bag)
   
   // 如果不是静默模式，获取AI反应
-  if(!silent && apiKey){
+  if(!silent){
     const reaction=await getGiftReaction(c,item,effectMsg)
     return{success:true,msg:effectMsg,reaction:reaction,needAI:true}
   }
@@ -1718,6 +1802,99 @@ const BUILTIN_KAOMOJI = {};
 const BUILTIN_EMOJI = {};
 let _stkPanelTab = 'mine';
 let _stkPanelCat = '';
+
+// 表情包分组：从 URL 或含义推断"包名"（去扩展名、去数字序号、去括号说明）
+function stickerStemOf(url, meaning){
+  let name = ''
+  const clean = (url || '').split('?')[0].split('#')[0]
+  const last = clean.split('/').filter(Boolean).pop() || ''
+  if(last){
+    name = last.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[@_\-.]+$/,'').trim()
+  }
+  if(!name){
+    name = (meaning || '').replace(/[（(【\[].*?[)）】\]]/g, '')
+  }
+  name = name.replace(/[\d_\-.\s]+$/,'').trim()
+  return name || '未命名'
+}
+
+// 把未分组表情包自动聚成组：同名（链接文件名/含义）2 个以上成一组，单张归「默认表情」
+function autoGroupStickers(){
+  const pending = stickers.filter(s => !s.group || !String(s.group).trim())
+  if(!pending.length){ alert('没有需要分组的表情包'); return }
+  const cnt = {}
+  pending.forEach(s => { const k = stickerStemOf(s.url, s.meaning); cnt[k] = (cnt[k] || 0) + 1 })
+  pending.forEach(s => {
+    const k = stickerStemOf(s.url, s.meaning)
+    s.group = cnt[k] >= 2 ? k : '默认表情'
+  })
+  saveStickers()
+  alert('已智能分组：同名表情聚成一组，单张的归入「默认表情」')
+}
+
+// 宽松解析表情包文本：支持 (含义:链接)、含义 链接、纯链接、JSON 数组/对象、逗号/空格/换行分隔
+// 链接支持 http/https/data/blob，只要能当表情包用的图都收
+function parseStickerBulk(text){
+  const out = []
+  const seen = new Set()
+  const add = (meaning, url) => {
+    if(typeof url !== 'string') return
+    url = url.trim()
+    if(!url) return
+    if(!/^(https?:\/\/|data:|blob:)/i.test(url)) return
+    if(seen.has(url)) return
+    seen.add(url)
+    out.push({ meaning: (meaning || '').trim(), url })
+  }
+  const t = (text || '').trim()
+  if(!t) return out
+
+  // 1) 优先尝试 JSON
+  if(t.startsWith('[') || t.startsWith('{')){
+    try{
+      const j = JSON.parse(t)
+      if(Array.isArray(j)){
+        j.forEach(item => {
+          if(typeof item === 'string'){ add('', item) }
+          else if(item && typeof item === 'object'){
+            add(item.meaning || item.name || item.title || item.desc || item.alt || '', item.url || item.src || item.image || item.img || item.link || '')
+          }
+        })
+      } else if(j && typeof j === 'object'){
+        Object.keys(j).forEach(k => {
+          const v = j[k]
+          if(Array.isArray(v)){
+            v.forEach(item => {
+              if(typeof item === 'string') add('', item)
+              else if(item && typeof item === 'object') add(item.meaning || item.name || item.title || item.desc || item.alt || '', item.url || item.src || item.image || item.img || item.link || '')
+            })
+          } else if(typeof v === 'string') add(k, v)
+        })
+      }
+      if(out.length) return out
+    }catch(e){}
+  }
+
+  // 2) 按行提取：每行里的链接 + 剩余文本当作含义
+  const urlRe = /(?:https?:\/\/|data:image\/[a-z0-9.+-]+;base64,|blob:)[^\s"'<>()（）【】\[\],，;；]+/gi
+  const lines = t.split(/\r?\n/)
+  lines.forEach(raw => {
+    const line = raw.trim()
+    if(!line) return
+    const found = []
+    let m
+    while((m = urlRe.exec(line)) !== null){ found.push(m[0].replace(/[,，;；。]+$/,'')) }
+    if(!found.length) return
+    let meaningPart = line
+    found.forEach(u => { meaningPart = meaningPart.split(u).join(' ') })
+    meaningPart = meaningPart.replace(/[：:=\-\s,，;；|｜"'【】\[\]]+/g, ' ').trim()
+    found.forEach((u, idx) => { add(idx === 0 ? meaningPart : '', u) })
+  })
+
+  // 3) 没含义的自动补名称
+  out.forEach(x => { if(!x.meaning) x.meaning = stickerStemOf(x.url, '') })
+  return out
+}
 
 // ===== 锁屏照片墙 =====
 let lockPhotos=store.get('lockPhotos',[])
@@ -2155,23 +2332,6 @@ function openMusicSearch(){
   })
 }
 // 轻提示（不打断操作的小通知）
-function showToast(text,duration){
-  const old=document.getElementById('_toast')
-  if(old)old.remove()
-  const t=ce('div')
-  t.id='_toast'
-  Object.assign(t.style,{
-    position:'fixed',bottom:'120px',left:'50%',transform:'translateX(-50%)',
-    padding:'10px 20px',borderRadius:'20px',
-    background:'rgba(0,0,0,.7)',backdropFilter:'blur(8px)',
-    color:'#fff',fontSize:'13px',zIndex:'99999',
-    animation:'fadeIn .3s',pointerEvents:'none',
-    maxWidth:'80%',textAlign:'center'
-  })
-  t.textContent=text
-  document.body.appendChild(t)
-  setTimeout(()=>{if(t.parentElement){t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)}},duration||2500)
-}
 
 async function shareMusicToChar(charId){
   const song=musicList[musicState.idx]
@@ -2864,10 +3024,13 @@ async function callLLM(opt){
   opt.messages = _msgArr;
   if(!a||!a.key) return {ok:false,text:'（未配置API）'}
 
-  // ===== 超时保护：彻底解除时间限制，无限等待克劳德写完 =====
-  const TIMEOUT_MS = 0
+  // ===== 超时保护：默认不限时，传入 opt.timeout 时生效 =====
+  const TIMEOUT_MS = opt.timeout || 0
   const controller = new AbortController()
-  const timeoutId = null
+  let timeoutId = null
+  if(TIMEOUT_MS > 0){
+    timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  }
 
   const _rawBase=(a.baseUrl||'').replace(/\/$/,'')
   const isOfficialClaude=a.provider==='claude'&&(!_rawBase||_rawBase.includes('anthropic.com'))
@@ -4592,7 +4755,6 @@ async function aiGenPersona(hint){
 }
 // ===== 通用组件 =====
 const app=$('#app')
-function petals(c){for(let i=0;i<5;i++){const p=ce('div');Object.assign(p.style,{position:'absolute',width:'7px',height:'9px',background:petalColor(),borderRadius:'50% 50% 50% 0',opacity:'0',animation:`petal ${8+Math.random()*6}s linear ${Math.random()*8}s infinite`,left:Math.random()*100+'%',pointerEvents:'none',zIndex:'0'});c.appendChild(p)}}
 function statusBar(){
   const b=ce('div'),n=isN()
   Object.assign(b.style,{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 20px',paddingTop:'max(8px,env(safe-area-inset-top))',fontSize:'11px',color:n?'#b8a8b8':'var(--ink-l)',letterSpacing:'1px',position:'relative',zIndex:'1',flexShrink:'0'})
@@ -4896,6 +5058,7 @@ function render(page){
   _curPage = page;
 
   _pgCleanup()
+  const _lpPrev=document.getElementById('_cssLivePreview');if(_lpPrev)_lpPrev.remove()
   const _fab=document.getElementById('_apiFab');if(_fab)_fab.style.display=''
   app.innerHTML=''
   if(window._skipPageAnim) app.classList.add('_noanim')
@@ -4906,7 +5069,7 @@ function render(page){
   }catch(e){
     console.error('渲染出错:',page,e)
     app.innerHTML=`<div style="padding:40px 20px;text-align:center;color:#c47a7a;font-size:13px;line-height:2.2">
-      <div style="font-size:40px;margin-bottom:12px">🌸</div>
+      <div style="font-size:40px;margin-bottom:12px;display:flex;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#c47a7a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg></div>
       页面渲染出错了<br>
       <span style="font-size:11px;opacity:.7">${escHtml(String(e.message||e).slice(0,120))}</span><br><br>
       <div onclick="render('home')" style="margin-top:8px;padding:12px 28px;border-radius:20px;background:linear-gradient(135deg,#f5d5de,#f0c8d4);color:#4a3a3a;display:inline-block;cursor:pointer;letter-spacing:2px">返回首页</div>
@@ -5357,7 +5520,6 @@ pages.home=()=>{
   const p=ce('div','page')
   p.style.background=bgNow()
   p.style.overflow='hidden'
-  petals(p)
 
   // ===== 双屏滑动容器 =====
   const slider=ce('div')
@@ -10637,7 +10799,7 @@ txt = '\u2063BLMX_RENDERED\u2063';
               const _hit = stickers.find(s => s.meaning === meaning.trim());
               return _hit ? `(${_hit.meaning}:${_hit.url})` : '';
           }).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
-              return `<img src="${url}" style="max-width:140px; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
+              return `<img src="${url}" style="max-width:96px; max-height:96px; width:auto; height:auto; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
           }).replace(/\u2063BQB:(.*?)\u2063/g, (m, label) => {
               return `<div style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:12px;background:${n?'rgba(255,255,255,.06)':'rgba(232,160,180,.08)'};border:1px dashed ${n?'rgba(200,180,220,.15)':'rgba(232,160,180,.2)'};margin:2px 0"><span style="font-size:22px">😸</span><span style="font-size:12px;color:${n?'#c0b0c8':'#8a7a7a'};font-style:italic">${label}</span></div>`;
           }));
@@ -10989,6 +11151,7 @@ ${bubbleContent}${toolsHtml}</div>
           <div class="btn-sub" id="_addcharq" style="flex:1;margin:0">+ 新建角色</div>
         </div>
 <div class="btn-main" id="_import_tavern_btn" style="margin-top:10px;background:linear-gradient(135deg, #a8e063, #56ab2f);color:#fff;box-shadow:0 4px 12px rgba(86,171,47,0.2)">导入角色卡</div>
+<div class="btn-sub" id="_import_txt_char_btn" style="margin-top:8px">导入TXT角色卡（免审核）</div>
       `
       mb.querySelectorAll('._chpick').forEach(el=>{
         el.onclick=()=>{
@@ -11011,6 +11174,13 @@ if (importBtn) {
   importBtn.onclick = () => {
     close();
     handleTavernImport(() => { render('chat'); });
+  };
+}
+const txtCharBtn = mb.querySelector('#_import_txt_char_btn');
+if (txtCharBtn) {
+  txtCharBtn.onclick = () => {
+    close();
+    importTxtCharacterCard(() => { render('chat'); });
   };
 }
 
@@ -12600,7 +12770,7 @@ ${ctxMsgs}
     let isOnlySticker = textWithoutStickers === '';
 
     let parsedText = escHtml(text).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
-    return `<img src="${url}" style="max-width:140px; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
+    return `<img src="${url}" style="max-width:96px; max-height:96px; width:auto; height:auto; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
 })
 // 🌟 新增：支持 Markdown 加粗和斜体动作描写
 .replace(/\*\*(.*?)\*\*/g, '<strong style="color:var(--rose-d);font-weight:600">$1</strong>')
@@ -12782,7 +12952,7 @@ let bubbleStyle = isOnlySticker
       let isOnlySticker = textWithoutStickers === '';
 
       let parsedText = _safeInlineHtml(text).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
-          return `<img src="${url}" style="max-width:140px; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
+          return `<img src="${url}" style="max-width:96px; max-height:96px; width:auto; height:auto; border-radius:8px; object-fit:contain; background:transparent; display:block; margin:2px 0;">`;
       });
 
       let bubbleStyle = isOnlySticker 
@@ -14856,6 +15026,15 @@ ${recentMsgs}
             if(isEmoji&&!BUILTIN_EMOJI[_stkPanelCat])_stkPanelCat=cats[0]||'常用';
 
             let gridHtml='';
+
+            // === 分组计算（我的表情包按 group 聚合，未分组归入「未分组」）===
+            const _grpMap = new Map();
+            stickers.forEach((s,i)=>{
+              const g = (s.group && String(s.group).trim()) || '未分组';
+              if(!_grpMap.has(g)) _grpMap.set(g, []);
+              _grpMap.get(g).push({s, i});
+            });
+            const _stkGroups = [..._grpMap.entries()];
             if(isKaomoji){
               gridHtml=(catData[_stkPanelCat]||[]).map(k=>`<div class="_ek_send" data-code="${escHtml(k)}" style="padding:10px 6px;border-radius:10px;background:${_n2?'rgba(255,255,255,.06)':'rgba(255,255,255,.6)'};cursor:pointer;text-align:center;font-size:13px;color:${_n2?'#e0d0e8':'var(--ink)'};line-height:1.3;transition:transform .1s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onmousedown="this.style.transform='scale(.9)'" onmouseup="this.style.transform=''" ontouchstart="this.style.transform='scale(.9)'" ontouchend="this.style.transform=''">${escHtml(k)}</div>`).join('');
             }else if(isEmoji){
@@ -14863,31 +15042,43 @@ ${recentMsgs}
             }
 
             mb.innerHTML=`
-              <div style="text-align:center;margin-bottom:10px;font-size:13px;color:${_n2?'#f0e0f0':'var(--rose-d)'};font-weight:500;letter-spacing:1px">我的表情包${stickers.length?' ('+stickers.length+')':''}</div>
+              <div style="text-align:center;margin-bottom:10px;font-size:13px;color:${_n2?'#f0e0f0':'var(--rose-d)'};font-weight:500;letter-spacing:1px">我的表情包${stickers.length?' ('+stickers.length+'个 · '+_stkGroups.length+'组)':''}</div>
 
               ${isMine?`
-                <div style="font-size:11px;color:var(--ink-l);text-align:center;margin-bottom:10px">点击表情直接发送 · AI也会学习使用这里的表情包</div>
-                ${stickers.length>=2?`<div style="display:flex;gap:8px;margin-bottom:8px">
+                <div style="font-size:11px;color:var(--ink-l);text-align:center;margin-bottom:10px">点击表情直接发送 · 按组管理 · AI也会学习使用这里的表情包</div>
+                ${stickers.length>=1?`<div style="display:flex;gap:8px;margin-bottom:8px">
                   <div class="btn-sub" id="_stk_selmode" style="flex:1;margin:0;padding:6px;font-size:11px">${_stkSelMode?'退出选择':'批量删除'}</div>
                   ${_stkSelMode?'<div class="btn-main" id="_stk_delbatch" style="flex:1;margin:0;padding:6px;font-size:11px;background:linear-gradient(135deg,#e88,#d66)">删除选中</div>':''}
+                  <div class="btn-sub" id="_stk_autogroup" style="flex:1;margin:0;padding:6px;font-size:11px">智能分组</div>
                   <div class="btn-sub" id="_stk_clearall" style="flex:1;margin:0;padding:6px;font-size:11px;color:#d06060">清空全部</div>
                 </div>`:''}
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:220px;overflow-y:auto;margin-bottom:12px" id="_sticker_list">
-                  ${stickers.length ? stickers.map((s, i) => `
-                    <div style="position:relative;background:${_n2?'rgba(255,255,255,.06)':'rgba(0,0,0,0.03)'};border-radius:12px;padding:4px;text-align:center">
-                      <img class="_stk_send" data-code="(${s.meaning.replace(/[()（）:：]/g,'')}:${s.url})" src="${s.url}"
- style="width:100%;height:80px;object-fit:contain;cursor:pointer;border-radius:8px">
-                      <div style="font-size:10px;color:${_n2?'#d0c0d8':'var(--ink)'};margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(s.meaning)}</div>
-                      ${_stkSelMode?`<input type="checkbox" class="_stk_cb" data-i="${i}" style="position:absolute;top:4px;left:4px;width:18px;height:18px;accent-color:var(--rose)">`:`<div class="_stk_del" data-i="${i}" style="position:absolute;top:4px;right:4px;width:20px;height:20px;background:rgba(0,0,0,0.5);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:10px">✕</div>`}
+                <div style="max-height:250px;overflow-y:auto;margin-bottom:12px" id="_sticker_list">
+                  ${stickers.length ? _stkGroups.map(([gname,items])=>`
+                    <div style="display:flex;align-items:center;gap:6px;margin:12px 2px 6px">
+                      <div style="flex:1;font-size:11px;font-weight:600;letter-spacing:1px;color:${_n2?'#e8d8e8':'var(--rose-d)'}">${escHtml(gname)}</div>
+                      <div style="font-size:10px;color:${_n2?'#a898b8':'var(--ink-l)'}">${items.length} 个</div>
                     </div>
-                  `).join('') : '<div style="grid-column:span 3;text-align:center;padding:20px;font-size:12px;color:var(--ink-l)">还没有表情包<br>用下面的方式导入吧！</div>'}
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
+                      ${items.map(({s,i})=>`
+                        <div style="position:relative;background:${_n2?'rgba(255,255,255,.06)':'rgba(0,0,0,0.03)'};border-radius:12px;padding:4px;text-align:center">
+                          <img class="_stk_send" data-code="(${s.meaning.replace(/[()（）:：]/g,'')}:${s.url})" src="${s.url}"
+ style="width:100%;height:80px;object-fit:contain;cursor:pointer;border-radius:8px">
+                          <div style="font-size:10px;color:${_n2?'#d0c0d8':'var(--ink)'};margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(s.meaning)}</div>
+                          ${_stkSelMode?`<input type="checkbox" class="_stk_cb" data-i="${i}" style="position:absolute;top:4px;left:4px;width:18px;height:18px;accent-color:var(--rose)">`:`<div class="_stk_del" data-i="${i}" style="position:absolute;top:4px;right:4px;width:20px;height:20px;background:rgba(0,0,0,0.5);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:10px">✕</div>`}
+                        </div>
+                      `).join('')}
+                    </div>
+                  `).join('') : '<div style="text-align:center;padding:20px;font-size:12px;color:var(--ink-l)">还没有表情包<br>用下面的方式导入吧！</div>'}
                 </div>
                 <div style="display:flex;gap:8px;margin-top:10px">
-                  <div class="btn-main" id="_stk_import_json" style="flex:1;margin:0;padding:8px;font-size:12px">导入 JSON 表情包</div>
-                  <div class="btn-sub" id="_stk_export_json" style="flex:1;margin:0;padding:8px;font-size:12px">导出 JSON</div>
+                  <div class="btn-main" id="_stk_import_img" style="flex:1;margin:0;padding:8px;font-size:12px">导入图片</div>
+                  <div class="btn-sub" id="_stk_import_txt" style="flex:1;margin:0;padding:8px;font-size:12px">导入文本</div>
+                  <div class="btn-main" id="_stk_import_json" style="flex:1;margin:0;padding:8px;font-size:12px">导入 JSON</div>
                 </div>
+                <div class="btn-sub" id="_stk_export_json" style="width:100%;margin-top:6px;padding:8px;font-size:12px">导出 JSON</div>
                 <div class="card" style="margin-top:10px">
-                  <div class="card-t">文本批量导入</div>
+                  <div class="card-t">链接批量导入（整组归为一组）</div>
+                  <input class="inp" id="_stk_grp" placeholder="组名（留空自动按链接识别分组）" style="margin-bottom:8px;padding:8px 10px;border-radius:10px;background:${_n2?'rgba(255,255,255,.08)':'rgba(255,255,255,.7)'};border:1px solid ${_n2?'rgba(200,180,220,.15)':'rgba(232,160,180,.2)'}">
                   <textarea class="tarea" id="_stk_bulk" rows="2" placeholder="格式：(含义:图片链接)&#10;支持一次性粘贴多个"></textarea>
                   <div class="btn-sub" id="_stk_add" style="margin-top:8px;padding:8px;font-size:12px">提取并添加</div>
                 </div>
@@ -14998,7 +15189,7 @@ ${recentMsgs}
                   else if(typeof data === 'object') {
                     // 支持 { "含义": "url", ... } 格式
                     Object.keys(data).forEach(k => {
-                      if(typeof data[k] === 'string' && data[k].startsWith('http')) {
+                      if(typeof data[k] === 'string' && /^(https?:\/\/|data:|blob:)/i.test(data[k])) {
                         arr.push({meaning: k, url: data[k]});
                       }
                     });
@@ -15007,7 +15198,7 @@ ${recentMsgs}
                     const m = item.meaning || item.name || item.desc || item.title || item.alt || '';
                     const u = item.url || item.src || item.image || item.img || '';
                     if(m && u && !stickers.find(s => s.url === u)) {
-                      stickers.push({meaning: String(m).slice(0,30), url: String(u)});
+                      stickers.push({meaning: String(m).slice(0,30), url: String(u), group: (item.group || item.category || '')});
                       imported++;
                     }
                   });
@@ -15037,35 +15228,100 @@ ${recentMsgs}
               a.click();
               URL.revokeObjectURL(url);
             };
-            // === 文本批量导入 ===
+            // === 智能分组 ===
+            const autoGroupBtn = mb.querySelector('#_stk_autogroup');
+            if(autoGroupBtn) autoGroupBtn.onclick = () => { autoGroupStickers(); renderStickers(); };
+            // === 导入图片文件（每个文件自成一包，组名=文件名） ===
+            const imgImportBtn = mb.querySelector('#_stk_import_img');
+            if(imgImportBtn) imgImportBtn.onclick = () => {
+              const inp = document.createElement('input');
+              inp.type = 'file';
+              inp.accept = 'image/*';
+              inp.multiple = true;
+              inp.onchange = async (e) => {
+                const files = [...e.target.files];
+                if(!files.length) return;
+                let count = 0;
+                for(const f of files){
+                  try{
+                    const dataUrl = await new Promise((res, rej) => {
+                      const r = new FileReader();
+                      r.onload = () => res(r.result);
+                      r.onerror = rej;
+                      r.readAsDataURL(f);
+                    });
+                    let finalUrl = dataUrl;
+                    // 非动图且过大时压缩，避免撑爆存储
+                    if(!(f.type||'').includes('gif') && f.size > 1.2*1024*1024){
+                      try{
+                        const img = new Image();
+                        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl });
+                        const cvs = document.createElement('canvas');
+                        const scale = Math.min(360/img.width, 360/img.height, 1);
+                        cvs.width = Math.max(1, Math.round(img.width*scale));
+                        cvs.height = Math.max(1, Math.round(img.height*scale));
+                        cvs.getContext('2d').drawImage(img, 0, 0, cvs.width, cvs.height);
+                        const blob = await new Promise(res => cvs.toBlob(res, 'image/jpeg', 0.7));
+                        finalUrl = await new Promise((res) => { const r2 = new FileReader(); r2.onload = () => res(r2.result); r2.readAsDataURL(blob); });
+                      }catch(ce){ finalUrl = dataUrl; }
+                    }
+                    const stem = f.name.replace(/\.[a-z0-9]{2,5}$/i, '').trim() || '新表情';
+                    const meaning = stem.replace(/[\d_\-.\s]+$/,'').trim() || stem;
+                    if(!stickers.find(s => s.url === finalUrl)){
+                      stickers.push({meaning: meaning.slice(0,30), url: finalUrl, group: stem.slice(0,30)});
+                      count++;
+                    }
+                  }catch(err){ console.error('表情包文件导入失败:', err); }
+                }
+                if(count > 0){ saveStickers(); renderStickers(); alert('成功导入 ' + count + ' 个表情包（每个文件一组）！'); }
+                else alert('导入失败，请重试或换图片');
+              };
+              inp.click();
+            };
+            // === 文本批量导入（一组链接 = 一组表情包，解析极宽松） ===
+            const doBulkImport = (text, groupName) => {
+              const txt = (text || '').trim();
+              if(!txt){ alert('请先粘贴内容或选择文本文件'); return; }
+              const matched = parseStickerBulk(txt);
+              if(!matched.length){ alert('没识别到图片链接。支持：含义:链接 / 纯链接 / JSON，链接可为 http、data、blob'); return; }
+              let count = 0;
+              matched.forEach(({meaning:m2, url:u2}) => {
+                if(stickers.find(s => s.url === u2)) return;
+                let g = groupName;
+                if(!g){
+                  g = stickerStemOf(u2, m2);
+                  const same = matched.filter(x => stickerStemOf(x.url, x.meaning) === g);
+                  if(same.length < 2) g = '新表情';
+                }
+                stickers.push({meaning: (m2 || stickerStemOf(u2, '')).slice(0,30), url: u2, group: g.slice(0,30)});
+                count++;
+              });
+              if(count > 0) { saveStickers(); renderStickers(); alert('成功导入 ' + count + ' 个表情包' + (groupName ? '，归入「'+groupName+'」组' : '，已按链接自动分组') + '！'); }
+              else alert('这些表情包已存在，未重复导入');
+            };
             const bulkAddBtn = mb.querySelector('#_stk_add');
             if(bulkAddBtn) bulkAddBtn.onclick = () => {
               const txt = mb.querySelector('#_stk_bulk').value.trim();
-              if(!txt){ alert('请先粘贴内容'); return; }
-              let cleanTxt = txt.replace(/[()（）]/g, ' ');
-              let lines = cleanTxt.split('\n').map(l => l.trim()).filter(l => l);
-              let reconstructed = [];
-              for(let line of lines) {
-                if (line.includes(':') || line.includes('：') || line.startsWith('http')) {
-                  reconstructed.push(line);
-                } else {
-                  if (reconstructed.length > 0) reconstructed[reconstructed.length - 1] += line;
-                  else reconstructed.push(line);
-                }
-              }
-              let fullText = reconstructed.join(' ');
-              const regex = /([^:：\s]+)\s*[:：]\s*(https?:\/\/[^\s]+)/g;
-              let match2; let count = 0;
-              while((match2 = regex.exec(fullText)) !== null) {
-                const m2 = match2[1].trim();
-                const u2 = match2[2].trim();
-                if(!stickers.find(s => s.url === u2)) {
-                  stickers.push({meaning: m2, url: u2});
-                  count++;
-                }
-              }
-              if(count > 0) { saveStickers(); renderStickers(); alert('成功导入 ' + count + ' 个表情包！'); }
-              else alert('没识别到，请检查格式：含义:链接');
+              const grpInp = mb.querySelector('#_stk_grp');
+              doBulkImport(txt, grpInp ? grpInp.value.trim() : '');
+            };
+            // === 导入文本文件（txt / md / csv / json 等，内容按宽松格式解析） ===
+            const txtImportBtn = mb.querySelector('#_stk_import_txt');
+            if(txtImportBtn) txtImportBtn.onclick = () => {
+              const inp = document.createElement('input');
+              inp.type = 'file';
+              inp.accept = '.txt,.json,.md,.csv,.log,text/plain,application/json';
+              inp.onchange = async (e) => {
+                const f = e.target.files[0];
+                if(!f) return;
+                try{
+                  const content = await f.text();
+                  const grpInp = mb.querySelector('#_stk_grp');
+                  const stem = f.name.replace(/\.[a-z0-9]{2,5}$/i, '').trim();
+                  doBulkImport(content, grpInp && grpInp.value.trim() ? grpInp.value.trim() : stem);
+                }catch(err){ alert('读取文件失败：' + err.message); }
+              };
+              inp.click();
             };
           };
           renderStickers();
@@ -15735,6 +15991,10 @@ pages.worldbooks=()=>{
       <svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       <span style="font-size:13px;color:var(--ink-l)">导入世界书 (JSON)</span>
     </div>
+    <div class="list-item" id="_importwbtxt" style="border:1px dashed rgba(138,154,110,.3);justify-content:center;gap:8px;opacity:.8">
+      <svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span style="font-size:13px;color:var(--ink-l)">导入世界书 (TXT，免审核)</span>
+    </div>
     <div class="list-item" id="_aiwb" style="border:1px dashed rgba(196,186,212,.3);justify-content:center;gap:8px;opacity:.8">
       ${I.quill('var(--lav)',18)}<span style="font-size:13px;color:var(--ink-l)">AI生成世界观</span>
     </div>
@@ -15987,6 +16247,44 @@ body.querySelectorAll('._wbview').forEach(el=>{
       }
     };inp.click()
   })}
+
+  body.querySelector('#_importwbtxt').onclick=()=>{
+    const inp=document.createElement('input');inp.type='file';inp.accept='.txt,text/plain'
+    inp.onchange=async(e)=>{
+      const file=e.target.files[0];if(!file)return
+      try{
+        const text=(await file.text()).trim()
+        if(!text){alert('文件为空');return}
+        const importGroupId='import_'+uid()
+        const importGroupName=file.name.replace(/\.txt$/i,'').trim()||'导入的世界书'
+        const items=[]
+        const lines=text.split(/\r?\n/)
+        let curTitle='', curContent=[]
+        const flush=()=>{ if(curContent.join('').trim()){ items.push({title:curTitle||('条目 '+(items.length+1)), content:curContent.join('\n').trim()}) } curContent=[] }
+        for(const raw of lines){
+          const line=raw.trim()
+          const m=line.match(/^【(.+?)】\s*$/) || line.match(/^##\s*(.+)$/)
+          if(m){ flush(); curTitle=(m[1]||'').trim(); }
+          else{ curContent.push(raw) }
+        }
+        flush()
+        let count=0
+        if(items.length){
+          items.forEach(it=>{
+            worldBooks.push({id:uid(),title:it.title.slice(0,30),content:it.content,enabled:true,fromImport:importGroupId,importName:importGroupName})
+            count++
+          })
+        }else{
+          worldBooks.push({id:uid(),title:importGroupName,content:text,enabled:true,fromImport:importGroupId,importName:importGroupName})
+          count=1
+        }
+        saveWorldBooks();render('worldbooks')
+        alert('成功导入 '+count+' 条世界书！')
+      }catch(err){
+        alert('导入失败：'+err.message)
+      }
+    };inp.click()
+  }
 
   body.querySelector('#_aiwb').onclick=()=>{
     showModal('AI生成世界观',(mb,close)=>{
@@ -18301,9 +18599,10 @@ ${userHint?'用户要求：'+userHint:'自由发挥'}
 
 // ===== 设置页 =====
 
-// ========== 🌸 花枝 · 小手机精灵 ==========
-pages.assistant=function(){
-  const n=isN()
+ // ========== 花枝 · 小手机精灵 ==========
+ pages.assistant=function(){
+   const AS_IMG='https://s1.oururl.cn/autoupload/b7nhj/20261002/GXOY/328X328/8b7eac8089d446549c03076699750e02.png'
+   const n=isN()
   const tc=n?'#f0e0f0':'var(--ink)',tc2=n?'#b8a8c8':'var(--ink-l)',rc=n?'#c8a8d0':'var(--rose)'
   const asMsgs=store.get('_assistantMsgs',[])
   const page=ce('div','page')
@@ -18314,13 +18613,13 @@ pages.assistant=function(){
   top.style.cssText=`padding:10px 14px;padding-top:max(10px,env(safe-area-inset-top));display:flex;align-items:center;gap:10px;flex-shrink:0;background:${n?'var(--bar-bg-n)':'rgba(254,248,244,.92)'};backdrop-filter:blur(16px);border-bottom:1px solid ${n?'var(--bar-border-n)':'rgba(232,160,180,.08)'}`
   top.innerHTML=`
     <div id="_asback" style="padding:6px;cursor:pointer">${I.back(n?'#c8a8d0':'var(--rose-d)')}</div>
-    <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#fce4ec,#f8bbd0,#e8a0b4);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:0 2px 8px rgba(232,160,180,.3);position:relative;overflow:visible">
-      🌸
-      <div style="position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;border-radius:50%;background:#8a9a6e;border:2px solid ${n?'#1a1224':'#fef8f4'}"></div>
+    <div style="width:40px;height:40px;flex-shrink:0;position:relative">
+      <img src="${AS_IMG}" alt="" style="width:40px;height:40px;border-radius:50%;object-fit:cover;display:block;box-shadow:0 2px 8px rgba(232,160,180,.35)">
+      <div style="position:absolute;bottom:0;right:0;width:11px;height:11px;border-radius:50%;background:#8a9a6e;border:2px solid ${n?'#1a1224':'#fef8f4'}"></div>
     </div>
     <div style="flex:1;min-width:0">
-      <div style="font-size:14px;font-weight:500;color:${tc};letter-spacing:1px">花枝</div>
-      <div style="font-size:10px;color:${n?'#8a9a6e':'#8a9a6e'};margin-top:1px">在线 · 住在你的小手机里</div>
+      <div style="font-size:14px;font-weight:600;color:${tc};letter-spacing:1px">花枝</div>
+      <div style="font-size:10px;color:#8a9a6e;margin-top:2px;display:flex;align-items:center;gap:4px"><span style="width:6px;height:6px;border-radius:50%;background:#8a9a6e;display:inline-block;flex-shrink:0"></span>在线 · 住在你的小手机里</div>
     </div>
     <div id="_asclear" style="font-size:9px;color:${tc2};cursor:pointer;padding:5px 10px;border-radius:10px;background:${n?'rgba(255,255,255,.06)':'rgba(0,0,0,.03)'}">清空</div>
   `
@@ -18337,7 +18636,7 @@ pages.assistant=function(){
       const bub=ce('div')
       bub.style.cssText=`display:flex;margin-bottom:10px;${isU?'justify-content:flex-end':'justify-content:flex-start'};animation:fadeIn .25s ease-out`
       bub.innerHTML=`
-        ${isU?'':`<div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#fce4ec,#f8bbd0);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;margin-right:8px;margin-top:2px;box-shadow:0 1px 4px rgba(232,160,180,.2)">🌸</div>`}
+        ${isU?'':`<img src="${AS_IMG}" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;margin-right:8px;margin-top:2px;box-shadow:0 1px 4px rgba(232,160,180,.25)">`}
         <div style="max-width:78%;padding:11px 15px;border-radius:${isU?'18px 4px 18px 18px':'4px 18px 18px 18px'};background:${isU?(n?'linear-gradient(135deg,rgba(200,168,208,.25),rgba(180,148,198,.2))':'linear-gradient(135deg,rgba(245,213,222,.6),rgba(240,200,212,.5))'):(n?'rgba(255,255,255,.08)':'rgba(255,255,255,.85)')};font-size:12px;color:${tc};line-height:1.8;letter-spacing:.3px;word-break:break-word;white-space:pre-wrap;${isU?'':`box-shadow:0 1px 6px rgba(0,0,0,.04);border:1px solid ${n?'rgba(255,255,255,.04)':'rgba(232,160,180,.06)'}`}">${escHtml(m.text)}</div>
       `
       ml.appendChild(bub)
@@ -18347,12 +18646,14 @@ pages.assistant=function(){
   // 欢迎卡片（始终显示在消息列表底部，除非已经有对话）
   if(!asMsgs.length){
     const welcome=ce('div')
-    welcome.style.cssText='padding:30px 10px 10px;animation:fadeIn .4s ease-out'
+    welcome.style.cssText='padding:26px 10px 8px;animation:fadeIn .4s ease-out'
     welcome.innerHTML=`
-      <div style="text-align:center;margin-bottom:20px">
-        <div style="font-size:48px;margin-bottom:8px;animation:breathe 3s ease-in-out infinite">🌸</div>
-        <div style="font-size:16px;color:${tc};font-weight:500;letter-spacing:3px;margin-bottom:4px">花枝</div>
-        <div style="font-size:10px;color:${tc2};letter-spacing:1px">小手机里的精灵 · 什么都可以问我哦</div>
+      <div style="display:flex;flex-direction:column;align-items:center">
+        <div style="margin-bottom:16px">
+          <img src="${AS_IMG}" alt="" style="width:92px;height:92px;border-radius:50%;object-fit:cover;display:block;box-shadow:0 8px 24px rgba(232,160,180,.4),0 0 0 4px ${n?'rgba(200,168,208,.12)':'rgba(245,213,222,.35)'};animation:breathe 3.2s ease-in-out infinite">
+        </div>
+        <div style="font-size:17px;color:${tc};font-weight:600;letter-spacing:4px">花枝</div>
+        <div style="font-size:10px;color:${tc2};letter-spacing:1.5px;margin-top:7px">小手机里的精灵 · 什么都可以问我哦</div>
       </div>
     `
     ml.appendChild(welcome)
@@ -18496,7 +18797,7 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
 
     const api=apiList.find(a=>a.id===activeApiId)
     if(!api){
-      asMsgs.push({from:'a',text:'呐，你还没配置API呢～去设置里添加一个就好啦 (ノ´▽`)ノ'})
+      asMsgs.push({from:'a',text:'呐，你还没配置API呢，去设置里添加一个就好啦'})
       store.set('_assistantMsgs',asMsgs)
       render('assistant')
       return
@@ -18504,7 +18805,7 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
 
     const _thinkDiv=ce('div')
     _thinkDiv.style.cssText='display:flex;margin-bottom:10px;justify-content:flex-start;animation:fadeIn .2s'
-    _thinkDiv.innerHTML=`<div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#fce4ec,#f8bbd0);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;margin-right:8px;box-shadow:0 1px 4px rgba(232,160,180,.2)">🌸</div><div style="padding:11px 15px;border-radius:4px 18px 18px 18px;background:${n?'rgba(255,255,255,.08)':'rgba(255,255,255,.85)'};font-size:12px;color:${tc2};box-shadow:0 1px 6px rgba(0,0,0,.04)">花枝思考中<span style="animation:typing 1.2s infinite">...</span></div>`
+    _thinkDiv.innerHTML=`<img src="${AS_IMG}" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;margin-right:8px;box-shadow:0 1px 4px rgba(232,160,180,.25)"><div style="padding:11px 15px;border-radius:4px 18px 18px 18px;background:${n?'rgba(255,255,255,.08)':'rgba(255,255,255,.85)'};font-size:12px;color:${tc2};box-shadow:0 1px 6px rgba(0,0,0,.04)">花枝思考中<span style="animation:typing 1.2s infinite">...</span></div>`
     if(qw)ml.insertBefore(_thinkDiv,qw)
     else ml.appendChild(_thinkDiv)
     ml.scrollTop=ml.scrollHeight
@@ -18515,11 +18816,11 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
       if(r.ok){
         asMsgs.push({from:'a',text:r.text})
       }else{
-        asMsgs.push({from:'a',text:'呜…出错了啦 (╥﹏╥) '+r.text})
+        asMsgs.push({from:'a',text:'呜…出错了啦 '+r.text})
       }
     }catch(e){
       console.error('[花枝报错]',e)
-      asMsgs.push({from:'a',text:'哎呀断线了…花枝连不上了 (╥﹏╥) '+String(e.message||e).slice(0,200)})
+      asMsgs.push({from:'a',text:'哎呀断线了…花枝连不上了 '+String(e.message||e).slice(0,200)})
     }
     store.set('_assistantMsgs',asMsgs)
     // 解析花枝的跳转指令
@@ -18839,7 +19140,7 @@ pages.beauty=()=>{
   const body=ce('div');Object.assign(body.style,{flex:'1',overflowY:'auto',padding:'16px'})
 
 
-  const wall=store.get('wallpaper',''),fontMode=store.get('fontMode','serif'),blurMode=store.get('blurMode','soft')
+  const wall=store.get('wallpaper',''),fontMode=store.get('fontMode','serif'),blurMode=store.get('blurMode','soft'),nightMode=store.get('nightMode','auto')
 
   body.innerHTML=`
     <div class="_beautyTabs" id="_bTabs">
@@ -18999,6 +19300,15 @@ pages.beauty=()=>{
       </div>
     </div>
     <div class="card">
+      <div class="card-t">夜间模式</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div class="_nightopt" data-v="auto" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${nightMode==='auto'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${nightMode==='auto'?'1.5px solid var(--rose)':'1px solid transparent'}">跟随时间</div>
+        <div class="_nightopt" data-v="light" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${nightMode==='light'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${nightMode==='light'?'1.5px solid var(--rose)':'1px solid transparent'}">浅色</div>
+        <div class="_nightopt" data-v="dark" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${nightMode==='dark'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${nightMode==='dark'?'1.5px solid var(--rose)':'1px solid transparent'}">深色</div>
+      </div>
+      <div style="font-size:10px;color:var(--ink-l);margin-top:8px;line-height:1.6">跟随时间：夜晚自动切换深色界面</div>
+    </div>
+    <div class="card">
       <div class="card-t">主题色</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <div class="_themeopt" data-v="none" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${curTheme==='none'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${curTheme==='none'?'1.5px solid var(--rose)':'1px solid transparent'}">无</div>
@@ -19012,6 +19322,9 @@ pages.beauty=()=>{
       <div style="display:flex;gap:8px;margin-top:10px">
         <div class="btn-main" id="_savecss" style="flex:1;margin:0">保存CSS</div>
         <div class="btn-sub" id="_gencss" style="flex:1;margin:0">AI生成CSS</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <div class="btn-sub" id="_previewcss" style="flex:1;margin:0;border:1.5px solid var(--rose);color:var(--rose-d)">预览效果</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <div class="btn-sub" id="_rollbackcss" style="flex:1;margin:0">↺ 回滚上一版</div>
@@ -19706,6 +20019,39 @@ body.querySelector('#_impbeauty')?.addEventListener('click',()=>{
 
   // 美化页也保留自定义CSS预览，方便用户看到效果
 
+  // ===== 自定义 CSS 实时预览 =====
+  const _cssTa = body.querySelector('#_customcss')
+  const _prevBtn = body.querySelector('#_previewcss')
+  let _cssPreviewOn = false
+  const _applyCssPreview = ()=>{
+    let st = document.getElementById('_cssLivePreview')
+    if(!st){ st = document.createElement('style'); st.id = '_cssLivePreview'; document.head.appendChild(st) }
+    st.textContent = _cssTa.value
+  }
+  function stopCssPreview(){
+    _cssPreviewOn = false
+    const st = document.getElementById('_cssLivePreview')
+    if(st) st.remove()
+    if(_cssTa) _cssTa.removeEventListener('input', _applyCssPreview)
+    if(_prevBtn){ _prevBtn.textContent = '预览效果'; _prevBtn.style.background = ''; _prevBtn.style.color = 'var(--rose-d)'; _prevBtn.style.border = '1.5px solid var(--rose)' }
+  }
+  if(_prevBtn){
+    _prevBtn.onclick = ()=>{
+      if(!_cssPreviewOn){
+        _cssPreviewOn = true
+        _applyCssPreview()
+        _cssTa.addEventListener('input', _applyCssPreview)
+        _prevBtn.textContent = '停止预览'
+        _prevBtn.style.background = 'rgba(245,213,222,.45)'
+        _prevBtn.style.color = 'var(--rose)'
+        _prevBtn.style.border = '1.5px solid var(--rose)'
+        _prevBtn.scrollIntoView({behavior:'smooth', block:'nearest'})
+      }else{
+        stopCssPreview()
+      }
+    }
+  }
+
   body.querySelector('#_savecss').onclick=()=>{
     const val=body.querySelector('#_customcss').value
     // ===== CSS 体检：先在临时 style 里试跑，若浏览器崩溃前来得及回滚 =====
@@ -19723,6 +20069,7 @@ body.querySelector('#_impbeauty')?.addEventListener('click',()=>{
     // 保存后触发一次自动数据备份（已内置 1.5秒防抖 + 异步执行，不阻塞）
     try{ autoBackupToLocal() }catch(e){}
     applyBeauty()
+    stopCssPreview()
     // 用轻量 toast 替代 alert，避免连续保存时被 alert 阻塞体验
     const _t = document.createElement('div')
     _t.textContent = '✓ CSS 已保存并应用'
@@ -19738,6 +20085,7 @@ body.querySelector('#_impbeauty')?.addEventListener('click',()=>{
       try{localStorage.removeItem('customCSS')}catch(e){}
       body.querySelector('#_customcss').value=''
       applyBeauty()
+      stopCssPreview()
       alert('已重置（可点"回滚上一版"撤销）')
     }
   }
@@ -19747,6 +20095,7 @@ body.querySelector('#_impbeauty')?.addEventListener('click',()=>{
       rollbackCSS()
       const cur = store.get('customCSS','')
       body.querySelector('#_customcss').value = cur
+      stopCssPreview()
     }
   }
 
@@ -19848,6 +20197,7 @@ body.querySelector('#_impbeauty')?.addEventListener('click',()=>{
     // 若截断，尝试自动闭合花括号，至少保证不至于全废
     if(_depth>0){res=res.replace(/[^;}]*$/,'').trim();res+='\n'+'}'.repeat(_depth)}
     body.querySelector('#_customcss').value=res
+    if(_cssPreviewOn) _applyCssPreview()
     if(_truncated){
       alert('⚠️ CSS 已生成，但检测到内容被截断（AI 输出太长了）\n\n已尝试自动补全花括号。建议：\n1. 检查末尾几行是否完整\n2. 或换个更简洁的风格描述再生成一次\n3. 或分开生成：先生成主题色，再单独生成气泡样式')
     }else{
@@ -20150,7 +20500,15 @@ if(wall){
   }
 
 
-document.body.classList.remove('night-mode')
+// 夜间模式 class 同步（供 #app.night / body.night-mode 的 CSS 生效）
+const _nightNow = isN()
+if(_nightNow){
+  app.classList.add('night')
+  document.body.classList.add('night-mode')
+}else{
+  app.classList.remove('night')
+  document.body.classList.remove('night-mode')
+}
 const _nightOvr=document.getElementById('_nightOverride')
 if(_nightOvr) _nightOvr.remove()
 }
@@ -31857,24 +32215,6 @@ function registerServiceWorker(){
   }).catch(e=>{
     console.log('SW注册失败（正常，本地文件不支持）:',e.message)
   })
-  
-  // 全局ID清理器：定期清除页面上意外出现的角色ID文本
-  setInterval(()=>{
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false)
-    const textNodes = []
-    while(walker.nextNode()) textNodes.push(walker.currentNode)
-    textNodes.forEach(node=>{
-      const txt = node.textContent.trim()
-      // 匹配角色ID格式：下划线开头+字母数字组合，长度8-30
-      if(txt && txt.startsWith('_') && txt.length >= 8 && txt.length <= 30 && /^_[a-z0-9]+$/i.test(txt)) {
-        // 检查父元素，如果不是在正常的角色卡片里，就删除
-        const parent = node.parentElement
-        if(parent && !parent.hasAttribute('data-char-wallet-item') && !parent.closest('[data-char-wallet-item]')) {
-          node.remove()
-        }
-      }
-    })
-  }, 500) // 每500ms清理一次
 }
 
 bootstrap();
