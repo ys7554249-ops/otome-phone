@@ -631,7 +631,7 @@ const dataDB = {
 
 // 全局 key（不随存档切换的数据：API、主题、字体、机器码等）
 const GLOBAL_KEYS = new Set([
-    'apiList','activeApiId','imgApi','imgApiList','activeImgApiId','ttsApi','embApi','userMusicApi',
+    'apiList','activeApiId','imgApi','imgApiList','activeImgApiId','ttsApi','embApi','memApi','userMusicApi',
 'theme','fontMode','customFontName','customFontUrl','chatBubbleStyle','blurMode','customCSS',
   'fontLibrary','beautyLibrary',
   'machine_code','tavern_activated',
@@ -1081,6 +1081,10 @@ let ttsApi=store.get('ttsApi',{provider:'openai',key:'',baseUrl:'https://api.ope
 function saveTtsApi(){store.set('ttsApi',ttsApi)}
 let embApi=store.get('embApi',{key:'',baseUrl:'https://api.openai.com/v1',model:'text-embedding-3-small'})
 function saveEmbApi(){store.set('embApi',embApi)}
+// 记忆总结专用 API：留空则回退到聊天 API
+let memApi=store.get('memApi',{provider:'openai',name:'',key:'',baseUrl:'',model:''})
+function saveMemApi(){store.set('memApi',memApi)}
+function getMemApi(){ return (memApi && memApi.key) ? memApi : getApi() }
 let charList=store.get('charList',[{id:'c1',name:'苏白',relation:'暧昧',mood:'温柔',status:'在沙发上看书',affection:65,quote:'今天的风，很温柔呢。',personality:'温柔体贴、有些毒舌、偶尔傲娇，喜欢红茶和旧书。',avatar:'',worldBookIds:[],bindPersonaId:''}])
 let activeCharId=store.get('activeCharId','c1')
 function C(){return charList.find(c=>c.id===activeCharId)||charList[0]||{name:'???',personality:'',relation:'',mood:'',status:'',affection:0,quote:'',avatar:'',worldBookIds:[]}}
@@ -1125,43 +1129,71 @@ function saveDiaries(){
 let wallet=store.get('wallet',{balance:520,transactions:[]})
 function saveWallet(){store.set('wallet',wallet)}
 let _walletLock=false
+// 归一化钱包结构，兼容旧版本/损坏数据，避免 transactions 缺失导致崩溃
+function normalizeWallet(){
+  if(!wallet||typeof wallet!=='object')wallet={balance:520,transactions:[]}
+  const b=Number(wallet.balance)
+  wallet.balance=isFinite(b)?b:0
+  if(!Array.isArray(wallet.transactions))wallet.transactions=[]
+  return wallet
+}
+normalizeWallet()
 function walletPay(amount,desc,fromChar){
-  if(_walletLock)return false;_walletLock=true
-  const a=Math.abs(Number(amount)||0)
-  if(!fromChar&&a>wallet.balance){_walletLock=false;return false}
-  if(fromChar){wallet.balance+=a;wallet.transactions.unshift({type:'in',amount:a,desc,time:new Date().toLocaleString()})}
-  else{wallet.balance-=a;wallet.transactions.unshift({type:'out',amount:a,desc,time:new Date().toLocaleString()})}
-  if(wallet.transactions.length>100)wallet.transactions=wallet.transactions.slice(0,100)
-  saveWallet();_walletLock=false;return true
+  if(_walletLock)return false
+  _walletLock=true
+  // 用 finally 释放锁，任何异常都不会让钱包永久冻结
+  try{
+    normalizeWallet()
+    const a=Math.abs(Number(amount))
+    if(!isFinite(a)||a<=0)return false
+    if(!fromChar&&a>wallet.balance)return false
+    if(fromChar){wallet.balance+=a;wallet.transactions.unshift({type:'in',amount:a,desc,time:new Date().toLocaleString()})}
+    else{wallet.balance-=a;wallet.transactions.unshift({type:'out',amount:a,desc,time:new Date().toLocaleString()})}
+    if(wallet.transactions.length>100)wallet.transactions=wallet.transactions.slice(0,100)
+    saveWallet()
+    return true
+  }finally{
+    _walletLock=false
+  }
 }
 function walletReceive(amount,desc){return walletPay(amount,desc,true)}
 
 // ===== 角色钱包操作函数 =====
+// 归一化角色钱包，兼容旧版本/损坏数据
+function normalizeCharWallet(d){
+  if(!d.wallet||typeof d.wallet!=='object')d.wallet={balance:0,transactions:[],shop:null}
+  const b=Number(d.wallet.balance)
+  d.wallet.balance=isFinite(b)?b:0
+  if(!Array.isArray(d.wallet.transactions))d.wallet.transactions=[]
+  if(d.wallet.shop===undefined)d.wallet.shop=null
+  return d.wallet
+}
 function getCharWallet(charId){
   const d=getNurtureData(charId)
-  if(!d.wallet)d.wallet={balance:0,transactions:[],shop:null}
-  return d.wallet
+  return normalizeCharWallet(d)
 }
 
 function charWalletPay(charId,amount,desc){
   const d=getNurtureData(charId)
-  if(!d.wallet)d.wallet={balance:0,transactions:[],shop:null}
-  const a=Math.abs(Number(amount)||0)
-  if(a>d.wallet.balance)return false
-  d.wallet.balance-=a
-  d.wallet.transactions.unshift({type:'out',amount:a,desc:desc||'支出',time:new Date().toLocaleString()})
-  if(d.wallet.transactions.length>100)d.wallet.transactions=d.wallet.transactions.slice(0,100)
+  const w=normalizeCharWallet(d)
+  const a=Math.abs(Number(amount))
+  if(!isFinite(a)||a<=0)return false
+  if(a>w.balance)return false
+  w.balance-=a
+  w.transactions.unshift({type:'out',amount:a,desc:desc||'支出',time:new Date().toLocaleString()})
+  if(w.transactions.length>100)w.transactions=w.transactions.slice(0,100)
   saveNurtureData(charId,d)
   return true
 }
 
 function charWalletReceive(charId,amount,desc){
   const d=getNurtureData(charId)
-  if(!d.wallet)d.wallet={balance:0,transactions:[],shop:null}
-  const a=Math.abs(Number(amount)||0)
-  d.wallet.balance+=a
-  d.wallet.transactions.unshift({type:'in',amount:a,desc:desc||'收入',time:new Date().toLocaleString()})
-  if(d.wallet.transactions.length>100)d.wallet.transactions=d.wallet.transactions.slice(0,100)
+  const w=normalizeCharWallet(d)
+  const a=Math.abs(Number(amount))
+  if(!isFinite(a)||a<=0)return false
+  w.balance+=a
+  w.transactions.unshift({type:'in',amount:a,desc:desc||'收入',time:new Date().toLocaleString()})
+  if(w.transactions.length>100)w.transactions=w.transactions.slice(0,100)
   saveNurtureData(charId,d)
   return true
 }
@@ -1229,9 +1261,11 @@ function buyShopItem(itemId,category){
   const items=shopItems[category]||[]
   const item=items.find(i=>i.id===itemId)
   if(!item)return{success:false,msg:'商品不存在'}
-  if(wallet.balance<item.price)return{success:false,msg:'余额不足'}
-  
-  walletPay(item.price,`购买${item.name}`)
+  const price=Number(item.price)
+  if(!isFinite(price)||price<0)return{success:false,msg:'商品价格异常'}
+  if(wallet.balance<price)return{success:false,msg:'余额不足'}
+
+  if(!walletPay(price,`购买${item.name}`))return{success:false,msg:'余额不足'}
   
   // 添加到背包
   let bag=store.get('user_bag',[])
@@ -1500,8 +1534,8 @@ async function useItemOnChar(bagIndex,charId,silent=false){
   
   const d=getNurtureData(charId)
   
-  // 解析效果
-  const effects=item.effect.split(',')
+  // 解析效果（兼容缺失/损坏的 effect 字段）
+  const effects=String(item.effect||'').split(',')
   let effectMsg=''
   
   effects.forEach(ef=>{
@@ -1626,12 +1660,12 @@ function openShop(charId,shopTypeId,investFromUser){
   if(investFromUser){
     // 用户全额投资
     if(wallet.balance<totalCost)return{success:false,msg:'你的余额不足'}
-    walletPay(totalCost,`投资${charList.find(c=>c.id===charId)?.name}开${shopType.name}`)
+    if(!walletPay(totalCost,`投资${charList.find(c=>c.id===charId)?.name}开${shopType.name}`))return{success:false,msg:'你的余额不足'}
     userPay=totalCost
   }else{
     // 角色自己出钱
     if(d.wallet.balance<totalCost)return{success:false,msg:`${charList.find(c=>c.id===charId)?.name}的余额不足`}
-    charWalletPay(charId,totalCost,`开设${shopType.name}`)
+    if(!charWalletPay(charId,totalCost,`开设${shopType.name}`))return{success:false,msg:`${charList.find(c=>c.id===charId)?.name}的余额不足`}
     charPay=totalCost
   }
   
@@ -1690,7 +1724,7 @@ function settleShop(charId){
     charWalletReceive(charId,totalIncome,`${shop.name}营业收入`)
   }
   
-  shop.totalEarnings+=totalIncome
+  shop.totalEarnings=(shop.totalEarnings||0)+totalIncome
   shop.lastSettle=now
   
   saveNurtureData(charId,d)
@@ -1715,8 +1749,8 @@ function upgradeShop(charId){
   
   const level=shop.level||1
   if(level>=5)return{success:false,msg:'店铺已经满级了（Lv5）'}
-  
-  const upgradeCost=shopType.upgradeCost
+
+  const upgradeCost=Math.max(0,Math.floor(Number(shopType.upgradeCost)||1500))
   if(d.wallet.balance<upgradeCost)return{success:false,msg:'角色余额不足'}
   
   charWalletPay(charId,upgradeCost,`升级${shop.name}`)
@@ -2600,7 +2634,7 @@ function mergeMemoryTable(mem, updates){
 
 // 让 AI 根据近期事件更新档案表
 async function autoUpdateMemoryTable(charId, events){
-  const api=getApi(); if(!api||!api.key) return false
+  const api=getMemApi(); if(!api||!api.key) return false
   const mem=getCharMemory(charId)
   const c=charList.find(x=>x.id===charId)||{name:'角色'}
   const cur=JSON.stringify(mem.memoryTable)
@@ -2626,7 +2660,7 @@ preference = 偏好记录（喜欢或讨厌的东西/雷点/小习惯）
 2. 相同 k 会覆盖旧值，用于更新发生变化的信息
 3. 只记录事件里明确出现的信息，绝不编造
 4. 只输出 JSON，不要任何解释文字`
-  const res=await askAIJson('你是角色档案管理员，只输出JSON',prompt,2000)
+  const res=await askAIJson('你是角色档案管理员，只输出JSON',prompt,2000,api)
   if(res){
     const ch=mergeMemoryTable(mem,res)
     if(ch){ mem.lastUpdate=Date.now(); saveGlobalMemory() }
@@ -2676,12 +2710,14 @@ function mtCardHtml(mem){
 
 function saveGlobalMemory(){store.set('globalMemory',globalMemory)}
 
-function addMemoryEvent(charId,text,source){
+function addMemoryEvent(charId,text,source,mode,meta){
   const mem=getCharMemory(charId)
   // 优先使用剧情时间线，没有则用现实时间
   const _chr = charList.find(x=>x.id===charId)
   const _evtTime = (_chr && _chr.storyTimeline) ? _chr.storyTimeline : new Date().toLocaleString()
-  const evt = {id:uid(), text:text.slice(0,1000), time:_evtTime, source:source||'chat'}
+  // 事件发生场景：显式传入优先，否则按该角色当前所处模式推断
+  const _mode = mode || (_chr ? (_chr.offlineMode?'offline':'online') : '')
+  const evt = {id:uid(), text:text.slice(0,1000), time:_evtTime, source:source||'chat', mode:_mode, meta:!!meta}
   mem.keyEvents.push(evt)
   if(mem.keyEvents.length>100) mem.keyEvents=mem.keyEvents.slice(-1000)
   mem.lastUpdate=Date.now()
@@ -2822,22 +2858,27 @@ async function searchMemoryByVector(charId,query,topK){
 }
  
 async function autoSummarizeMemory(charId, force = false){
-  const api=getApi()
+  const api=getMemApi()
   if(!api||!api.key){
-    if(force) alert('请先配置聊天 API')
+    if(force) alert('请先配置聊天 API 或记忆总结 API')
     return false
   }
   const mem=getCharMemory(charId)
-  if(!force && mem.keyEvents.length<20) return false
-  if(force && mem.keyEvents.length<2 && !mem.summary){
+  // 只有「真实剧情事件」计入触发配额，模式切换等系统锚点(meta)不占数
+  const _realEvents = mem.keyEvents.filter(e=>!e.meta)
+  if(!force && _realEvents.length<20) return false
+  if(force && _realEvents.length<2 && !mem.summary){
     alert('互动记录太少啦，多互动几句再提炼吧')
     return false
   }
   // 使用专属的 lastSummaryTime 判断提炼冷却，避免被普通聊天的 lastUpdate 卡死
   if(!force && (Date.now()-(mem.lastSummaryTime||0)<1800000)) return false
+  // 兜底：上次总结失败后 5 分钟内不自动重试（避免刷 token），手动触发不受限
+  if(!force && (Date.now()-(mem._sumFailAt||0)<300000)) return false
   const oldSummary = mem.summary || '无'
-  // 将时间显式前置，方便 AI 准确定位时间发生顺序
-  const events = mem.keyEvents.slice(-1000).map(e => `[时间: ${e.time || '未知时间'} | 场景: ${e.source || '互动'}] ${e.text}`).join('\n') || '无'
+  // 将时间显式前置，方便 AI 准确定位时间发生顺序；标注线上/线下方式，meta 事件作为锚点标注为系统记录
+  const _modeLabel = e => (e.mode === 'offline' ? '线下见面' : e.mode === 'online' ? '线上聊天' : '')
+  const events = mem.keyEvents.slice(-1000).map(e => `[时间: ${e.time || '未知时间'} | 场景: ${e.source || '互动'}${_modeLabel(e) ? ` | 方式: ${_modeLabel(e)}` : ''}${e.meta ? ' | 系统记录' : ''}] ${e.text}`).join('\n') || '无'
   const c = charList.find(x => x.id === charId) || {name: '角色'}
   const prompt = `你是角色「${c.name}」的记忆档案管理员。请将【旧的长期记忆】与【近期新事件】合并提炼，生成一份【带有具体时间线】的完整长期记忆档案。
 
@@ -2869,8 +2910,14 @@ ${events}
 
 四、专属记忆锚点与特殊习惯
 · 发生过的难忘细节、两人的专属秘密或梗`
-  const res=await askAI('你是记忆管理员，保留旧记忆核心，合并新内容，只输出摘要正文',prompt,8192)
-  if(res&&!res.includes('API')){
+  // 直接用 callLLM 拿 ok 标志，避免 askAI 丢失失败状态；失败时绝不丢事件
+  const r=await callLLM({api, system:'你是记忆管理员，保留旧记忆核心，合并新内容，只输出摘要正文', messages:[{role:'user',content:prompt}], maxTokens:8192, timeout:Math.max(60000, Math.min(180000, 8192*30))})
+  const res=(r&&r.ok&&typeof r.text==='string')?r.text:''
+  // 成功判定：明确 ok + 正文足够长 + 非错误前缀 + 含记忆模板结构，防止把超时/拒答/截断垃圾当成总结
+  const _isErrorText = !res || res.includes('API失败') || res.includes('（API') || res.includes('未配置API')
+  const _hasStructure = !!res && (res.includes('时间线')||res.includes('时间轴')||res.includes('大事记')||res.includes('羁绊'))
+  const _valid = !!res && res.trim().length>=40 && !_isErrorText && _hasStructure
+  if(_valid){
     // 用清空前的事件顺便更新角色档案表
     try{ await autoUpdateMemoryTable(charId, events) }catch(e){ console.log('[档案表] 更新失败:',e) }
     mem.summary=res
@@ -2878,9 +2925,17 @@ ${events}
     mem.keyEvents=mem.keyEvents.slice(-5)
     mem.lastSummaryTime=Date.now()
     mem.lastUpdate=Date.now()
+    mem._sumFailCount=0
+    mem._sumFailAt=0
     saveGlobalMemory()
     return true
   }
+  // 兜底：总结失败/内容不合格时，保留全部关键事件以便下次重试，且不推进冷却时间
+  mem._sumFailCount=(mem._sumFailCount||0)+1
+  mem._sumFailAt=Date.now()
+  mem.lastUpdate=Date.now()
+  saveGlobalMemory()
+  console.warn('[记忆总结] 第'+mem._sumFailCount+'次失败，已保留关键事件待重试 | 类型:'+(r&&r.ok?'[内容校验未通过]':'[API调用失败]')+' | 返回:', res?res.slice(0,120):'(空)')
   return false
 }
 function refreshPlaceUnlocks(){
@@ -3299,6 +3354,23 @@ function _fmtStatus(raw, n) {
       h += `</div>`;
       return;
     }
+    // 行内用 | 分隔的键值对（如 地点:卧室|心情:慵懒）渲染成小胶囊
+    const _pipes = t.split(/\s*[|｜]\s*/).map(s => s.trim()).filter(Boolean);
+    if(_pipes.length >= 2 && _pipes.every(s => /^[^:：]{1,12}[:：].+$/.test(s))){
+      h += `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:3px 0">`;
+      _pipes.forEach(item => {
+        const i = item.search(/[:：]/);
+        const k = item.slice(0, i).trim();
+        const v = item.slice(i + 1).trim();
+        if(v.length > 20){
+          h += `<div style="width:100%;font-size:11px;color:${tc};line-height:1.7;margin:1px 0;padding:4px 10px;background:${bg};border-radius:8px"><span style="opacity:.6">${escHtml(k)}</span> ${escHtml(v)}</div>`;
+        }else{
+          h += `<span style="display:inline-block;font-size:10px;color:${tc};padding:2px 10px;background:${bg};border-radius:10px"><span style="opacity:.6">${escHtml(k)}</span> ${escHtml(v)}</span>`;
+        }
+      });
+      h += `</div>`;
+      return;
+    }
     // 自动将图片/GIF链接渲染为图片预览
     const _imgMatch = t.match(/(https?:\/\/\S+\.(?:gif|png|jpe?g|webp))/i);
     if(_imgMatch){
@@ -3315,6 +3387,95 @@ function _fmtStatus(raw, n) {
     h += `<div style="font-size:11px;color:${tc};line-height:1.7">${escHtml(t)}</div>`;
   });
   return h;
+}
+
+
+
+// 轻量 Markdown 内联转换（仅供线上气泡）：**加粗** / __加粗__ / *斜体* / ~~删除线~~ / 标题号
+function _mdInline(s){
+  if(!s || !/[*_~#]/.test(s)) return s
+  return String(s)
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^\n*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^\n_]+)__/g, '<u>$1</u>')
+    .replace(/~~([^\n~]+)~~/g, '<s>$1</s>')
+    .replace(/(^|[^\w*])\*([^\n*\s][^\n*]*?)\*(?=[^\w*]|$)/g, '$1<em>$2</em>')
+}
+
+// 联系人列表/直播间私信等预览位：剥掉状态栏标签、HTML、占位符，只留可读文字
+function _chatPreview(raw, maxLen){
+  if(!raw) return ''
+  let t = String(raw)
+    .replace(/<(?:status|ztl|plot|StatusBar|novel_status)\b[^>]*>[\s\S]*?<\/(?:status|ztl|plot|StatusBar|novel_status)>/gi, '〔状态〕')
+    .replace(/<UpdateVariable\b[\s\S]*?<\/UpdateVariable>/gi, '')
+    .replace(/<Analysis\b[\s\S]*?<\/Analysis>/gi, '')
+    .replace(/<thinking\b[\s\S]*?<\/thinking>/gi, '')
+    .replace(/<think\b[\s\S]*?<\/think>/gi, '')
+    .replace(/<(?:style|script|head)[^>]*>[\s\S]*?<\/(?:style|script|head)>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\u2063[A-Z]+\d*\u2063/g, '')
+    .replace(/\[状态[:：][^\]]*\]/g, '')
+    .replace(/\[心声[:：][^\]]*\]/g, '')
+    .replace(/【\s*状态栏\s*】[\s\S]*$/i, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if(maxLen && t.length > maxLen) t = t.slice(0, maxLen) + '...'
+  return t
+}
+
+// 渲染层兜底：把没被清洗掉的方括号状态 / 【状态栏】块 / 尾部属性行提炼成状态面板文本，
+// 避免 "[状态:微笑|心情:开心|心声:...]" 这类标签直接泄漏进气泡或小说正文。
+function _pullStatusBlock(raw){
+  if(!raw || typeof raw !== 'string') return {text:raw, status:''}
+  const found = []
+  const STRONG = /^(?:状态|状况|心情|情绪|心声|内心|剧情时间|动作|好感|理智|体力|精神|位置|场所|地点|环境|服装|穿着|时间)$/
+  let text = raw
+
+  // 1) 方括号状态：[状态:微笑|心情:开心|心声:...]（半角/全角均可，允许内联在句子后面）
+  text = text.replace(/[\[【]([^\[\]【】\n]{4,400})[\]】]/g, (full, inner) => {
+    const parts = inner.split(/[|｜]/).map(s => s.trim()).filter(Boolean)
+    const kv = []
+    parts.forEach(p => {
+      const m = p.match(/^([^:：]{1,12})\s*[:：]\s*(.+)$/)
+      if(m) kv.push({ k:m[1].trim(), v:m[2].trim() })
+    })
+    if(kv.length >= 2 && kv.filter(x => STRONG.test(x.k)).length >= 2){
+      found.push(kv.map(x => x.k + '：' + x.v).join('\n'))
+      return ''
+    }
+    return full
+  })
+
+  // 2) 【状态栏】/【当前状态】块 + 连续的 动作：/心情： 行
+  text = text.replace(
+    /【\s*(?:状态栏|当前状态|角色状态|状态面板|人物状态)\s*】\s*\n?((?:(?:当前)?(?:动作|心情|情绪|环境|位置|场所|地点|服装|穿着|时间|剧情时间|心声|内心|好感|理智|体力|精神)[:：][^\n]*\n?)+)/g,
+    (_full, body) => {
+      const lines = body.split('\n').map(s => s.trim()).filter(Boolean)
+      if(lines.length) found.push(lines.join('\n'))
+      return ''
+    }
+  )
+
+  // 3) 没有标题的尾部属性行簇（至少 2 行，如 动作：… / 心情：…）
+  const PAIR = /^(?:当前)?(?:动作|心情|情绪|环境|位置|场所|地点|服装|穿着|剧情时间|时间|心声|内心)[:：].+$/
+  const lines = text.split('\n')
+  let end = lines.length - 1
+  while(end >= 0 && !lines[end].trim()) end--
+  let start = end
+  while(start >= 0){
+    const l = lines[start].trim()
+    if(!l){ start--; continue }
+    if(PAIR.test(l)){ start--; continue }
+    break
+  }
+  const cluster = lines.slice(start + 1, end + 1).map(s => s.trim()).filter(Boolean)
+  if(cluster.length >= 2 && cluster.every(l => PAIR.test(l))){
+    found.push(cluster.join('\n'))
+    text = lines.slice(0, start + 1).join('\n')
+  }
+
+  return { text: text.trim(), status: found.join('\n').trim() }
 }
 // ===== AI调用 =====
 function sysPrompt(){
@@ -5274,7 +5435,7 @@ ${msgs || '无'}
                 <div style="font-size:16px; color:${n?'#f0e0f0':'var(--ink)'}; font-weight:600">${escHtml(c.name)}</div>
                 <div style="font-size:11px; color:${n?'#8878a8':'var(--ink-l)'}">${lastMsg?lastMsg.time:''}</div>
               </div>
-              <div style="font-size:12px; color:${n?'#a898b8':'var(--ink-l)'}; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${lastMsg?escHtml(lastMsg.text):escHtml(c.status)}</div>
+              <div style="font-size:12px; color:${n?'#a898b8':'var(--ink-l)'}; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${lastMsg?escHtml(_chatPreview(lastMsg.text,40)):escHtml(c.status)}</div>
             </div>
           </div>`;
       }).join('');
@@ -5530,11 +5691,11 @@ pages.home=()=>{
   // ===== 双屏滑动容器 =====
   const slider=ce('div')
   slider.id='_homeslider'
-  Object.assign(slider.style,{display:'flex',width:'200%',height:'100%',transition:'transform .4s cubic-bezier(.25,.8,.25,1)',transform:'translateX(0)',position:'relative',zIndex:'1'})
+  Object.assign(slider.style,{display:'flex',width:'300%',height:'100%',transition:'transform .4s cubic-bezier(.25,.8,.25,1)',transform:'translateX(0)',position:'relative',zIndex:'1'})
 
  // ===== 第一屏：锁屏风格 =====
 const screen1=ce('div')
-Object.assign(screen1.style,{width:'50%',height:'100%',display:'flex',flexDirection:'column',flexShrink:'0',overflow:'hidden',position:'relative'})
+ Object.assign(screen1.style,{width:'33.3333%',height:'100%',display:'flex',flexDirection:'column',flexShrink:'0',overflow:'hidden',position:'relative'})
 
 // 如果有照片就铺满整个第一屏当背景
 if(lockPhotos.length){
@@ -5717,7 +5878,7 @@ s1body.innerHTML=`
 screen1.appendChild(s1body)
 // ===== 第二屏：App桌面 =====
 const screen2=ce('div')
-Object.assign(screen2.style,{width:'50%',height:'100%',display:'flex',flexDirection:'column',flexShrink:'0',overflow:'hidden'})
+ Object.assign(screen2.style,{width:'33.3333%',height:'100%',display:'flex',flexDirection:'column',flexShrink:'0',overflow:'hidden'})
 
 // 第二屏顶部
 const s2top=ce('div')
@@ -5842,11 +6003,89 @@ sc.appendChild(polaroidSection)
 
 screen2.appendChild(sc)
 
+// ===== 第三屏：日历小组件 =====
+const screen3=ce('div')
+Object.assign(screen3.style,{width:'33.3333%',height:'100%',flexShrink:'0',overflow:'hidden',position:'relative',display:'flex',flexDirection:'column'})
 
+const _c3ink=n?'#f0e0f0':'var(--ink)'
+const _c3sub=n?'#b8a8c8':'var(--ink-l)'
+const _c3accent=n?'#c8a8d0':'var(--rose)'
+const _c3bd=n?'1px solid rgba(200,180,220,.14)':'1px solid rgba(255,255,255,.75)'
+const _c3bg=n?'linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,.02))':'linear-gradient(135deg,rgba(255,255,255,.55),rgba(255,255,255,.22))'
+const _c3sh=n?'0 4px 18px rgba(0,0,0,.18)':'0 6px 22px rgba(232,160,180,.1)'
+const _c3bf='blur(15px)'
+
+const _s3top=ce('div')
+Object.assign(_s3top.style,{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 20px',paddingTop:'max(8px,env(safe-area-inset-top))',fontSize:'11px',color:n?'#b8a8b8':'var(--ink-l)',letterSpacing:'1px',flexShrink:'0'})
+_s3top.innerHTML=`<span style="opacity:.6">${fdate(now())}</span><span style="opacity:.45">♪</span>`
+screen3.appendChild(_s3top)
+
+const _s3body=ce('div')
+_s3body.id='_s3body'
+Object.assign(_s3body.style,{flex:'1',padding:'0 20px 12px',overflowY:'auto',WebkitOverflowScrolling:'touch'})
+screen3.appendChild(_s3body)
+
+const _weekCn=['日','一','二','三','四','五','六']
+const _monthCn=['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月']
+const _calFirstDay=new Date(timeNow.getFullYear(),timeNow.getMonth(),1).getDay()
+const _calTotal=new Date(timeNow.getFullYear(),timeNow.getMonth()+1,0).getDate()
+const _lunarDayCn=v=>{const _n=['','一','二','三','四','五','六','七','八','九','十'];if(v<=10)return '初'+_n[v];if(v<20)return '十'+_n[v-10];if(v===20)return '二十';if(v<30)return '廿'+_n[v-20];return '三十'}
+let _lunarTxt=''
+try{
+  const _lp=new Intl.DateTimeFormat('zh-CN-u-ca-chinese',{month:'long',day:'numeric'}).formatToParts(timeNow)
+  const _lm=(_lp.find(p=>p.type==='month')||{}).value||''
+  const _ld=parseInt((_lp.find(p=>p.type==='day')||{}).value||'0',10)
+  if(_lm&&_ld)_lunarTxt='农历'+_lm+_lunarDayCn(_ld)
+}catch(e){}
+
+const _calPct=Math.round(timeNow.getDate()/_calTotal*100)
+let _calCells=''
+for(let i=0;i<_calFirstDay;i++)_calCells+=`<div></div>`
+for(let d=1;d<=_calTotal;d++){
+  const _today=d===timeNow.getDate()
+  _calCells+=`<div style="display:flex;align-items:center;justify-content:center"><div style="width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;${_today?`background:linear-gradient(145deg,${n?'#c8a8d0':'#f7b3ca'},${n?'#a887b8':'#ef8fb1'});color:#fff;font-weight:700;box-shadow:0 3px 10px ${n?'rgba(140,100,170,.4)':'rgba(233,143,177,.35)'}`:`color:${_c3sub}`}">${d}</div></div>`
+}
+
+const _calCard=ce('div')
+Object.assign(_calCard.style,{marginTop:'26px',position:'relative',overflow:'hidden',borderRadius:'24px',padding:'16px 16px 14px',background:_c3bg,backdropFilter:_c3bf,WebkitBackdropFilter:_c3bf,border:_c3bd,boxShadow:_c3sh})
+_calCard.innerHTML=`
+  <div style="position:absolute;top:-46px;right:-40px;width:140px;height:140px;border-radius:50%;background:radial-gradient(circle,${n?'rgba(200,168,208,.18)':'rgba(247,179,202,.3)'},transparent 70%);pointer-events:none"></div>
+  <svg width="14" height="14" viewBox="0 0 24 24" style="position:absolute;right:16px;top:16px;opacity:.75;pointer-events:none"><g fill="${n?'#c8a8d0':'#f2b3c8'}"><circle cx="12" cy="6" r="4.2"/><circle cx="18" cy="11" r="4.2"/><circle cx="15.5" cy="18" r="4.2"/><circle cx="8.5" cy="18" r="4.2"/><circle cx="6" cy="11" r="4.2"/></g><circle cx="12" cy="12" r="2.3" fill="${n?'#3a2845':'#fff7fa'}"/></svg>
+  <div style="position:relative;display:flex;align-items:flex-start;justify-content:space-between">
+    <div>
+      <div style="font-size:10px;color:${_c3sub};font-style:italic;letter-spacing:2px;opacity:.65">✦ calendar ✦</div>
+      <div style="display:flex;align-items:baseline;gap:7px;margin-top:7px">
+        <div style="font-size:28px;font-weight:800;color:${_c3ink};letter-spacing:2px;line-height:1.1">${_monthCn[timeNow.getMonth()]}</div>
+        <div style="font-size:11px;color:${_c3sub};opacity:.5;letter-spacing:1px">${timeNow.getFullYear()}</div>
+      </div>
+      <div style="font-size:11px;color:${_c3sub};margin-top:6px;letter-spacing:1px">${_lunarTxt?_lunarTxt+' · ':''}星期${_weekCn[timeNow.getDay()]}</div>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);margin-top:16px;font-size:10px;color:${_c3sub};opacity:.5;text-align:center;letter-spacing:1px">
+    ${_weekCn.map(w=>`<div style="height:18px;display:flex;align-items:center;justify-content:center">${w}</div>`).join('')}
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:32px;margin-top:6px">${_calCells}</div>
+  <div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid ${n?'rgba(255,255,255,.07)':'rgba(232,160,180,.14)'}">
+    <div style="font-size:10px;color:${_c3sub};opacity:.6;letter-spacing:1px">本月</div>
+    <div style="flex:1;height:5px;border-radius:3px;overflow:hidden;background:${n?'rgba(255,255,255,.07)':'rgba(0,0,0,.05)'}">
+      <div style="width:${_calPct}%;height:100%;border-radius:3px;background:${n?'rgba(200,168,208,.55)':'rgba(240,164,190,.75)'}"></div>
+    </div>
+    <div style="font-size:10px;color:${_c3sub};opacity:.6;font-variant-numeric:tabular-nums">${timeNow.getDate()}/${_calTotal}</div>
+  </div>
+`
+_s3body.appendChild(_calCard)
+
+const _s3apps=ce('div')
+Object.assign(_s3apps.style,{marginTop:'18px'})
+_s3apps.innerHTML=`<div style="font-size:11px;color:${_c3sub};letter-spacing:2px;font-style:italic;opacity:.6;margin:0 4px 10px">✦ apps ✦</div><div id="_s3grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px"></div>`
+_s3body.appendChild(_s3apps)
+const _s3grid=_s3apps.querySelector('#_s3grid')
+_s3grid.appendChild(roomBtn(`<svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="${n?'#c8a8d0':'var(--rose)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h20a4 4 0 014 4v30H11a4 4 0 01-4-4V7z"/><path d="M31 13h10v28H31"/><path d="M24 21c-1.7-2.7-5.6-2.2-6.2.7-.5 2.5 2.4 4.8 6.2 7.3 3.8-2.5 6.7-4.8 6.2-7.3-.6-2.9-4.5-3.4-6.2-.7z" stroke-width="1.6"/></svg>`,'同人',()=>render('fanfic')))
 
 // 组装
   slider.appendChild(screen1)
   slider.appendChild(screen2)
+  slider.appendChild(screen3)
   p.appendChild(slider)
 
   // 页面指示器
@@ -5855,6 +6094,7 @@ screen2.appendChild(sc)
   dots.innerHTML=`
     <div id="_dot0" style="width:6px;height:6px;border-radius:50%;background:${n?'#c8a8d0':'var(--rose)'};transition:all .3s"></div>
     <div id="_dot1" style="width:6px;height:6px;border-radius:50%;background:${n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'};transition:all .3s"></div>
+    <div id="_dot2" style="width:6px;height:6px;border-radius:50%;background:${n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'};transition:all .3s"></div>
   `
   p.appendChild(dots)
 
@@ -5864,15 +6104,11 @@ screen2.appendChild(sc)
   let currentScreen=_homeScreen,touchStartX=0,touchStartY=0,touchDeltaX=0,isDragging=false,_inPolScroll=false
   const screenWidth=()=>window.innerWidth
   // 恢复上次所在屏
-  if(currentScreen===1){
+  if(currentScreen>0){
     slider.style.transition='none'
-    slider.style.transform='translateX(-50%)'
+    slider.style.transform=`translateX(-${currentScreen*100/3}%)`
     requestAnimationFrame(()=>{slider.style.transition=''})
-    const d0=$('#_dot0'),d1=$('#_dot1')
-    if(d0&&d1){
-      d0.style.background=n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)'
-      d1.style.background=n?'#c8a8d0':'var(--rose)'
-    }
+    for(let i=0;i<3;i++){const d=$('#_dot'+i);if(d)d.style.background=i===currentScreen?(n?'#c8a8d0':'var(--rose)'):(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)')}
   }
 
   slider.addEventListener('touchstart',e=>{
@@ -5892,8 +6128,8 @@ slider.addEventListener('touchmove',e=>{
   const dy=Math.abs(e.touches[0].clientY-touchStartY)
   if(dy>Math.abs(touchDeltaX)+10){isDragging=false;return}
   if(Math.abs(touchDeltaX)>10) e.preventDefault()
-  const base=currentScreen===0?0:-screenWidth()
-  const offset=Math.max(-screenWidth(),Math.min(0,base+touchDeltaX))
+   const base=-currentScreen*screenWidth()
+   const offset=Math.max(-2*screenWidth(),Math.min(0,base+touchDeltaX))
   slider.style.transform=`translateX(${offset}px)`
 },{passive:false})
 
@@ -5903,18 +6139,11 @@ slider.addEventListener('touchend',()=>{
   isDragging=false
   slider.style.transition='transform .4s cubic-bezier(.25,.8,.25,1)'
   const threshold=screenWidth()*0.35
-    if(currentScreen===0&&touchDeltaX<-threshold){
-      currentScreen=1
-    }else if(currentScreen===1&&touchDeltaX>threshold){
-      currentScreen=0
-    }
-    _homeScreen=currentScreen
-    slider.style.transform=`translateX(${currentScreen===0?'0':'-50%'})`
-    const d0=$('#_dot0'),d1=$('#_dot1')
-    if(d0&&d1){
-      d0.style.background=currentScreen===0?(n?'#c8a8d0':'var(--rose)'):(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)')
-      d1.style.background=currentScreen===1?(n?'#c8a8d0':'var(--rose)'):(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)')
-    }
+     if(touchDeltaX<-threshold)currentScreen=Math.min(2,currentScreen+1)
+     else if(touchDeltaX>threshold)currentScreen=Math.max(0,currentScreen-1)
+     _homeScreen=currentScreen
+     slider.style.transform=`translateX(-${currentScreen*100/3}%)`
+     for(let i=0;i<3;i++){const d=$('#_dot'+i);if(d)d.style.background=i===currentScreen?(n?'#c8a8d0':'var(--rose)'):(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)')}
     touchDeltaX=0
   },{passive:true})
 
@@ -5927,8 +6156,8 @@ slider.addEventListener('touchend',()=>{
   document.addEventListener('mousemove',e=>{
     if(!isDragging)return
     touchDeltaX=e.clientX-touchStartX
-    const base=currentScreen===0?0:-screenWidth()
-    const offset=Math.max(-screenWidth(),Math.min(0,base+touchDeltaX))
+     const base=-currentScreen*screenWidth()
+     const offset=Math.max(-2*screenWidth(),Math.min(0,base+touchDeltaX))
     slider.style.transform=`translateX(${offset}px)`
   })
   document.addEventListener('mouseup',()=>{
@@ -5937,15 +6166,11 @@ slider.addEventListener('touchend',()=>{
     isDragging=false
     slider.style.transition='transform .4s cubic-bezier(.25,.8,.25,1)'
     const threshold=screenWidth()*0.35
-    if(currentScreen===0&&touchDeltaX<-threshold)currentScreen=1
-    else if(currentScreen===1&&touchDeltaX>threshold)currentScreen=0
-    _homeScreen=currentScreen
-    slider.style.transform=`translateX(${currentScreen===0?'0':'-50%'})`
-    const d0=$('#_dot0'),d1=$('#_dot1')
-    if(d0&&d1){
-      d0.style.background=currentScreen===0?(n?'#c8a8d0':'var(--rose)'):(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)')
-      d1.style.background=currentScreen===1?(n?'#c8a8d0':'var(--rose)'):(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)')
-    }
+     if(touchDeltaX<-threshold)currentScreen=Math.min(2,currentScreen+1)
+     else if(touchDeltaX>threshold)currentScreen=Math.max(0,currentScreen-1)
+     _homeScreen=currentScreen
+     slider.style.transform=`translateX(-${currentScreen*100/3}%)`
+     for(let i=0;i<3;i++){const d=$('#_dot'+i);if(d)d.style.background=i===currentScreen?(n?'#c8a8d0':'var(--rose)'):(n?'rgba(200,180,220,.25)':'rgba(232,160,180,.25)')}
     touchDeltaX=0
   })
 
@@ -6235,8 +6460,9 @@ function getLiveCoins(){return store.get('liveCoins',0)}
 function setLiveCoins(v){store.set('liveCoins',Math.max(0,Math.floor(v)))}
 function rechargeLiveCoins(yuan){
   const coins=Math.floor(yuan*10)
+  if(!isFinite(yuan)||yuan<=0)return false
   if(wallet.balance<yuan)return false
-  walletPay(yuan,`充值${coins}直播币`)
+  if(!walletPay(yuan,`充值${coins}直播币`))return false
   setLiveCoins(getLiveCoins()+coins);return true
 }
 let _coinLock=false
@@ -6497,7 +6723,7 @@ window.openLiveInbox = () => {
            ${avatarEl(s.avatar, 40)}
            <div style="flex:1;min-width:0">
              <div style="font-size:14px;color:var(--ink);font-weight:500">${escHtml(s.name)}</div>
-             <div style="font-size:11px;color:var(--ink-l);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(lastMsg.text)}</div>
+             <div style="font-size:11px;color:var(--ink-l);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(_chatPreview(lastMsg.text,30))}</div>
            </div>
          </div>
        `;
@@ -8683,14 +8909,45 @@ pages.chat=()=>{
 if(!c.styleBookIds) c.styleBookIds=[]
 if(c.offlineMode===undefined) c.offlineMode=false
 if(!c.lastVisit) c.lastVisit=0
+// 单条消息的渲染模式判定：带 mode 的消息以 mode 为准（不随当前开关漂移），
+// 老消息没有 mode 时才回退到角色当前模式。
+// 系统消息/卡片消息不属于线上聊天气泡，强制按线上容器渲染，避免在线上模式下被当成小说正文吞掉。
+const _msgModeOf=m=>{
+  if(m&&m.isSystem) return 'online'
+  if(m&&(m.isCard||m._isCard)) return 'online'
+  return (m&&m.mode)?m.mode:(c.offlineMode?'offline':'online')
+}
+const _msgIsOffline=m=>!!(m&&m.from!=='u')&&_msgModeOf(m)==='offline'
 
   if(c.bindPersonaId && personaList.find(q=>q.id===c.bindPersonaId)){
     activePersonaId=c.bindPersonaId
     savePersonaList()
   }
-  // 进入聊天页时标记所有消息为已读
+  // 进入聊天页时标记所有消息为已读，并补齐历史消息缺失的 mode。
+  // 早期消息没写 mode，如果直接按“当前开关”渲染，切一次线上/线下就会让整段历史换皮，
+  // 表现为线上聊天气泡突然变成小说正文（或反过来）。这里按时间顺序用模式切换标记回溯补写，
+  // 补写后再持久化，之后无论怎么切模式，每条历史消息的渲染形态都稳定不变。
   const _allMsgs=getMsgs()
   let _readChanged=false
+  {
+    // 历史里存在模式切换标记时，标记之前的消息默认算线上；完全没有标记说明是单模式历史，
+    // 就沿用它当前所在的模式，避免把一整个线下存档的历史强行判成线上。
+    let _hasModeMark=_allMsgs.some(m=>m&&m.isSystem&&(m.mode==='offline'||m.mode==='online'))
+    let _runMode=_hasModeMark?'online':(c.offlineMode?'offline':'online')
+    _allMsgs.forEach(m=>{
+      if(!m) return
+      if(m.isSystem){
+        if(m.mode==='offline'||m.mode==='online') _runMode=m.mode
+        return
+      }
+      if(m.mode){
+        if(m.mode==='offline'||m.mode==='online') _runMode=m.mode
+        return
+      }
+      m.mode=(m.isCard||m._isCard)?'offline':_runMode
+      _readChanged=true
+    })
+  }
   _allMsgs.forEach(m=>{if(m.from==='c'&&!m.read){m.read=true;_readChanged=true}})
   if(_readChanged)saveMsgs(activeCharId,_allMsgs)
   const p=ce('div','page')
@@ -8840,7 +9097,7 @@ else{p.style.background=bgNow()}
         cursor:pointer;
       ">
     </div>
-    <span>${escHtml(m.text.replace(/[（）()]/g, ''))}</span>
+    <span>${escHtml(String(m.text||'').replace(/[（）()]/g, ''))}</span>
   `
 
   ml.appendChild(row)
@@ -9020,8 +9277,8 @@ if(document.fonts&&document.fonts.ready){document.fonts.ready.then(reportHeight)
         }
       }
       // 线下模式永远不算纯卡片，必须走线下小说渲染流程
-      const _isOfflineMsg = !isU && (m.mode==='offline' || (!m.mode && c.offlineMode))
-      const _htmlCardHit = !!_cardBody && !_extraStoryText && !_isOfflineMsg
+      const _offlineThisMsg = _msgIsOffline(m)
+      const _htmlCardHit = !!_cardBody && !_extraStoryText && !_offlineThisMsg
       if(_cardBody){
         // HTML 已交给 iframe，这里只留下真正的剧情正文。
         txt = _extraStoryText
@@ -9650,7 +9907,8 @@ display:flex;justify-content:space-between;align-items:center;font-size:9.5px;co
         return `<div style="white-space:normal;line-height:1.6;margin:6px 0;border-radius:14px;overflow:hidden;background:${n?'rgba(255,255,255,.08)':'rgba(255,255,255,.85)'};border:1px solid ${n?'rgba(200,180,220,.15)':'rgba(0,0,0,.06)'};box-shadow:0 2px 8px rgba(0,0,0,.05)"><div style="padding:8px 12px;border-bottom:1px solid ${n?'rgba(255,255,255,.08)':'rgba(0,0,0,.05)'};display:flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${n?'#c8a8d0':'var(--rose-d)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span style="font-size:11px;color:${n?'#c8a8d0':'var(--rose-d)'};font-weight:500;letter-spacing:1px">${board}</span></div><div style="padding:10px 12px;font-size:12px;color:${n?'#d0c0d8':'var(--ink)'};line-height:1.8;word-break:break-word;max-height:300px;overflow-y:auto">${content}</div></div>`;
       };
       txt = _extractForumPosts(txt);
-      txt = txt.replace(/```/g,'').replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'').replace(/<head[^>]*>[\s\S]*?<\/head>/gi,'').replace(/<\/?(?:html|body|div|section|article|main|header|footer|nav|aside|span[^a-z])[^>]*>/gi,'');
+      // 注意：span 要同时匹配开闭标签，否则只删掉 <span ...> 会让 </span> 作为文字漏进气泡
+      txt = txt.replace(/```/g,'').replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'').replace(/<head[^>]*>[\s\S]*?<\/head>/gi,'').replace(/<\/?(?:html|body|div|section|article|main|header|footer|nav|aside|span)\b[^>]*>/gi,'');
       // 格式3.7：方括号游戏面板 [GAME]...[END] / [player]...[/player] / [status]...[/status]
       const _bracketGameBlocks = [];
       const _bracketGamePh = i => `\u2063BRKGAME${i}\u2063`;
@@ -10029,6 +10287,16 @@ let _statusText = ''
 let _mainText = txt
 
 if(!isU){
+  // 渲染层兜底：先抓出方括号/【状态栏】/尾部属性行簇形式的状态，
+  // 否则这些标签会直接漏进气泡或小说正文（<status> 等标签格式仍走下面原有逻辑）。
+  if(!_cardBody && !/<(?:status|ztl|plot|StatusBar|novel_status)\b/i.test(txt)){
+    const _pulled = _pullStatusBlock(txt)
+    if(_pulled.status){
+      txt = _pulled.text
+      _mainText = txt
+      _statusText = _pulled.status
+    }
+  }
   // 普通角色消息才解析状态栏。
   // 独立互动卡片不参与状态栏解析，直接交给 iframe。
   // 依次尝试：<status|ztl|plot|StatusBar>，再兜底匹配带"状态栏"标题的 <details>
@@ -10450,14 +10718,11 @@ if(_htmlCardHit){
   },300000)
 }
 
-      }else if(
-  !isU &&
-  (m.mode==='offline' || (!m.mode && c.offlineMode))
-){
+      }else if(_msgIsOffline(m)){
         // 线下小说模式：旁白/对话分离渲染
         // m.mode 是精确判断（新消息都会带）；老消息没 mode 时用"当前是线下模式且这条消息超过80字"作兜底
         // 先清理 AI 输出的 Markdown 残渣（**加粗** / *斜体* / __下划线__ / ### 标题）
-        let _rawSrc = (_cardBody ? (_mainText || '') : (_mainText || m.text || ''))
+        let _rawSrc = (_cardBody ? (_mainText || '') : (_mainText !== null && _mainText !== undefined ? _mainText : (m.text || '')))
   .replace(/\{\{user\}\}/gi, (P().name||'用户'))
   .replace(/\{\{char\}\}/gi, c.name||'')
 
@@ -10674,7 +10939,8 @@ if(_htmlCardHit){
               for(let i=_txtParas.length-1;i>0;i--){
                 const prev=_txtParas[i-1],cur=_txtParas[i];
                 const prevDone=/[。！？…!?][\u201d」』"']*$/.test(prev);
-                if(cur.length<=4||(!prevDone&&cur.length<=20)){_txtParas[i-1]+=cur;_txtParas.splice(i,1)}
+                const curDone=/[。！？…!?][\u201d」』"']*$/.test(cur);
+                if((cur.length<=4&&!curDone)||(!prevDone&&cur.length<=20)){_txtParas[i-1]+=cur;_txtParas.splice(i,1)}
               }
               let _out = ''
               if(_txtParas.length){
@@ -10697,7 +10963,8 @@ if(_htmlCardHit){
             for(let i=_paras.length-1;i>0;i--){
               const prev=_paras[i-1],cur=_paras[i];
               const prevDone=/[。！？…!?][\u201d」』"']*$/.test(prev);
-              if(cur.length<=4||(!prevDone&&cur.length<=20)){_paras[i-1]+=cur;_paras.splice(i,1)}
+              const curDone=/[。！？…!?][\u201d」』"']*$/.test(cur);
+              if((cur.length<=4&&!curDone)||(!prevDone&&cur.length<=20)){_paras[i-1]+=cur;_paras.splice(i,1)}
             }
             if(!_paras.length) return ''
             const _paraHtml = _paras.map(line=>{
@@ -10868,7 +11135,7 @@ txt = '\u2063BLMX_RENDERED\u2063';
               const label = desc.trim().replace(/\.[a-z]{2,4}$/i, '').replace(/[a-z0-9]{5,}$/i, '').trim() || '表情';
               return `\u2063BQB:${label}\u2063`;
           }).replace(/<bqb\b[^>]*\/>/gi, '\u2063BQB:表情\u2063');
-          let parsedText = _restoreMediaTags((isU ? escHtml(_bqbProcessed) : _safeInlineHtml(_bqbProcessed)).replace(/\[sticker[:：]\s*([^\]]+?)\s*\]/gi, (_m, meaning) => {
+          let parsedText = _restoreMediaTags((isU ? escHtml(_bqbProcessed) : _safeInlineHtml(_mdInline(_bqbProcessed))).replace(/\[sticker[:：]\s*([^\]]+?)\s*\]/gi, (_m, meaning) => {
               const _hit = stickers.find(s => s.meaning === meaning.trim());
               return _hit ? `(${_hit.meaning}:${_hit.url})` : '';
           }).replace(/[(（]([^:：()]+)[:：]((?:https?:\/\/|data:)[^()]+)[)）]/g, (match, meaning, url) => {
@@ -10907,12 +11174,12 @@ txt = '\u2063BLMX_RENDERED\u2063';
               </div>`;
           }
 
-          // 简短聊天多气泡拆分：自适应宽度、精致圆角、每句话一个独立灵动小气泡
+          // 简短聊天多气泡拆分：自适应宽度、精致圆角、每句话一个独立灵动小气泡（保留 _bubble 类让主题/气泡预设生效）
           if(!_blmxHtml && parsedText && !isU && parsedText.length < 350){
             const _lines = parsedText.split(/\n+/).map(s=>s.trim()).filter(Boolean);
             if(_lines.length > 1){
               bubbleContent = `<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;width:100%">` +
-                _lines.map(l => `<div style="display:inline-block;width:fit-content;max-width:82%;padding:10px 14px;background:${bg};border-radius:4px 18px 18px 18px;font-size:14px;line-height:1.5;color:${clr};box-shadow:0 1px 4px rgba(0,0,0,.05);border:1px solid rgba(232,160,180,.12);word-break:break-word">${l}</div>`).join('') +
+                _lines.map((l, li) => `<div class="_bubble _bubble-other" data-idx="${idx}" style="display:inline-block;width:fit-content;max-width:82%;padding:10px 14px;background:${bg};border-radius:4px 18px 18px 18px;font-size:14px;line-height:1.5;color:${clr};box-shadow:0 1px 4px rgba(0,0,0,.05);border:1px solid rgba(232,160,180,.12);word-break:break-word">${li === 0 ? quoteHtml : ''}${l}</div>`).join('') +
                 `</div>`;
             }
           }
@@ -10930,7 +11197,7 @@ txt = '\u2063BLMX_RENDERED\u2063';
 
 
       // 普通线上聊天：放入头像、气泡、操作栏（线下模式会在后面单独处理，这里只处理线上和用户消息）
-      if(isU || (m.mode==='online' || (!m.mode && !c.offlineMode))){
+      if(!_msgIsOffline(m)){
         bubbleRow.innerHTML = `
           <div style="flex:0 0 auto">${avatarEl(isU?P().avatar:c.avatar,30)}</div>
           <div style="flex:0 1 auto;max-width:88%;min-width:0;display:flex;flex-direction:column;gap:2px">
@@ -10938,7 +11205,7 @@ ${bubbleContent}${toolsHtml}</div>
         `
       }
 
-      if(!isU && (m.mode==='offline' || (!m.mode && c.offlineMode))){
+      if(_msgIsOffline(m)){
         row.style.padding = '0 6px'
         row.style.margin = '0'
         row.style.alignItems = 'stretch'
@@ -11628,10 +11895,10 @@ if (txtCharBtn) {
         // 自动注入切换记忆，防止AI位置错乱
         const _modeArr = getMsgs(activeCharId);
         if(c.offlineMode) {
-  addMemoryEvent(activeCharId, `现在切换到线下剧情模式（小说体叙事）。`, '模式切换');
+  addMemoryEvent(activeCharId, `现在切换到线下剧情模式（小说体叙事）。`, '模式切换', 'offline', true);
   _modeArr.push({from:'system', text:'—— 已切换到线下模式（小说体） ——', time:ftime(now()), isSystem:true, mode:'offline'});
 } else {
-  addMemoryEvent(activeCharId, `线下剧情模式结束，现在改用手机线上聊天。`, '模式切换');
+  addMemoryEvent(activeCharId, `线下剧情模式结束，现在改用手机线上聊天。`, '模式切换', 'online', true);
   c.offlineCompanions = [];
   _modeArr.push({from:'system', text:'—— 已切换到线上模式（微信聊天） ——', time:ftime(now()), isSystem:true, mode:'online'});
 }
@@ -12821,11 +13088,11 @@ ${ctxMsgs}
       saveMsgs(activeCharId,newArr);
 
       // 【修复】重说生成后，将新对话同步写入关键事件
-      const _rgUBrief = userTexts.map(t => formatMemorySnippet(t, 50)).filter(Boolean).join('；');
-      const _rgAIBrief = lines.map(l => formatMemorySnippet(l, 80)).filter(Boolean).join('；');
+      const _rgUBrief = userTexts.map(t => formatMemorySnippet(t, c.offlineMode?120:50)).filter(Boolean).join('；');
+      const _rgAIBrief = lines.map(l => formatMemorySnippet(l, c.offlineMode?400:80)).filter(Boolean).join('；');
       let _rgSummary = (_rgUBrief && _rgAIBrief) ? `用户：${_rgUBrief} → ${c.name}：${_rgAIBrief}` : (_rgAIBrief ? `${c.name}：${_rgAIBrief}` : `用户：${_rgUBrief}`);
       if(_rgSummary.trim()){
-        addMemoryEvent(c.id, _rgSummary.slice(0, 250), 'chat');
+        addMemoryEvent(c.id, _rgSummary.slice(0, c.offlineMode?800:250), 'chat');
       }
 
       sending=false;
@@ -13952,8 +14219,8 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
       },2000)
     }
     // ===== 记忆系统 =====
-    const userBrief = texts.map(t => formatMemorySnippet(t, 50)).filter(Boolean).join('；');
-    const aiBrief = lines.map(l => formatMemorySnippet(l, 80)).filter(Boolean).join('；');
+    const userBrief = texts.map(t => formatMemorySnippet(t, c.offlineMode?120:50)).filter(Boolean).join('；');
+    const aiBrief = lines.map(l => formatMemorySnippet(l, c.offlineMode?400:80)).filter(Boolean).join('；');
     let roundSummary = '';
     if(userBrief && aiBrief){
       roundSummary = `用户：${userBrief} → ${c.name}：${aiBrief}`;
@@ -13963,7 +14230,7 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
       roundSummary = `用户：${userBrief}`;
     }
     if(roundSummary.trim()){
-      addMemoryEvent(targetCharId, roundSummary.slice(0, 250), 'chat');
+      addMemoryEvent(targetCharId, roundSummary.slice(0, c.offlineMode?800:250), 'chat');
     }
     // 异步提炼长期记忆（不卡界面）
     autoSummarizeMemory(targetCharId);
@@ -14046,11 +14313,11 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
       }
 
       // 【修复】功能面板互动（红包/转账/礼物/剧场等）写入关键事件
-      const _fUBrief = formatMemorySnippet(userText, 50);
-      const _fAIBrief = lines.map(l => formatMemorySnippet(l, 80)).filter(Boolean).join('；');
+      const _fUBrief = formatMemorySnippet(userText, c.offlineMode?120:50);
+      const _fAIBrief = lines.map(l => formatMemorySnippet(l, c.offlineMode?400:80)).filter(Boolean).join('；');
       let _fSummary = (_fUBrief && _fAIBrief) ? `用户：${_fUBrief} → ${c.name}：${_fAIBrief}` : (_fAIBrief ? `${c.name}：${_fAIBrief}` : `用户：${_fUBrief}`);
       if(_fSummary.trim()){
-        addMemoryEvent(activeCharId, _fSummary.slice(0, 250), 'chat');
+        addMemoryEvent(activeCharId, _fSummary.slice(0, c.offlineMode?800:250), 'chat');
       }
 
       saveMsgs(activeCharId,newArr);updateDraft();sending=false;render('chat')
@@ -17474,6 +17741,343 @@ ${fullLog}`;
 };
 
 
+// ===== 同人创作 =====
+const _FAN_STYLES=[
+  {k:'sweet',t:'甜宠日常',d:'甜、黏，有撒娇和小动作，误会不超过三句就解开，结尾一定要暖'},
+  {k:'angst',t:'刀子虐心',d:'克制的痛感，话说一半就咽回去，用留白代替嚎啕，结尾不圆满'},
+  {k:'ancient',t:'古风',d:'半文半白，注重意象、季节与器物，禁用现代词汇和网络用语'},
+  {k:'suspense',t:'悬疑',d:'靠信息差制造不安，细节里埋两处伏笔，结尾留一个钩子'},
+  {k:'comedy',t:'沙雕搞笑',d:'荒诞误会、快节奏吐槽，允许夸张，笑点落在人物性格上'},
+  {k:'stream',t:'意识流',d:'情绪与感官的流动，句子碎片化，时间可跳跃，弱化情节'}
+]
+const _FAN_POV=[{k:'third',t:'第三人称'},{k:'first',t:'第一人称'}]
+const _FAN_LEN=[{k:600,t:'短篇 600'},{k:1200,t:'中篇 1200'},{k:2000,t:'长篇 2000'}]
+const _FAN_SCALE=[{k:'clean',t:'清水'},{k:'flirty',t:'暧昧'},{k:'intimate',t:'亲密'}]
+const _FAN_IDEAS=['雨天共撑一把伞','深夜便利店的偶遇','翻到旧照片','吵架之后的沉默','假装不经意的靠近','一整晚没回消息']
+let fanfics=store.get('fanfics',[])
+let fanficCharId=null
+function saveFanfics(){store.set('fanfics',fanfics)}
+const fanficChars=t=>String(t||'').replace(/\s/g,'').length
+const fanficCopy=t=>{
+  if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(t)
+  const ta=ce('textarea');ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand('copy')}catch(e){}ta.remove()
+}
+
+pages.fanfic=()=>{
+  const p=ce('div','page')
+  p.style.background=bgNow()
+  p.appendChild(topBar('同人','home'))
+  const body=ce('div');Object.assign(body.style,{flex:'1',overflowY:'auto',padding:'16px 16px 30px'})
+
+  const pool=charList.filter(x=>!x.isDeleted&&!x.isHidden&&x.id)
+  let cur=pool.find(x=>x.id===fanficCharId)||pool.find(x=>x.id===activeCharId)||pool[0]
+  let me=P()
+  fanficCharId=cur?cur.id:null
+
+  if(!cur){
+    body.innerHTML=`<div style="text-align:center;padding:56px 20px 20px">
+      <div style="font-size:13px;color:var(--ink-l);font-style:italic;line-height:2">还没有角色<br>先去找一个人，再动笔</div>
+      <div class="btn-main" id="_fanenc" style="margin-top:22px">去邂逅</div>
+    </div>`
+    body.querySelector('#_fanenc').onclick=()=>render('encounter')
+    p.appendChild(body);app.appendChild(p)
+    return
+  }
+
+  const st={style:'sweet',custom:'',pov:'third',len:1200,scale:'flirty',useChat:true}
+  const meName=()=>escHtml(me.name||'我')
+
+  body.innerHTML=`
+    <div class="card" id="_fanhead" style="display:flex;align-items:center;gap:12px;padding:14px 16px"></div>
+
+    <div class="card">
+      <div class="card-t">文风</div>
+      <div id="_fanstyles" style="display:flex;flex-wrap:wrap;gap:8px">
+        ${_FAN_STYLES.map(s=>`<div class="_fanchip" data-k="${s.k}" style="padding:7px 12px;border-radius:12px;font-size:11.5px;cursor:pointer;letter-spacing:.5px;border:1px solid transparent">${s.t}</div>`).join('')}
+        <div class="_fanchip" data-k="custom" style="padding:7px 12px;border-radius:12px;font-size:11.5px;cursor:pointer;letter-spacing:.5px;border:1px solid transparent">自定义</div>
+      </div>
+      <div id="_fancw" style="display:none;margin-top:10px;background:rgba(255,255,255,.5);border-radius:12px;padding:10px 12px">
+        <input class="inp" id="_fancustom" placeholder="自己描述，例如：王家卫式独白、冷幽默、大量天气描写">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-t">视角</div>
+      <div id="_fanpov" style="display:flex;gap:8px">
+        ${_FAN_POV.map(s=>`<div class="_fanchip" data-pov="${s.k}" style="flex:1;text-align:center;padding:7px 0;border-radius:12px;font-size:11.5px;cursor:pointer;border:1px solid transparent">${s.t}</div>`).join('')}
+      </div>
+      <div class="card-t" style="margin-top:14px">篇幅</div>
+      <div id="_fanlen" style="display:flex;gap:8px">
+        ${_FAN_LEN.map(s=>`<div class="_fanchip" data-len="${s.k}" style="flex:1;text-align:center;padding:7px 0;border-radius:12px;font-size:11.5px;cursor:pointer;border:1px solid transparent">${s.t}</div>`).join('')}
+      </div>
+      <div class="card-t" style="margin-top:14px">尺度</div>
+      <div id="_fanscale" style="display:flex;gap:8px">
+        ${_FAN_SCALE.map(s=>`<div class="_fanchip" data-scale="${s.k}" style="flex:1;text-align:center;padding:7px 0;border-radius:12px;font-size:11.5px;cursor:pointer;border:1px solid transparent">${s.t}</div>`).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-t">梗 / 场景</div>
+      <div style="background:rgba(255,255,255,.5);border-radius:12px;padding:10px 12px">
+        <textarea class="tarea" id="_fanidea" rows="2" placeholder="想看的桥段，可不填。留空就让角色自己发挥"></textarea>
+      </div>
+      <div id="_fanchips" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+        ${_FAN_IDEAS.map(s=>`<div class="_fanidea" data-t="${s}" style="padding:6px 10px;border-radius:11px;font-size:11px;cursor:pointer;background:rgba(245,213,222,.3);color:var(--rose-d)">${s}</div>`).join('')}
+      </div>
+      <div id="_fanchat" style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid rgba(232,160,180,.12);cursor:pointer">
+        <div>
+          <div style="font-size:12px;color:var(--ink)">参考最近聊天</div>
+          <div style="font-size:10px;color:var(--ink-l);margin-top:3px;opacity:.75">让故事接住你们正在发生的事</div>
+        </div>
+        <div id="_fanchatsw" style="width:40px;height:22px;border-radius:11px;position:relative;transition:background .2s"></div>
+      </div>
+    </div>
+
+    <div class="btn-main" id="_fango" style="margin-top:14px">落笔</div>
+    <div id="_fanstatus" style="text-align:center;font-size:10px;color:var(--ink-l);margin-top:8px;min-height:14px;letter-spacing:.5px"></div>
+
+    <div id="_fanout" class="card" style="display:none;margin-top:6px">
+      <div id="_fantitle" style="font-size:13px;color:var(--rose-d);letter-spacing:1.5px;margin-bottom:10px"></div>
+      <div id="_fantext" style="font-size:12.5px;line-height:1.95;color:var(--ink);white-space:pre-wrap;font-family:'Noto Serif SC',Georgia,serif"></div>
+      <div id="_fanacts" style="display:none;gap:8px;margin-top:14px">
+        <div class="btn-sub" id="_fansave" style="flex:1;padding:10px">存进同人册</div>
+        <div class="btn-sub" id="_fanagain" style="flex:1;padding:10px">重写</div>
+        <div class="btn-sub" id="_fancopy" style="padding:10px 13px">复制</div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 4px 8px">
+      <div style="font-size:11px;color:var(--rose-d);letter-spacing:2px;font-style:italic">✦ 同人册 ✦</div>
+      <div id="_fancount" style="font-size:10px;color:var(--ink-l)"></div>
+    </div>
+    <div id="_fanlist"></div>
+  `
+  p.appendChild(body);app.appendChild(p)
+
+  const $b=s=>body.querySelector(s)
+  const paintHead=()=>{
+    const head=$('#_fanhead')
+    if(!head)return
+    head.style.cursor=pool.length>1?'pointer':'default'
+    head.innerHTML=`
+      <div style="width:44px;height:44px;border-radius:50%;overflow:hidden;flex-shrink:0;border:1px solid rgba(232,160,180,.22)">
+        ${avatarEl(cur.avatar,44).replace(/border:2px solid [^;]+;/,'border:none;')}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;color:var(--ink);letter-spacing:1px">${escHtml(cur.name)} <span style="font-size:11px;color:var(--ink-l);opacity:.7">×</span> ${meName()}</div>
+        <div style="font-size:10px;color:var(--ink-l);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(cur.personality||cur.relation||'性格未填写')}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:10px;color:var(--rose-d);opacity:.75">${escHtml(cur.relation||'')}</div>
+        ${pool.length>1?'<div style="font-size:9px;color:var(--ink-l);opacity:.6;margin-top:4px">换角色 ›</div>':''}
+      </div>`
+  }
+  paintHead()
+  $('#_fanhead').onclick=()=>{
+    if(pool.length<2)return
+    showModal('选择角色',(mb,close)=>{
+      mb.innerHTML=pool.map(x=>`
+        <div class="list-item _fansel" data-id="${escHtml(x.id)}">
+          <div style="width:34px;height:34px;border-radius:50%;overflow:hidden;flex-shrink:0">${avatarEl(x.avatar,34).replace(/border:2px solid [^;]+;/,'border:none;')}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(x.name)}</div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:3px">${escHtml(x.relation||x.personality||'')}</div>
+          </div>
+          <div style="font-size:10px;color:var(--rose-d);opacity:.7">${x.id===cur.id?'当前':''}</div>
+        </div>`).join('')
+      mb.querySelectorAll('._fansel').forEach(el=>el.onclick=()=>{
+        const pick=pool.find(x=>x.id===el.dataset.id)
+        if(pick){
+          cur=pick;fanficCharId=pick.id
+          activeCharId=pick.id
+          if(pick.bindPersonaId){activePersonaId=pick.bindPersonaId;savePersonaList()}
+          saveCharList()
+          me=P()
+          paintHead()
+        }
+        close()
+      })
+    })
+  }
+  const paint=(sel,key,val)=>{
+    body.querySelectorAll(sel).forEach(el=>{
+      const on=el.dataset[key]===String(val)
+      el.style.background=on?'linear-gradient(135deg,var(--rose-l),#f0c8d4)':'rgba(245,213,222,.24)'
+      el.style.color=on?'#7d4a5e':'var(--ink-l)'
+      el.style.border=on?'1px solid rgba(232,160,180,.45)':'1px solid transparent'
+      el.style.fontWeight=on?'600':'400'
+    })
+  }
+  paint('#_fanstyles ._fanchip','k',st.style)
+  paint('#_fanpov ._fanchip','pov',st.pov)
+  paint('#_fanlen ._fanchip','len',st.len)
+  paint('#_fanscale ._fanchip','scale',st.scale)
+
+  const paintChat=()=>{
+    const sw=$('#_fanchatsw')
+    sw.style.background=st.useChat?'linear-gradient(135deg,var(--rose-l),#f0c8d4)':'rgba(200,190,200,.28)'
+    sw.innerHTML=`<div style="position:absolute;top:3px;${st.useChat?'right:3px':'left:3px'};width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15);transition:left .2s,right .2s"></div>`
+  }
+  paintChat()
+
+  $('#_fanstyles').onclick=e=>{
+    const el=e.target.closest('._fanchip');if(!el)return
+    st.style=el.dataset.k
+    paint('#_fanstyles ._fanchip','k',st.style)
+    $('#_fancw').style.display=st.style==='custom'?'block':'none'
+    if(st.style==='custom')setTimeout(()=>$('#_fancustom').focus(),30)
+  }
+  $('#_fancustom').oninput=e=>{st.custom=e.target.value}
+  $('#_fanpov').onclick=e=>{const el=e.target.closest('._fanchip');if(!el)return;st.pov=el.dataset.pov;paint('#_fanpov ._fanchip','pov',st.pov)}
+  $('#_fanlen').onclick=e=>{const el=e.target.closest('._fanchip');if(!el)return;st.len=+el.dataset.len;paint('#_fanlen ._fanchip','len',st.len)}
+  $('#_fanscale').onclick=e=>{const el=e.target.closest('._fanchip');if(!el)return;st.scale=el.dataset.scale;paint('#_fanscale ._fanchip','scale',st.scale)}
+  $('#_fanchips').onclick=e=>{
+    const el=e.target.closest('._fanidea');if(!el)return
+    const ta=$('#_fanidea')
+    const cur=ta.value.trim()
+    ta.value=cur?cur.replace(/[，,]\s*$/,'')+'，'+el.dataset.t:el.dataset.t
+  }
+  $('#_fanchat').onclick=()=>{st.useChat=!st.useChat;paintChat()}
+
+  let last=null,genning=false
+  const renderList=()=>{
+    const list=$('#_fanlist')
+    $('#_fancount').textContent=fanfics.length?fanfics.length+' 篇':''
+    if(!fanfics.length){
+      list.innerHTML=`<div style="text-align:center;padding:18px 0 26px;font-size:11px;color:var(--ink-l);font-style:italic;opacity:.7">还没有作品，写完会自动收在这里</div>`
+      return
+    }
+    list.innerHTML=fanfics.map(f=>`
+      <div class="list-item _fanitem" data-id="${escHtml(f.id)}">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.title)}</div>
+          <div style="font-size:10px;color:var(--ink-l);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.charName)} × ${escHtml(f.personaName||'我')} · ${escHtml(f.styleLabel||'')} · ${f.chars||0} 字</div>
+        </div>
+        <div style="font-size:10px;color:var(--ink-l);opacity:.55;flex-shrink:0">${fdate(new Date(f.createTime))}</div>
+      </div>`).join('')
+  }
+  renderList()
+
+  $('#_fanlist').onclick=e=>{
+    const row=e.target.closest('._fanitem');if(!row)return
+    const f=fanfics.find(x=>x.id===row.dataset.id);if(!f)return
+    showModal(f.title||'同人',(mb,close)=>{
+      mb.innerHTML=`
+        <div style="font-size:10px;color:var(--ink-l);margin-bottom:10px;letter-spacing:1px">${escHtml(f.charName)} × ${escHtml(f.personaName||'我')} · ${escHtml(f.styleLabel||'')} · ${f.chars||0} 字</div>
+        <div style="max-height:52vh;overflow-y:auto;font-size:12.5px;line-height:1.95;color:var(--ink);white-space:pre-wrap;font-family:'Noto Serif SC',Georgia,serif">${escHtml(f.text)}</div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <div class="btn-sub" id="_fanmcopy" style="flex:1;padding:10px">复制</div>
+          <div class="btn-sub" id="_fanmdel" style="flex:1;padding:10px;color:#c47a92">删除</div>
+        </div>`
+      mb.querySelector('#_fanmcopy').onclick=()=>{fanficCopy(f.text);close()}
+      mb.querySelector('#_fanmdel').onclick=()=>{
+        if(!confirm('删除这篇「'+(f.title||'无题')+'」？'))return
+        fanfics=fanfics.filter(x=>x.id!==f.id);saveFanfics();renderList();close()
+      }
+    })
+  }
+
+  const status=t=>{$('#_fanstatus').textContent=t||''}
+  const doGen=async()=>{
+    if(genning)return
+    const api=getApi()
+    if(!api||!api.key){status('还没配置聊天 API，先去设置里加一个');return}
+    genning=true
+    const btn=$('#_fango');btn.textContent='落笔中…';btn.style.opacity='.55'
+    const out=$('#_fanout'),titleEl=$('#_fantitle'),textEl=$('#_fantext'),acts=$('#_fanacts')
+    out.style.display='block';acts.style.display='none'
+    titleEl.textContent='（正在写…）';textEl.textContent=''
+    status('0 字')
+
+    const styleDesc=st.style==='custom'
+      ? (st.custom.trim()||'自由发挥，但必须具体、有画面')
+      : (_FAN_STYLES.find(s=>s.k===st.style)||{}).d
+    const styleLabel=st.style==='custom'?'自定义':((_FAN_STYLES.find(s=>s.k===st.style)||{}).t||'')
+    const povDesc=st.pov==='first'
+      ? `第一人称，用「${me.name||'我'}」的「我」来写，只写这个人的所见所想`
+      : `第三人称，镜头主要跟着「${cur.name}」，可以写${me.name||'对方'}的反应但不进入其内心`
+    const scaleDesc=st.scale==='clean'
+      ? '保持清水，最多写到心跳、眼神和手背的温度'
+      : st.scale==='flirty'
+      ? '允许暧昧张力、靠近、试探性的肢体接触和暗示，但不写露骨内容'
+      : '可以写成年角色之间的亲密，情境自然、有情绪铺垫，避免低俗露骨的直白描写'
+
+    const idea=$('#_fanidea').value.trim()
+    let chatRef=''
+    if(st.useChat){
+      const msgs=getMsgs(cur.id).slice(-20)
+      if(msgs.length) chatRef='\n【两人最近的聊天，可从中提取语气、称呼和正在发生的事】\n'+msgs.map(m=>`${m.from==='u'?(me.name||'我'):cur.name}：${String(m.text||'').slice(0,120)}`).join('\n')
+    }
+
+    const sys=`你是一位写中文同人小说的作者，现在要为「${cur.name}」和「${me.name||'我'}」写一篇短篇同人。
+【角色】
+${cur.name}：${cur.personality||'性格未填写'}${cur.relation?`；与对方的关系：${cur.relation}`:''}${cur.mood?`；近期心情：${cur.mood}`:''}${cur.quote?`；口头禅或态度：「${cur.quote}」`:''}
+${me.name||'我'}：${me.identity||'普通人'}${me.personality?`；性格：${me.personality}`:''}
+【要求】
+- 文风：${styleDesc}
+- 视角：${povDesc}
+- 篇幅：约 ${st.len} 字，宁可少写也不要注水
+- 尺度：${scaleDesc}
+- 用具体的动作、物件、对白推进，少用形容词堆砌；允许沉默和未说完的话
+- 称呼和口癖要贴合角色，不要写成通用言情模板
+- 只输出中文正文，不要emoji、不要作者按、不要大纲、不要分点、不要解释
+- 不要出现"AI""模型""提示词"这类字眼
+【格式】
+第一行：《标题》
+第二行开始：正文${chatRef}`
+
+    const user=`${idea?`这次想看的桥段：${idea}\n`:''}${idea?'':'桥段由你决定，但要避开俗套。'}直接开始写。`
+
+    let raw=''
+    try{
+      raw=await askAI(sys,user,Math.min(8000,Math.round(st.len*2.4)),null,st.len>=1200?180000:120000,t=>{
+        textEl.textContent=t
+        status(fanficChars(t)+' 字')
+      })
+    }catch(e){
+      raw=''
+    }
+    genning=false
+    btn.textContent='落笔';btn.style.opacity='1'
+
+    let text=String(raw||'').trim()
+    if(!text||text.includes('没配置API')||text.includes('（请求未发出')){
+      out.style.display='none'
+      status(!text?'没拿到内容，检查一下 API 或换个模型':'调用失败，检查一下 API 设置')
+      return
+    }
+    let title='无题'
+    const mt=text.match(/^《([^》\n]{1,40})》\s*\n+/)
+    if(mt){title=mt[1].trim();text=text.slice(mt[0].length).trim()}
+    else{
+      const lines=text.split('\n')
+      if(lines.length>1&&lines[0].length<=28){
+        const t0=lines[0].replace(/^[#\s]+/,'').replace(/^《|》$/g,'').trim()
+        if(t0){title=t0;text=lines.slice(1).join('\n').trim()}
+      }
+    }
+    titleEl.textContent=title
+    textEl.textContent=text
+    status(fanficChars(text)+' 字')
+    acts.style.display='flex'
+    last={title,text,styleLabel}
+  }
+
+  $('#_fango').onclick=doGen
+  $('#_fanagain').onclick=doGen
+  $('#_fancopy').onclick=()=>{if(last){fanficCopy(last.text);status('已复制')}}
+  $('#_fansave').onclick=()=>{
+    if(!last)return
+    fanfics.unshift({
+      id:uid(),charId:cur.id,charName:cur.name,personaName:me.name||'我',
+      title:last.title,text:last.text,styleLabel:last.styleLabel,
+      chars:fanficChars(last.text),createTime:Date.now()
+    })
+    saveFanfics();renderList();status('已收进同人册')
+  }
+}
+
+
 // ===== 约会日历 =====
 pages.dates=()=>{
   const p=ce('div','page')
@@ -19010,6 +19614,32 @@ pages.settings=()=>{
     <div style="font-size:10px;color:var(--ink-l);margin-top:6px">当前：${embApi.key?'已配置 / '+escHtml(embApi.model||'text-embedding-3-small'):'未配置'}</div>
   </div>
 
+  <div class="card">
+    <div class="card-t">记忆总结 API</div>
+    <div style="font-size:10.5px;color:var(--ink-l);line-height:1.6;margin-bottom:8px">专门用于「长期记忆提炼」和「角色档案表更新」。留空则跟随上方聊天 API；建议填一个长上下文、便宜的模型，提炼记忆更省 token。</div>
+    <div style="margin-bottom:6px">
+      <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">服务商</div>
+      <select class="inp" id="_mem_provider" style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+        <option value="openai" ${memApi.provider!=='claude'?'selected':''}>OpenAI 兼容</option>
+        <option value="claude" ${memApi.provider==='claude'?'selected':''}>Claude</option>
+      </select>
+    </div>
+    <div style="margin-bottom:6px">
+      <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">API 地址</div>
+      <input class="inp" id="_mem_base" value="${escHtml(memApi.baseUrl||'')}" placeholder="留空跟随聊天 API；如 https://api.openai.com/v1" style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+    </div>
+    <div style="margin-bottom:6px">
+      <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">API Key</div>
+      <input class="inp" id="_mem_key" type="password" value="${escHtml(memApi.key||'')}" placeholder="留空跟随聊天 API；如 sk-..." style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+    </div>
+    <div style="margin-bottom:8px">
+      <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">模型</div>
+      <input class="inp" id="_mem_model" value="${escHtml(memApi.model||'')}" placeholder="留空跟随聊天 API；如 gpt-4o-mini" style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+    </div>
+    <div class="btn-sub" id="_mem_save" style="font-size:12px;padding:8px;border-radius:14px">保存记忆总结配置</div>
+    <div style="font-size:10px;color:var(--ink-l);margin-top:6px">当前：${memApi.key?'独立 / '+escHtml(memApi.provider||'openai')+' / '+escHtml(memApi.model||'未选模型'):'跟随聊天 API'}</div>
+  </div>
+
   <!-- 🌟 新增：AI上下文长度配置 -->
   <div class="card">
     <div class="card-t">AI 记忆与上下文长度</div>
@@ -19115,6 +19745,14 @@ pages.settings=()=>{
     embApi.model=$('#_emb_model').value.trim()||'text-embedding-3-small'
     saveEmbApi()
     showToast('Embedding 配置已保存')
+  }
+  if($('#_mem_save')) $('#_mem_save').onclick=()=>{
+    memApi.provider=$('#_mem_provider').value
+    memApi.baseUrl=$('#_mem_base').value.trim()
+    memApi.key=$('#_mem_key').value.trim()
+    memApi.model=$('#_mem_model').value.trim()
+    saveMemApi()
+    showToast('记忆总结 API 已保存')
   }
   $('#_setttsapi').onclick=()=>openTtsApiEditor()
   $('#_setliveimg').onclick=()=>openLiveImgEditor()
@@ -20726,11 +21364,11 @@ pages.wallet=()=>{
   charTitle.textContent='角色钱包'
   body.appendChild(charTitle)
   
-  // 角色钱包列表
-  const chars=store.get('charList',[]).filter(c=>!c.hidden)
+  // 角色钱包列表（只显示当前马甲下、未被隐藏/删除的角色）
+  const chars=getMyChars().filter(c=>!c.isDeleted)
   chars.forEach(c=>{
     const d=getNurtureData(c.id)
-    const w=d.wallet||{balance:0,shop:null}
+    const w=normalizeCharWallet(d)
     
     const item=ce('div')
     item.setAttribute('data-char-wallet-item', c.id)
@@ -21274,7 +21912,7 @@ function showUseItem(bagIndex){
   const content=ce('div')
   content.style.cssText='max-height:50vh;overflow-y:auto'
   
-  charList.filter(c=>!c.hidden).forEach(c=>{
+  getMyChars().filter(c=>!c.isDeleted).forEach(c=>{
     const item=ce('div')
     item.style.cssText='display:flex;align-items:center;gap:12px;padding:12px;margin-bottom:6px;border-radius:12px;background:rgba(255,255,255,.5);cursor:pointer;border:1px solid rgba(232,160,180,.08)'
     
@@ -21333,9 +21971,9 @@ function showTransfer(){
   const content=ce('div')
   content.style.cssText='max-height:50vh;overflow-y:auto'
   
-  charList.filter(c=>!c.hidden).forEach(c=>{
+  getMyChars().filter(c=>!c.isDeleted).forEach(c=>{
     const d=getNurtureData(c.id)
-    const w=d.wallet||{balance:0}
+    const w=normalizeCharWallet(d)
     
     const item=ce('div')
     item.style.cssText='display:flex;align-items:center;gap:12px;padding:12px;margin-bottom:6px;border-radius:12px;background:rgba(255,255,255,.5);border:1px solid rgba(232,160,180,.08)'
@@ -21351,8 +21989,8 @@ function showTransfer(){
         <div class="btn-main" style="padding:6px 12px;font-size:11px" onclick="
           const amt=prompt('转账给${escHtml(c.name)}多少钱？')
           if(!amt)return
-          const v=Number(amt)
-          if(v<=0){alert('请输入有效金额');return}
+          const v=Number(amt)||0
+          if(!(v>0)){alert('请输入有效金额');return}
           if(v>wallet.balance){alert('余额不足');return}
           if(transferToChar('${c.id}',v,'转账')){
             alert('转账成功')
@@ -21363,10 +22001,10 @@ function showTransfer(){
         <div class="btn-sub" style="padding:6px 12px;font-size:11px" onclick="
           const amt=prompt('向${escHtml(c.name)}要多少钱？')
           if(!amt)return
-          const v=Number(amt)
-          if(v<=0){alert('请输入有效金额');return}
+          const v=Number(amt)||0
+          if(!(v>0)){alert('请输入有效金额');return}
           const d=getNurtureData('${c.id}')
-          if(v>d.wallet.balance){alert('TA余额不足');return}
+          if(v>normalizeCharWallet(d).balance){alert('TA余额不足');return}
           if(transferFromChar('${c.id}',v,'转账')){
             alert('收款成功')
             this.closest('.modal-mask').remove()
@@ -21448,7 +22086,7 @@ function showTransactions(){
 function showCharWalletDetail(char){
   const n=isN()
   const d=getNurtureData(char.id)
-  const w=d.wallet||{balance:0,shop:null,transactions:[]}
+  const w=normalizeCharWallet(d)
   
   const mask=ce('div','modal-mask')
   
@@ -24889,6 +25527,67 @@ function saveSavesMeta(m){ store.setRaw('_saves_meta', m) }
 
 function getCurrentSlotId(){ return _currentSlot }
 
+// 切换存档后，把所有内存全局变量重新指向新存档的数据（与启动时 initAll 之后的重读保持一致）
+function reloadAllSlotData(){
+  apiList=store.get('apiList',[])
+  activeApiId=store.get('activeApiId',activeApiId)
+  imgApiList=store.get('imgApiList',[])
+  activeImgApiId=store.get('activeImgApiId',activeImgApiId)
+  imgApi=imgApiList.find(a=>a.id===activeImgApiId)||imgApiList[0]||{id:'',provider:'openai-image',key:'',baseUrl:'https://api.openai.com/v1',model:'dall-e-3',size:'1024x1024'}
+  embApi=store.get('embApi',{key:'',baseUrl:'https://api.openai.com/v1',model:'text-embedding-3-small'})
+  ttsApi=store.get('ttsApi',{provider:'openai',key:'',baseUrl:'https://api.openai.com/v1',model:'tts-1',voice:'nova',speed:1.0,temperature:1.0,groupId:'',voiceId:''})
+  memApi=store.get('memApi',{provider:'openai',name:'',key:'',baseUrl:'',model:''})
+  charList=store.get('charList',[{id:'c1',name:'苏白',relation:'暧昧',mood:'温柔',status:'在沙发上看书',affection:65,quote:'今天的风，很温柔呢。',personality:'温柔体贴、有些毒舌、偶尔傲娇，喜欢红茶和旧书。',avatar:'',worldBookIds:[],bindPersonaId:''}])
+  activeCharId=store.get('activeCharId',charList[0]?.id||'')
+  personaList=store.get('personaList',[{id:'p1',name:'',identity:'',personality:'',secret:'',avatar:''}])
+  activePersonaId=store.get('activePersonaId',personaList[0]?.id||'p1')
+  worldBooks=store.get('worldBooks',[])
+  htmlCards=store.get('htmlCards',[])
+  events=store.get('events',[])
+  memories=store.get('memories',[])
+  diaries=store.get('diaries',{})
+  if(!diaries||typeof diaries!=='object'||Array.isArray(diaries))diaries={}
+  wallet=store.get('wallet',{balance:520,transactions:[]})
+  normalizeWallet()
+  momentsData=store.get('momentsData',[])
+  stickers=store.get('stickers',[])
+  lockPhotos=store.get('lockPhotos',[])
+  musicList=store.get('musicList',[])
+  musicState=store.get('musicState',{idx:-1,playing:false,mode:'list',volume:1})
+  styleBooks=store.get('styleBooks',[])
+  fanfics=store.get('fanfics',[])
+  globalMemory=store.get('globalMemory',{})
+  curTheme=store.get('theme',curTheme)
+  groups=store.get('groups',[])
+  places=store.get('places',[])
+  mapState=store.get('mapState',{activeCharId:activeCharId||charList[0]?.id||'',activePlace:''})
+  dungeonTemplates=store.get('dungeonTemplates',[])
+  activeDungeon=store.get('activeDungeon',null)
+  inventory=store.get('inventory',[])
+  shopItems.custom=store.get('custom_items',[])
+  forumBoards=store.get('forumBoards',[
+    { id:'all', name:'全部' },
+    { id:'hot', name:'热搜广场' },
+    { id:'daily', name:'日常闲聊' },
+    { id:'role', name:'角色讨论' },
+    { id:'cp', name:'CP同人' },
+    { id:'fanfic', name:'同人创作' },
+    { id:'gossip', name:'吃瓜爆料' },
+    { id:'help', name:'恋爱求助' },
+    { id:'drama', name:'剧情树洞' },
+    { id:'crazy', name:'发疯文学' },
+    { id:'analysis', name:'长文分析' }
+  ])
+  forumPosts=store.get('forumPosts',[])
+  forumNpcUsers=store.get('forumNpcUsers',[])
+  forumFavs=store.get('forumFavs',[])
+  forumState=store.get('forumState',{boardId:'all'})
+  // 确保当前聊天对象在新存档里有效
+  if(!charList.find(c=>c.id===activeCharId)){
+    activeCharId=charList.filter(c=>!c.isDeleted)[0]?.id||charList[0]?.id||''
+  }
+}
+
 async function switchSlot(slotId){
   const meta = getSavesMeta();
   if(!meta.list.find(s=>s.id===slotId)) return false;
@@ -25484,7 +26183,7 @@ ${_src.join('\n\n')}
       const arr = getMsgs(c.id)
       arr.push({ from:'system', text: names.length ? `—— 多人线下：${names.join('、')} 也在场 ——` : '—— 已切换到线下模式（小说体） ——', time: ftime(now()), isSystem: true, mode: 'offline' })
       saveMsgs(c.id, arr)
-      addMemoryEvent(c.id, names.length ? `线下多人场景开始：${names.join('、')}和${c.name}一起在现场。` : `现在切换到线下剧情模式（小说体叙事）。`, '模式切换')
+      addMemoryEvent(c.id, names.length ? `线下多人场景开始：${names.join('、')}和${c.name}一起在现场。` : `现在切换到线下剧情模式（小说体叙事）。`, '模式切换', 'offline', true)
       ids.forEach(id=>bumpFamiliarityByCoOccur(c.id, id, 3, `一起和${P().name||'你'}线下见面`))
       saveCharList()
       close()
@@ -31103,17 +31802,24 @@ top.innerHTML=`<div id="_dgbk" style="padding:6px;cursor:pointer">${I.back(n?'#c
 
   $('#_dgbk').onclick=()=>{if(confirm('返回列表？进度会保留'))render('dungeons')}
   if($('#_dgbegin'))$('#_dgbegin').onclick=()=>doDungeonAdvance(template,c,partner,'')
-  $('#_dgnx').onclick=()=>{const iv=$('#_dgiv').value.trim();$('#_dgiv').value='';doDungeonAdvance(template,c,partner,iv)}
-  $('#_dgqt').onclick=()=>{if(!confirm('放弃副本？'))return;activeDungeon=null;store.set('activeDungeon',null);render('dungeons')}
-  $('#_dgend').onclick=()=>{
-    if(!activeDungeon.story||activeDungeon.currentRound<1){alert('至少推进一轮才能进入结算');return}
-    if(!confirm('结束副本并进入结算？\n\n将根据目前发生的剧情生成回忆与印记，剩余未推进的剧情会被省略。'))return
-    activeDungeon.currentRound=activeDungeon.maxRounds
-    activeDungeon.status='finished'
-    saveActiveDungeon()
-    const btn=$('#_dgnx');if(btn){btn.textContent='结算中...';btn.style.opacity='.5';btn.style.pointerEvents='none'}
-    doDungeonComplete(template,c)
+  // 【修复】已结束的副本重新进入时，主按钮只负责打开结算界面，禁止再次推进
+  if(activeDungeon.status==='finished'){
+    $('#_dgnx').textContent='查看结算'
+    $('#_dgnx').onclick=()=>doDungeonComplete(template,c)
+    const _endBtn=$('#_dgend');if(_endBtn)_endBtn.style.display='none'
+  }else{
+    $('#_dgnx').onclick=()=>{const iv=$('#_dgiv').value.trim();$('#_dgiv').value='';doDungeonAdvance(template,c,partner,iv)}
+    $('#_dgend').onclick=()=>{
+      if(!activeDungeon.story||activeDungeon.currentRound<1){alert('至少推进一轮才能进入结算');return}
+      if(!confirm('结束副本并进入结算？\n\n将根据目前发生的剧情生成回忆与印记，剩余未推进的剧情会被省略。'))return
+      activeDungeon.currentRound=activeDungeon.maxRounds
+      activeDungeon.status='finished'
+      saveActiveDungeon()
+      const btn=$('#_dgnx');if(btn){btn.textContent='结算中...';btn.style.opacity='.5';btn.style.pointerEvents='none'}
+      doDungeonComplete(template,c)
+    }
   }
+  $('#_dgqt').onclick=()=>{if(!confirm('放弃副本？'))return;activeDungeon=null;store.set('activeDungeon',null);render('dungeons')}
 
   // 属性面板
   $('#_dgstat').onclick=()=>{openDungeonTeamPanel(template,c)}
@@ -31323,6 +32029,8 @@ function mkStoryCard(s,n){
 // 推进剧情核心
 async function doDungeonAdvance(template,c,partner,intervention){
   const btn=$('#_dgnx'),sa=$('#_dgsa');if(!btn||!sa)return
+  // 【修复】副本已结束/不存在时禁止推进，防止把轮数推爆或重复结算
+  if(!activeDungeon||activeDungeon.status!=='ongoing')return
   btn.textContent='生成中...';btn.style.opacity='.5';btn.style.pointerEvents='none'
   const n=isN()
   if(intervention){const e={type:'intervention',text:intervention,round:activeDungeon.currentRound};activeDungeon.story.push(e);sa.appendChild(mkStoryCard(e,n))}
@@ -31395,7 +32103,20 @@ ${diceInfoTeam}
 {"story":"剧情正文","ooc":false,"oocReason":"","diceCheck":{"stat":"charm/strength/intelligence/luck","difficulty":15,"description":"简述这次判定的具体内容","outcome":"crit_success/success/fail/crit_fail"},${autoImgEnabled ? '"imagePrompt":"英文生图tag一句话",' : ''}"npcChanges":[{"name":"NPC名","delta":5,"reason":"原因","role":"身份","personality":"10字性格"}]}`
 
   const res=await askAIJson(sysP,'生成第'+activeDungeon.currentRound+'轮',2000)
-  if(!res||!res.story){btn.textContent='推进剧情';btn.style.opacity='1';btn.style.pointerEvents='auto';activeDungeon.currentRound--;return}
+  if(!res||!res.story){
+    // 【修复】生成失败：回滚轮数与界面计数，并撤掉本轮已显示的旁白干预卡，保持数据一致
+    activeDungeon.currentRound--
+    const pg2=$('#_dgpg');if(pg2)pg2.style.width=(activeDungeon.currentRound/activeDungeon.maxRounds)*100+'%'
+    const pt2=$('#_dgpt');if(pt2)pt2.textContent=activeDungeon.currentRound+'/'+activeDungeon.maxRounds
+    if(intervention){
+      const _ii=activeDungeon.story.findIndex(s=>s.type==='intervention'&&s.text===intervention)
+      if(_ii>=0)activeDungeon.story.splice(_ii,1)
+      const _cards=sa.querySelectorAll('.card')
+      if(_cards.length)sa.removeChild(_cards[_cards.length-1])
+    }
+    btn.textContent='推进剧情';btn.style.opacity='1';btn.style.pointerEvents='auto'
+    return
+  }
 
   // 骰子判定卡片（先于剧情显示）
   if(res.diceCheck && res.diceCheck.stat && dicePool[res.diceCheck.stat]){
@@ -31467,14 +32188,18 @@ ${diceInfoTeam}
   }
 }
 
-// 副本结算
+// 副本结算（奖励只发放一次；弹窗被背景点击关闭后重进只重放结算界面，不重复发放）
 async function doDungeonComplete(template,c){
+  if(!activeDungeon)return
+  if(!activeDungeon._settled){
+  activeDungeon._settled=true
   const isStrictOOC=template.rules&&/禁止OOC|禁OOC|不能OOC/.test(template.rules)
   const success=isStrictOOC?(activeDungeon.oocCount/activeDungeon.maxRounds)<0.3:true
+  const rewards=[]
+  let legacyData=null
 
   if(success){
-    // 生成奖励
-    const rewards=[]
+    // 生成奖励（rewards/legacyData 声明在外层结算守卫里，此处只做填充）
     const mult={easy:1,normal:1.5,hard:2,nightmare:3}[template.difficulty]||1
     const gold=Math.floor((50+Math.random()*100)*mult)
     if(typeof walletReceive==='function')walletReceive(gold,'副本通关：'+template.name)
@@ -31495,7 +32220,6 @@ async function doDungeonComplete(template,c){
       const ps2=activeDungeon.playerStats||P()?.stats
       if(ps2){ps2.freePoints=(ps2.freePoints||0)+sp;activeDungeon.playerStats=ps2;const pe7=P();if(pe7)pe7.stats=ps2;savePersonaList()}
     }
-    const nd=getNurtureData(c.id)
     rewards.push({name:sp+' 属性点',desc:'可分配给'+c.name,icon:'star',rarity:'uncommon'})
     if(Math.random()<({easy:0.3,normal:0.5,hard:0.7,nightmare:0.9}[template.difficulty]||0.5)){
       const rars=['common','common','uncommon','uncommon','rare','epic','legendary']
@@ -31511,8 +32235,7 @@ async function doDungeonComplete(template,c){
       rewards.push({name:item.name,desc:Object.entries(efx).map(e=>({strength:'力量',intelligence:'智力',charm:'魅力',luck:'幸运'}[e[0]]||e[0])+'+'+e[1]).join(' '),icon:ico,rarity:rar})
     }
 
-    // ===== 生成副本回忆和后遗症 =====
-    let legacyData=null
+    // ===== 生成副本回忆和后遗症（legacyData 声明在外层结算守卫里）=====
     try{
       const rounds=activeDungeon.maxRounds||template.rounds||10
       const dgLen=rounds>=15?'很长的一段时间（可能数月甚至数年），足以深刻改变一个人':rounds>=10?'一段不短的时间（数周到数月），会留下明显的印记':'较短的时间（数天到数周），只会留下浅浅的印象'
@@ -31549,8 +32272,28 @@ async function doDungeonComplete(template,c){
       const settleAI=await askAIJson('你是角色心理分析师，只返回JSON',legPrompt,2500)
       if(settleAI && (settleAI.memoir||settleAI.legacies)) legacyData=settleAI
     }catch(e){console.warn('副本回忆生成失败',e)}
+  }
 
-    const legacyTypes={
+  // 存下本次结算结果，弹窗被背景点击关掉后重进时重放，奖励绝不二次发放
+  activeDungeon._settleData={success:success,rewards:rewards,legacyData:legacyData}
+  saveActiveDungeon()
+  }
+
+  const _sd=activeDungeon._settleData
+  if(!_sd)return
+  const rewards=_sd.rewards||[],legacyData=_sd.legacyData
+
+  if(!_sd.success){
+    showModal('副本失败',(mb,close)=>{
+      mb.innerHTML=`<div style="text-align:center;padding:20px 0"><div style="font-size:18px;font-weight:600;color:#c06060">通关失败</div><div style="font-size:12px;color:var(--ink-l);margin-top:8px">OOC次数过多：${activeDungeon.oocCount}/${activeDungeon.maxRounds}</div></div><div style="display:flex;gap:10px;margin-top:16px"><div class="btn-main" id="_dgretry" style="flex:1;margin:0">重新挑战</div><div class="btn-sub" id="_dgexit" style="flex:1;margin:0">放弃</div></div>`
+      // 【修复】重新挑战保留 isPlayerSelf/多人伙伴/玩家属性，否则玩家亲自穿越的存档会软锁、多人队伍会散
+      mb.querySelector('#_dgretry').onclick=()=>{activeDungeon={id:uid(),templateId:template.id,charId:c.id,isPlayerSelf:activeDungeon.isPlayerSelf,isMulti:activeDungeon.isMulti,partnerIds:(activeDungeon.partnerIds||[]).slice(),partnerId:activeDungeon.partnerId,playerStats:activeDungeon.isPlayerSelf&&activeDungeon.playerStats?JSON.parse(JSON.stringify(activeDungeon.playerStats)):null,npcAffection:{},npcProfiles:{},usedItems:[],status:'ongoing',currentRound:0,maxRounds:template.rounds+Math.floor(Math.random()*6),story:[],oocCount:0,startTime:new Date().toLocaleString()};saveActiveDungeon();close();render('dungeonplay')}
+      mb.querySelector('#_dgexit').onclick=()=>{activeDungeon=null;store.set('activeDungeon',null);close();render('dungeons')}
+    })
+    return
+  }
+
+  const legacyTypes={
       trait:{label:'性格',color:'#c47a92'},
       habit:{label:'习惯',color:'#8a9a6e'},
       scar:{label:'创伤',color:'#a06060'},
@@ -31587,9 +32330,6 @@ async function doDungeonComplete(template,c){
       mb.querySelector('#_dgfin').onclick=async()=>{
         const finBtn=mb.querySelector('#_dgfin')
         finBtn.textContent='结算中...';finBtn.style.opacity='.5'
-        // 写入副本历史
-        if(!c.dungeonHistory) c.dungeonHistory=[]
-        if(!c.dungeonLegacy) c.dungeonLegacy=[]
         const acceptedLegs=legs.filter((_,i)=>selectedLegs.has(i))
         const historyEntry={
           id:uid(),
@@ -31602,38 +32342,44 @@ async function doDungeonComplete(template,c){
           legacies:acceptedLegs,
           completedAt:new Date().toLocaleString()
         }
-        c.dungeonHistory.push(historyEntry)
-        acceptedLegs.forEach(l=>c.dungeonLegacy.push({...l,fromDungeon:template.name,acquiredAt:Date.now()}))
-        // 限制单个角色副本印记数量，防止 prompt 过长
-        if(c.dungeonLegacy.length>40) c.dungeonLegacy=c.dungeonLegacy.slice(-40)
-        if(c.dungeonHistory.length>10) c.dungeonHistory=c.dungeonHistory.slice(-10)
-        saveCharList()
-        // 写入长期记忆
-        if(legacyData&&legacyData.memoir){
-          addMemoryEvent(c.id,`【副本回忆·${template.name}】${legacyData.memoir}`,'dungeon')
+        if(activeDungeon.isPlayerSelf){
+          // 【修复】玩家亲自穿越时 c 是临时代理对象（不在 charList 里），直接写 c 再 saveCharList 会被整段丢弃；改写入当前马甲并持久化
+          const _pe=P()||{}
+          if(!_pe.dungeonHistory)_pe.dungeonHistory=[]
+          if(!_pe.dungeonLegacy)_pe.dungeonLegacy=[]
+          _pe.dungeonHistory.push(historyEntry)
+          acceptedLegs.forEach(l=>_pe.dungeonLegacy.push({...l,fromDungeon:template.name,acquiredAt:Date.now()}))
+          if(_pe.dungeonLegacy.length>40)_pe.dungeonLegacy=_pe.dungeonLegacy.slice(-40)
+          if(_pe.dungeonHistory.length>10)_pe.dungeonHistory=_pe.dungeonHistory.slice(-10)
+          savePersonaList()
         }else{
-          addMemoryEvent(c.id,`【副本完成】在「${template.name}」中以「${template.targetRole}」完成了冒险。`,'dungeon')
+          if(!c.dungeonHistory) c.dungeonHistory=[]
+          if(!c.dungeonLegacy) c.dungeonLegacy=[]
+          c.dungeonHistory.push(historyEntry)
+          acceptedLegs.forEach(l=>c.dungeonLegacy.push({...l,fromDungeon:template.name,acquiredAt:Date.now()}))
+          // 限制单个角色副本印记数量，防止 prompt 过长
+          if(c.dungeonLegacy.length>40) c.dungeonLegacy=c.dungeonLegacy.slice(-40)
+          if(c.dungeonHistory.length>10) c.dungeonHistory=c.dungeonHistory.slice(-10)
+          saveCharList()
+          // 写入长期记忆（玩家亲自穿越没有对应角色卡，跳过，避免产生 '__PLAYER__' 孤儿记忆）
+          if(legacyData&&legacyData.memoir){
+            addMemoryEvent(c.id,`【副本回忆·${template.name}】${legacyData.memoir}`,'dungeon')
+          }else{
+            addMemoryEvent(c.id,`【副本完成】在「${template.name}」中以「${template.targetRole}」完成了冒险。`,'dungeon')
+          }
+          acceptedLegs.forEach(l=>{
+            addMemoryEvent(c.id,`【副本印记·${(legacyTypes[l.type]||{}).label||l.type}】${l.title}——${l.description}（源自${template.name}）`,'dungeon_legacy')
+          })
+          try{await autoSummarizeMemory(c.id)}catch(e){}
+          try{
+            const updateText=`副本「${template.name}」（扮演${template.targetRole}）经历：${(legacyData&&legacyData.memoir)||''}\n\n留下的印记：${acceptedLegs.map(l=>l.title+'——'+l.description).join('；')}`
+            await autoUpdateMemoryTable(c.id,updateText)
+          }catch(e){}
         }
-        acceptedLegs.forEach(l=>{
-          addMemoryEvent(c.id,`【副本印记·${(legacyTypes[l.type]||{}).label||l.type}】${l.title}——${l.description}（源自${template.name}）`,'dungeon_legacy')
-        })
-        try{await autoSummarizeMemory(c.id)}catch(e){}
-        try{
-          const updateText=`副本「${template.name}」（扮演${template.targetRole}）经历：${(legacyData&&legacyData.memoir)||''}\n\n留下的印记：${acceptedLegs.map(l=>l.title+'——'+l.description).join('；')}`
-          await autoUpdateMemoryTable(c.id,updateText)
-        }catch(e){}
         activeDungeon=null;store.set('activeDungeon',null);close();render('dungeons')
       }
     })
-  }else{
-    showModal('副本失败',(mb,close)=>{
-      mb.innerHTML=`<div style="text-align:center;padding:20px 0"><div style="font-size:18px;font-weight:600;color:#c06060">通关失败</div><div style="font-size:12px;color:var(--ink-l);margin-top:8px">OOC次数过多：${activeDungeon.oocCount}/${activeDungeon.maxRounds}</div></div><div style="display:flex;gap:10px;margin-top:16px"><div class="btn-main" id="_dgretry" style="flex:1;margin:0">重新挑战</div><div class="btn-sub" id="_dgexit" style="flex:1;margin:0">放弃</div></div>`
-      mb.querySelector('#_dgretry').onclick=()=>{activeDungeon={id:uid(),templateId:template.id,charId:c.id,isMulti:activeDungeon.isMulti,partnerId:activeDungeon.partnerId,npcAffection:{},status:'ongoing',currentRound:0,maxRounds:template.rounds+Math.floor(Math.random()*6),story:[],oocCount:0,startTime:new Date().toLocaleString()};saveActiveDungeon();close();render('dungeonplay')}
-      mb.querySelector('#_dgexit').onclick=()=>{activeDungeon=null;store.set('activeDungeon',null);close();render('dungeons')}
-    })
-  }
 }
-
 // 副本队伍属性面板
 function openDungeonTeamPanel(template,c){
   showModal('队伍属性',(mb,close)=>{
@@ -32209,9 +32955,11 @@ if(!diaries || typeof diaries!=='object' || Array.isArray(diaries)){
   diaries={}
 }
 wallet=store.get('wallet',{balance:520,transactions:[]})
+normalizeWallet()
 momentsData=store.get('momentsData',[])
 stickers=store.get('stickers',[])
 styleBooks=store.get('styleBooks',[])
+fanfics=store.get('fanfics',[])
 globalMemory=store.get('globalMemory',{})
 
   curTheme=store.get('theme',curTheme)
@@ -32360,5 +33108,3 @@ bootstrap();
 </script>
 </body>
 </html>
-
-
