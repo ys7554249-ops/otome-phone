@@ -96,8 +96,8 @@ input,textarea,select{font-family:'Noto Serif SC',Georgia,serif}
 #app.night ._beautyTab._active{color:#c8a8d0;border-bottom-color:#c8a8d0}
 #app.has-wall .page { background: transparent !important; }
 #app .tarea { padding: 6px 14px !important; line-height: 20px !important; }
-._bubble:has(._card-redpacket),._bubble:has(._card-transfer),._bubble:has(._card-gift),._bubble:has(._card-call),._bubble:has(._card-videocall){background:transparent !important;border:none !important;box-shadow:none !important;padding:2px !important}
-._card-gift,._card-redpacket,._card-transfer{max-width:240px;min-width:200px}
+._bubble:has(._card-redpacket),._bubble:has(._card-transfer),._bubble:has(._card-gift),._bubble:has(._card-call),._bubble:has(._card-videocall),._bubble:has(._card-dateinvite){background:transparent !important;border:none !important;box-shadow:none !important;padding:2px !important}
+._card-gift,._card-redpacket,._card-transfer,._card-dateinvite{max-width:240px;min-width:200px}
 @keyframes portrait-idle{
   0%,100%{transform:translateY(0)}
   50%{transform:translateY(-3px)}
@@ -1809,6 +1809,232 @@ function processInsuranceClaim(type,charId){
 let momentsData = store.get('momentsData', [])
 function saveMoments(){ store.set('momentsData', momentsData) }
 
+// 朋友圈可见性：只有互相认识的角色才能看到/评论彼此的动态
+function charsKnowEachOther(aId,bId){
+  if(!aId||!bId||aId===bId||aId==='u'||bId==='u') return true
+  const a=charList.find(x=>x.id===aId), b=charList.find(x=>x.id===bId)
+  if(!a||!b||a.isDeleted||b.isDeleted) return false
+  if(a.bindPersonaId&&b.bindPersonaId&&a.bindPersonaId!==b.bindPersonaId) return false
+  const rel=getCharRel(aId,bId)
+  return !!rel && rel.familiarity>=10 && rel.attitude>-60
+}
+function canSeeMoment(charId,m){
+  if(!m) return false
+  if(m.charId==='u'||m.charId===charId) return true
+  return charsKnowEachOther(charId,m.charId)
+}
+function momentCommentVisibleTo(charId,cm){
+  if(!cm) return false
+  if(cm.from==='u'||cm.from===charId) return true
+  return charsKnowEachOther(charId,cm.from)
+}
+// 可评论某条动态的人：当前马甲的联系人 + 发帖人自己关系网里的人（都需互相认识）
+function momentCommentCandidates(posterId){
+  const seen=new Set([posterId]), out=[]
+  const add=c=>{
+    if(!c||!c.id||c.isDeleted||seen.has(c.id)) return
+    if(posterId&&posterId!=='u'&&c.id!==posterId&&!charsKnowEachOther(posterId,c.id)) return
+    seen.add(c.id); out.push(c)
+  }
+  getMyChars().forEach(add)
+  // 同马甲下未在通讯录里的关系网角色（含隐形 NPC）也要参与
+  charList.filter(c=>!c.isDeleted && c.bindPersonaId===activePersonaId).forEach(add)
+  return out
+}
+
+
+// 生成一条角色朋友圈：上下文 → AI 文案 → 配图 → 落库 → 写记忆 → 关系网评论
+async function aiCharPostMoment(c, withComments=true){
+  if(!c || c.isDeleted || !getApi()?.key) return null
+  const _mRecentMsgs = getMsgs(c.id).slice(-20).map(m =>
+    `${m.from==='u'?(P().name||'用户'):c.name}：${(m.text||'').replace(/\[.*?\]/g,'').slice(0,80)}`
+  ).join('\n')
+  const _mWorldBooks = (c.worldBookIds||[])
+    .map(id => worldBooks.find(b=>b.id===id))
+    .filter(b => b && b.enabled && b.type !== 'card')
+    .map(b => b.content)
+    .join('\n').slice(0, 1500)
+  const _mMemory = getMemoryPromptText(c.id)
+  const _mRecentMoments = momentsData
+    .filter(x => x.charId === c.id)
+    .slice(0, 3)
+    .map(x => x.text.slice(0, 50))
+    .join('；')
+
+  const _nowD = new Date()
+  const _hh = _nowD.getHours()
+  const _slot = _hh < 5 ? '凌晨' : _hh < 9 ? '清晨' : _hh < 12 ? '上午' : _hh < 14 ? '中午' : _hh < 18 ? '下午' : _hh < 22 ? '晚上' : '深夜'
+  const _timeStr = `${_nowD.getFullYear()}年${_nowD.getMonth()+1}月${_nowD.getDate()}日 周${'日一二三四五六'[_nowD.getDay()]} ${String(_hh).padStart(2,'0')}:${String(_nowD.getMinutes()).padStart(2,'0')}`
+
+  const aiPrompt = `你是「${c.name}」。你现在要发一条朋友圈。
+
+【你的完整人设】
+${c.personality||'未定'}
+
+${_mWorldBooks ? `【世界观与关系网】\n${_mWorldBooks}\n` : ''}
+${_mMemory ? `【你的记忆】\n${_mMemory}\n` : ''}
+【当前状态】
+- 现在时间：${_timeStr}（${_slot}）
+- 心情：${c.mood||'平静'}
+- 与${P().name||'用户'}的关系：${c.relation||'未知'}（好感度${c.affection||0}）
+${c.storyTimeline ? `- 当前剧情时间：${c.storyTimeline}` : ''}
+
+${_mRecentMsgs ? `【你和${P().name||'用户'}最近的聊天】\n${_mRecentMsgs}\n` : ''}
+${_mRecentMoments ? `【你最近发过的朋友圈（换个话题和语气，别重复）】\n${_mRecentMoments}\n` : ''}
+要求：
+1. 文案 15-80 字，口语化，像真人在手机上随手一发；可以一句，也可以两三句。
+2. 写你此刻正在做的事、当下的心情，或者最近和${P().name||'用户'}的一点交集。时间和场景要和生活对得上（凌晨别写早安）。
+3. 形态要多样：吐槽工作/训练/行程、深夜睡不着、吃饭拍照、听歌、看到某样东西想起谁、突然的感慨、抱怨天气、自嘲、发牢骚、说了句没头没尾的话。大部分条目不谈感情，也不要每条都提到${P().name||'用户'}。
+4. 绝对不要用 emoji，不要写"分享""记录一下""今日份"这类开头，不要总结式结尾。
+5. 决定是否配图（约 40% 概率）。配图就给一个能代表画面的英文生图提示词（Danbooru tag 风格），不配图留空字符串。
+6. 严格按照此JSON格式返回：{"text":"文案内容","imagePrompt":"英文提示词或空"}`
+
+  const res = await askAIJson('只返回JSON格式', aiPrompt, 600)
+  if(!res || !res.text) return null
+
+  let imgUrl = ''
+  if(res.imagePrompt && imgApi.key && store.get('autoImageEnabled', true)){
+    const oldNeg = imgApi.negativePrompt
+    const rawUrl = await genImage(res.imagePrompt + ", masterpiece, best quality")
+    imgApi.negativePrompt = oldNeg
+    if(rawUrl) imgUrl = await saveImage(rawUrl)
+  }
+
+  const post = {
+    id: uid(), charId: c.id, text: res.text, image: imgUrl || '',
+    time: new Date().toLocaleString(), likes: Math.floor(Math.random()*5),
+    comments: [], liked: false
+  }
+  momentsData.unshift(post)
+  saveMoments()
+  addMemoryEvent(c.id, `（朋友圈·自己发的）我发了一条朋友圈："${res.text.slice(0,60)}"`, 'moments', 'online')
+  if(withComments) generateMomentComments(post, c)
+  return post
+}
+
+// 只有互相认识的人才会来评论；发帖人关系网里的人也算候选人
+async function generateMomentComments(post, poster){
+  if(!post || !poster || !getApi()?.key) return
+  const others = momentCommentCandidates(poster.id)
+    .filter(x => x.id !== poster.id)
+    .sort(() => 0.5 - Math.random())
+    .slice(0, 4)
+  for(const oc of others){
+    if(Math.random() > 0.3) continue
+    const _ocBooks = (oc.worldBookIds||[])
+      .map(id => worldBooks.find(b=>b.id===id))
+      .filter(b => b && b.enabled && b.type !== 'card')
+      .map(b => b.content).join('\n').slice(0, 800)
+    const _ocMem = getMemoryPromptText(oc.id)
+    const ocReply = await askAI(
+      `你是${oc.name}。性格：${oc.personality||'未设定'}。${_ocBooks?'【世界观】'+_ocBooks:''}${_ocMem?'\n'+_ocMem:''}你在看朋友圈。不要用emoji，只输出一句简短评论。`,
+      `${poster.name}发了一条朋友圈："${post.text.slice(0,100)}"${post.image?'（还配了一张图）':''}。你和${poster.name}的关系：${describeCharRel(getCharRel(poster.id,oc.id))}。你要不要评论一句？如果想评论就直接输出评论内容，不想评论就输出"不评论"。`,
+      150
+    )
+    if(ocReply && !ocReply.includes('不评论') && !ocReply.includes('API')){
+      const cleanN = ocReply.replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u2600-\u27BF]/gu,'').replace(/^["「『]|["」』]$/g,'').trim()
+      if(cleanN){
+        post.comments = post.comments || []
+        post.comments.push({from:oc.id, text:cleanN, time:ftime(now())})
+        saveMoments()
+        addMemoryEvent(oc.id, `（朋友圈·评论）我在${poster.name}的朋友圈"${post.text.slice(0,30)}"下评论了"${cleanN.slice(0,30)}"`, 'moments', 'online')
+      }
+    }
+  }
+  post.likes = (post.likes||0) + Math.floor(Math.random()*3)
+  saveMoments()
+  if(typeof app !== 'undefined' && app.innerHTML.includes('朋友圈')) render('moments')
+}
+
+// 每个角色有自己的发圈节奏：间隔由人设决定并固定下来，避免全站统一抽签
+function charMomentInterval(c){
+  const s = String(c.id || c.name || '')
+  let h = 0
+  for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) % 9973
+  let base = 24 + (h % 22)
+  const p = (c.personality||'') + ' ' + (c.occupation||'') + ' ' + (c.identity||'')
+  if(/外向|活泼|话痨|开朗|热情|社牛|爱分享|话多|健谈|爱热闹/.test(p)) base -= 8
+  if(/冷淡|高冷|沉默|内敛|寡言|低调|工作狂|很忙|忙碌|独来独往/.test(p)) base += 12
+  if(/艺人|明星|主播|网红|偶像|公众人物/.test(p)) base -= 6
+  return Math.max(8, base) * 3600 * 1000
+}
+
+function _localDayKey(){
+  const d = new Date()
+  return d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate()
+}
+function momentTodayCount(){
+  const v = store.get('momentDaily', {}) || {}
+  return v.date === _localDayKey() ? (Number(v.n) || 0) : 0
+}
+function bumpMomentToday(){
+  store.set('momentDaily', { date: _localDayKey(), n: momentTodayCount() + 1 })
+}
+function getMomentLastAt(id){
+  const m = store.get('momentLastByChar', {}) || {}
+  return Number(m[id]) || 0
+}
+function setMomentLastAt(id){
+  const m = store.get('momentLastByChar', {}) || {}
+  m[id] = Date.now()
+  store.set('momentLastByChar', m)
+}
+function momentOverdueRatio(c, now){
+  const last = getMomentLastAt(c.id)
+  if(!last){
+    const s = String(c.id || c.name || '')
+    let h = 0
+    for(let i=0;i<s.length;i++) h = (h*17 + s.charCodeAt(i)) % 9973
+    return 0.35 + (h % 120) / 100
+  }
+  return (now - last) / charMomentInterval(c)
+}
+
+// 进入朋友圈时按角色各自节奏补发：一次最多两位，错峰出现
+let _momentAutoBusy = false
+function maybeAutoCharMoment(){
+  try{
+    if(_momentAutoBusy) return
+    if(!getApi()?.key || !store.get('autoMomentEnabled', true)) return
+    if(_curPage !== 'moments') return
+    if(momentTodayCount() >= 4) return
+    const now = Date.now()
+    if(now - (Number(store.get('momentAutoLastRun', 0)) || 0) < 20*60*1000) return
+    const due = getMyChars()
+      .filter(c => !c.isDeleted)
+      .map(c => ({ c, ratio: momentOverdueRatio(c, now) }))
+      .filter(x => x.ratio >= 1)
+      .sort((a, b) => b.ratio - a.ratio)
+    if(!due.length) return
+    const picks = []
+    for(const x of due){
+      if(picks.length >= 2) break
+      if(Math.random() < 0.85) picks.push(x.c)
+    }
+    if(!picks.length) return
+    _momentAutoBusy = true
+    let idx = 0
+    const step = async () => {
+      const c = picks[idx++]
+      if(!c){ _momentAutoBusy = false; return }
+      let posted = null
+      try{
+        if(_curPage === 'moments' && !app.querySelector('.modal-mask') && momentTodayCount() < 4){
+          posted = await aiCharPostMoment(c)
+          if(posted){
+            setMomentLastAt(c.id)
+            bumpMomentToday()
+            store.set('momentAutoLastRun', Date.now())
+            if(_curPage === 'moments') render('moments')
+          }
+        }
+      }catch(e){}
+      setTimeout(step, 6000 + Math.random()*9000)
+    }
+    setTimeout(step, 800 + Math.random()*1400)
+  }catch(e){ _momentAutoBusy = false }
+}
+
 // 核心隔离逻辑：只获取当前马甲绑定的角色，并过滤掉隐形NPC
 function getMyChars(){
   // 顺手清理一下历史遗留的粉丝NPC，将他们隐藏
@@ -2537,6 +2763,66 @@ let styleBooks=store.get('styleBooks',[])
 function saveStyleBooks(){store.set('styleBooks',styleBooks)}
 // 旧数据迁移：给没有 position 字段的补上默认值
 styleBooks.forEach(b=>{if(!b.position)b.position='system'})
+
+// ===== 世界书 = 事实，预设 = 输出契约 =====
+// 占位符替换：{{char}} / {{user}}
+function _fillCharUser(t,c){
+  return (''+(t||''))
+    .replace(/\{\{char\}\}/gi,c&&c.name?c.name:'')
+    .replace(/\{\{user\}\}/gi,(P().name||'用户'))
+}
+// 最近 N 条用户消息，用来判断世界书触发词
+function _recentUserText(cid,n){
+  try{
+    return getMsgs(cid).filter(m=>m.from==='u'&&m.text).slice(-(n||6)).map(m=>''+m.text).join('\n').toLowerCase()
+  }catch(e){ return '' }
+}
+// 没有触发词 = 常驻；有触发词 = 命中才注入
+function _wbTriggersHit(b,hay){
+  const trigs=(''+(b.triggers||'')).split(/[,，、\s]+/).map(x=>x.trim().toLowerCase()).filter(Boolean)
+  if(!trigs.length) return true
+  return !!hay && trigs.some(t=>hay.includes(t))
+}
+// 生效范围：导入的酒馆预设默认只在线下用，手写/AI 生成的默认全局
+function _styleScope(b){
+  if(b&&b.scope==='all'||b&&b.scope==='offline') return b.scope
+  return (b&&b.fromFile)?'offline':'all'
+}
+// 一条预设被注入的完整文本：正文 + 三项写作约束
+function _stylePromptText(b,c){
+  const parts=[]
+  const body=(b.content||'').trim()
+  if(body) parts.push(_fillCharUser(body,c))
+  const cons=[]
+  if(b.pov) cons.push('视角：'+b.pov)
+  if(b.wordCount) cons.push('篇幅：'+b.wordCount)
+  if(b.forbid) cons.push('禁忌：'+b.forbid)
+  if(cons.length) parts.push('【写作约束】'+cons.join('；'))
+  return parts.join('\n')
+}
+// 迁移：互动卡片曾存在世界书里，现归预设（输出格式属于预设）
+;(function migrateWorldBookCards(){
+  try{
+    const cards=(worldBooks||[]).filter(b=>b&&b.type==='card')
+    if(!cards.length) return
+    const moved=new Set()
+    cards.forEach(b=>{
+      if(!styleBooks.some(x=>x.id===b.id)){
+        styleBooks.push({id:b.id,title:b.title||'互动卡片',type:'card',position:'card',triggers:b.triggers||'',instruction:b.instruction||'',template:b.template||'',content:'',enabled:b.enabled!==false,fromFile:b.fromFile||''})
+      }
+      moved.add(b.id)
+    })
+    ;(charList||[]).forEach(c=>{
+      const hit=(c.worldBookIds||[]).filter(id=>moved.has(id))
+      if(!hit.length) return
+      c.worldBookIds=(c.worldBookIds||[]).filter(id=>!moved.has(id))
+      c.styleBookIds=c.styleBookIds||[]
+      hit.forEach(id=>{ if(!c.styleBookIds.includes(id)) c.styleBookIds.push(id) })
+    })
+    worldBooks=worldBooks.filter(b=>!moved.has(b.id))
+    saveWorldBooks();saveStyleBooks();saveCharList()
+  }catch(e){}
+})()
 
 // ===== 全局记忆系统 =====
 // 替代原来分散的 memories，统一存储所有模式产生的记忆
@@ -3613,15 +3899,16 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
   s+=`\n（※ 强制指令：以上是对方的公开设定。你绝对没有读心术，你看不透对方内心的阴暗面或真实目的。你只能根据对方表面的言行做出正常的反应，绝不能表现出你看了对方的剧本！）`
 }
 
-  // 世界书注入
-  const cBooks=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled)
+  // 世界书注入（事实）：无触发词常驻，有触发词命中才注入
+  const _wbHay=_recentUserText(c.id)
+  const cBooks=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card'&&_wbTriggersHit(b,_wbHay))
   if(cBooks.length){
     s+=`\n\n【世界观背景】`
-    cBooks.forEach(b=>{if(b.type!=='card')s+=`\n${b.content}`})
+    cBooks.forEach(b=>{s+=`\n${_fillCharUser(b.content||'',c)}`})
   }
 
   // 全局记忆注入
-  const memText=getMemoryPromptText(activeCharId)
+  const memText=getMemoryPromptText(c.id)
   if(memText) s+=`\n${memText}`
 
   // 人际关系网注入：让角色知道自己认识谁、关系如何
@@ -3640,18 +3927,16 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 
   // 朋友圈动态注入（让角色知道最近朋友圈发生了什么）
   {
-    const _recentMoments = (momentsData||[]).filter(m => 
-      m.charId === activeCharId || m.charId === 'u' || 
-      (m.comments||[]).some(cm => cm.from === activeCharId)
-    ).slice(0, 5);
+    const _recentMoments = (momentsData||[]).filter(m => canSeeMoment(c.id, m)).slice(0, 5);
     
     if(_recentMoments.length) {
       let _momTxt = '\n\n【最近的朋友圈动态（你知道的）】';
       _recentMoments.forEach(m => {
         const posterName = m.charId === 'u' ? (P().name||'用户') : (charList.find(x=>x.id===m.charId)?.name||'?');
         _momTxt += `\n· ${posterName}发了朋友圈："${m.text.slice(0,60)}"`;
-        if(m.comments && m.comments.length) {
-          const cmSummary = m.comments.slice(-4).map(cm => {
+        const _visibleComments = (m.comments||[]).filter(cm => momentCommentVisibleTo(c.id, cm));
+        if(_visibleComments.length) {
+          const cmSummary = _visibleComments.slice(-4).map(cm => {
             const cn = cm.from==='u' ? (P().name||'用户') : (charList.find(x=>x.id===cm.from)?.name||'?');
             const rn = cm.replyTo ? (cm.replyTo==='u' ? (P().name||'用户') : (charList.find(x=>x.id===cm.replyTo)?.name||'?')) : '';
             return `${cn}${rn?' 回复 '+rn:''}：${cm.text.slice(0,30)}`;
@@ -3663,6 +3948,23 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
       s += _momTxt;
     }
   }
+  // 论坛动态注入（角色知道最近论坛里发生了什么）
+  try{
+    const _knownForumIds = new Set((getCharKnownList(c.id)||[]).map(k=>k.otherId))
+    const _fp = (forumPosts||[]).filter(forumPostVisible)
+      .filter(fp => fp.authorType==='u' || fp.authorId===c.id || _knownForumIds.has(fp.authorId))
+      .slice(0, 4)
+    if(_fp.length){
+      let _fpTxt = '\n\n【最近在论坛看到的帖子】'
+      _fp.forEach(fp=>{
+        const an = fp.authorType==='u' ? (P().name||'用户') : (charList.find(x=>x.id===fp.authorId)?.name || fp.authorName || '?')
+        _fpTxt += `\n· ${an}《${(fp.title||'').slice(0,30)}》：${(fp.content||'').slice(0,50)}`
+      })
+      _fpTxt += '\n（这些帖子是真实存在的。聊天时可以自然带一句，但别每次都提论坛。）'
+      s += _fpTxt
+    }
+  }catch(e){}
+
   // 注入生活资产与店铺感知
   try {
     const _nd = getNurtureData(c.id);
@@ -3683,6 +3985,25 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 - 线上聊天聊到的话题，线下见面时你也不会忘
 - 唯一的区别是表达形式：线上是打字发消息（短句、口语），线下是面对面（有动作、神态、环境描写）。但你说话的性格底色、对对方的态度、情绪的延续性必须一致
 - 对话历史里可能混有两种模式的消息（带【微信消息】或【线下见面】标记），那些都是真实发生过的，你都记得`
+
+  // ===== 日历里已约定的见面：让角色记得并主动提起 =====
+  const _dateTxt=_upcomingDateText(c&&c.id)
+  if(_dateTxt){
+    s+=`\n\n【你们的约定】\n下面这些是你和对方已经约好、写进日历的见面安排：\n${_dateTxt}\n- 这些约定真实存在。聊天中可以自然提起、确认时间、表达期待或者找借口推脱；如果安排就在今天，你会一直记着这件事，适当提醒对方。`
+  }
+
+  // 预设注入（输出契约）：文风/格式，线上与线下共用
+  const cStyles=(c.styleBookIds||[]).map(id=>styleBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card'&&b.position!=='jailbreak'&&(_styleScope(b)==='all'||isOffline))
+  if(cStyles.length){
+    s+=`\n\n【你绑定的文风与输出格式预设】\n（这些是写作方式与输出格式的约定；与角色设定冲突时以角色设定为准。）`
+    if(isOffline && cStyles.some(b=>/<[a-zA-Z][^>]{5,}>/.test(b.content||''))){
+      s+='\n（预设里包含 HTML 卡片或状态栏：本次回复必须严格包含三部分——①最顶部的状态栏 ②正文剧情 ③HTML卡片，缺一不可。）'
+    }
+    cStyles.forEach(b=>{
+      const _t=_stylePromptText(b,c)
+      if(_t) s+=`\n\n【预设·${b.title||'未命名'}】\n${_t}`
+    })
+  }
 
   // ===== 分支：线上 vs 线下 =====
   if(isOffline){
@@ -3789,14 +4110,6 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 - 合理时可以有人离场或新到场，在正文里写清楚。`
     }
 
-    // 叠加绑定的预设（system 位置的）
-    const cStyles=(c.styleBookIds||[]).map(id=>styleBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.position!=='jailbreak')
-    if(cStyles.length){
-      s+=`\n\n【你附加绑定的文风与小剧场预设】\n（特别注意：如果预设中包含HTML卡片或状态栏，你的每次回复都必须严格包含三部分：①状态栏（按照世界书或预设中定义的状态栏格式，放在回复最顶部，绝对不可省略！） ②正文剧情 ③HTML卡片。三部分缺一不可，绝对不能缺少状态栏，也绝对不能缺少正文剧情！
-
-）`
-      cStyles.forEach(b=>{s+=`\n\n【预设·${b.title}】\n${b.content}`})
-    }
   }else{
 
     // 线上模式：连发气泡与反终结者机制
@@ -3874,6 +4187,16 @@ ${store.get('autoImageEnabled',false)
    系统会自动搜索并播放这首歌，对方会看到一个音乐卡片。
    什么时候点歌：聊到音乐话题时、想表达某种心情时、想哄对方开心时、对方心情不好时、深夜聊天氛围好的时候。
    不要每次都点歌，偶尔来一首才有惊喜感。点歌时可以配一句话，比如"这首歌让我想到你 [点歌:xxx-xxx]"。
+14.【约会邀请】你可以主动约对方出来见面。真的想见对方、气氛到时候，在回复里单独占一行输出：
+   [约会邀请|日期|时间|地点|事由|备注]
+   - 日期只写 今天 / 明天 / 后天 / 大后天，或 YYYY-MM-DD 格式；今天是 ${now().getFullYear()}-${pad(now().getMonth()+1)}-${pad(now().getDate())}，周${'日一二三四五六'[now().getDay()]}
+   - 时间是 24 小时制，比如 19:30
+   - 地点要具体：江边、街角那家咖啡店、电影院门口
+   - 事由一句话；备注可以留空，也可以写提醒对方的话
+   示例：[约会邀请|明天|19:30|江边|一起看夜景|记得多穿点]
+   这一行会变成对方手机上的一张邀请卡，对方可以接受或拒绝。系统会把结果告诉你，你再顺着反应。
+   - 同一时间只能有一个还没被回复的邀请；不要每条消息都约，也不要把它混在普通句子里，必须单独占一行
+   - 对方拒绝就接受这个结果，别死缠烂打；对方答应就自然地期待起来
 
 绝对不要做的事：
 - 不要使用emoji表情符号（如😊😂❤️），但必须使用你的表情包库里的表情包
@@ -3997,7 +4320,10 @@ async function callAI(userMsgs){
   const userMsgText=typeof userMsgs==='string'?userMsgs:userMsgs.join(' ')
   let cardPrompt=''
   const cBooks=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled)
-  const cardBooks=cBooks.filter(b=>b.type==='card'&&b.triggers&&b.template)
+  const _cm=new Map()
+  cBooks.filter(b=>b.type==='card'&&b.triggers&&b.template).forEach(b=>_cm.set(b.id,b))
+  ;(c.styleBookIds||[]).map(id=>styleBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type==='card'&&b.triggers&&b.template).forEach(b=>{ if(!_cm.has(b.id)) _cm.set(b.id,b) })
+  const cardBooks=[..._cm.values()]
   if(cardBooks.length && userMsgText){
     const userMsgLower=userMsgText.toLowerCase()
     for(const card of cardBooks){
@@ -4006,11 +4332,11 @@ async function callAI(userMsgs){
         cardPrompt=`\n\n【互动卡片触发：${card.title}】
 当用户的消息包含"${triggers.join('/')}"等关键词时，你必须生成一个互动卡片回复。
 
-${card.instruction||''}
+${_fillCharUser(card.instruction||'',c)}
 
 请严格按照以下HTML模板填充内容，把所有 [AI填:xxx] 的位置替换成你根据角色和剧情生成的内容，然后【压缩成一行】输出（不要换行、不要加代码块标记）：
 
-${card.template}
+${_fillCharUser(card.template||'',c)}
 
 【重要】：
 1. 输出的HTML必须是完整的一行，不要分行
@@ -8377,7 +8703,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
     const maxHistoryCount = store.get('maxHistoryCount', 100);
     
     // 放行换头像等系统感知事件
-    const _allHistMsgs = getMsgs(c.id).filter(m=>m.from==='c'||(m.from==='u'&&m.replied)||(m.isSystem && (m.text.includes('已切换到') || m.text.includes('头像')))).slice(-maxHistoryCount);
+    const _allHistMsgs = getMsgs(c.id).filter(m=>m.from==='c'||(m.from==='u'&&m.replied)||(m.isSystem && (m.text.includes('已切换到') || m.text.includes('头像') || m._dateNotice))).slice(-maxHistoryCount);
     const _curMode = c.offlineMode ? 'offline' : 'online';
     const hist = _allHistMsgs.map(m=>{
       if(m.isSystem) {
@@ -8405,14 +8731,18 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
     let cardPrompt=''
     let _cardHit=false
     const _cBooks=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled)
-    const _cardBooks=_cBooks.filter(b=>b.type==='card'&&b.triggers&&b.template)
+    // 卡片归预设管；世界书里的旧卡片保留兼容
+    const _cardMap=new Map()
+    _cBooks.filter(b=>b.type==='card'&&b.triggers&&b.template).forEach(b=>_cardMap.set(b.id,b))
+    ;(c.styleBookIds||[]).map(id=>styleBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type==='card'&&b.triggers&&b.template).forEach(b=>{ if(!_cardMap.has(b.id)) _cardMap.set(b.id,b) })
+    const _cardBooks=[..._cardMap.values()]
     if(_cardBooks.length && userMsgStr){
       const _userLow=(''+userMsgStr).toLowerCase()
       for(const card of _cardBooks){
         const triggers=(card.triggers||'').split(/[,，、\s]+/).map(t=>t.trim().toLowerCase()).filter(t=>t)
         if(triggers.some(t=>_userLow.includes(t))){
           _cardHit=true
-          cardPrompt=`\n\n============【互动卡片强制模式：${card.title}】============\n用户消息包含关键词"${triggers.join('/')}"，本次回复【必须】是HTML卡片，不是普通聊天文字，不是小说描写，不是状态标签。\n\n${card.instruction||''}\n\n把下面模板里所有 [AI填:xxx] 的位置替换成符合角色和剧情的内容后【完整】输出：\n\n${card.template}\n\n【绝对规则】\n1. 直接输出完整HTML代码，从第一个 < 到最后一个 > ，不要加\`\`\`html也不要加\`\`\`\n2. 【绝对禁止】输出 [状态:...] [心情:...] [心声:...] [剧情时间:...] 等任何方括号标签\n3. 【绝对禁止】在HTML前后写小说正文、聊天文字、解释文字\n4. 【绝对禁止】写"（正文完）"之类的收尾语\n5. 填充内容要具体、符合角色性格和当前剧情\n6. 保留模板原有的style样式，不要删改CSS\n7. 一次性输出完整HTML，不要省略任何标签，不要用...代替内容
+          cardPrompt=`\n\n============【互动卡片强制模式：${card.title}】============\n用户消息包含关键词"${triggers.join('/')}"，本次回复【必须】是HTML卡片，不是普通聊天文字，不是小说描写，不是状态标签。\n\n${_fillCharUser(card.instruction||'',c)}\n\n把下面模板里所有 [AI填:xxx] 的位置替换成符合角色和剧情的内容后【完整】输出：\n\n${_fillCharUser(card.template||'',c)}\n\n【绝对规则】\n1. 直接输出完整HTML代码，从第一个 < 到最后一个 > ，不要加\`\`\`html也不要加\`\`\`\n2. 【绝对禁止】输出 [状态:...] [心情:...] [心声:...] [剧情时间:...] 等任何方括号标签\n3. 【绝对禁止】在HTML前后写小说正文、聊天文字、解释文字\n4. 【绝对禁止】写"（正文完）"之类的收尾语\n5. 填充内容要具体、符合角色性格和当前剧情\n6. 保留模板原有的style样式，不要删改CSS\n7. 一次性输出完整HTML，不要省略任何标签，不要用...代替内容
 8. 任何 <details> 必须包含实际内容，不能只输出 <summary> 标题后立即闭合
 9. 如果无法生成完整内容，就不要输出这个 <details>，不要输出空标题卡
 10. 输出前检查：每个 <details> 的 <summary> 后面都必须有正文、列表、帖子或其他HTML内容`
@@ -8440,7 +8770,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
 
     // 检测绑定预设是否含 HTML 小剧场模板 → 追加强制输出指令到 forcedTag
     if(c.offlineMode && !_cardHit){
-      const _hasHtmlPreset = (c.styleBookIds||[]).some(id=>{const b=styleBooks.find(x=>x.id===id);return b&&b.enabled&&b.position!=='jailbreak'&&/<[a-zA-Z][^>]{5,}>/.test(b.content||'')});
+      const _hasHtmlPreset = (c.styleBookIds||[]).some(id=>{const b=styleBooks.find(x=>x.id===id);return b&&b.enabled&&b.type!=='card'&&b.position!=='jailbreak'&&/<[a-zA-Z][^>]{5,}>/.test(b.content||'')});
       if(_hasHtmlPreset){
         forcedTag += '\n\n【追加指令：HTML小剧场卡片】你的本次回复必须严格按顺序包含以下三部分（缺一不可！）：\n\n【第一部分·状态栏】⚠️放在回复最顶部，不可省略！按照世界书/预设中定义的状态栏格式输出。没有状态栏=回复不合格。这是最容易被遗漏的部分！\n\n【第二部分·剧情正文】小说正文剧情，至少200字，这是最重要的部分。\n\n【第三部分·HTML卡片】根据预设中的HTML模板格式输出完整HTML卡片代码（直接以<style>或<div>开头，禁止输出<!DOCTYPE>、<html>、<head>、<body>等外壳标签）。\n\n🚨最终检查清单（输出前逐项确认）：\n✅ 第一部分状态栏？——必须有，放最顶部，最容易遗漏！\n✅ 第二部分剧情正文？——必须有\n✅ 第三部分HTML卡片？——必须有';
       }
@@ -8450,7 +8780,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
     const _boundJb=(c.styleBookIds||[]).map(id=>styleBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.position==='jailbreak')
     let _jbText=''
     if(_boundJb.length){
-      _boundJb.forEach(b=>{_jbText+='\n\n'+(b.content||'').replace(/\{\{char\}\}/gi,c.name).replace(/\{\{user\}\}/gi,(P().name||'用户'))})
+      _boundJb.forEach(b=>{const _t=_stylePromptText(b,c);if(_t)_jbText+='\n\n'+_t})
     }
     // 🌟 注入当前马甲头像、角色当前头像与聊天大图（彻底赋予AI视觉，能看到双方头像！）
     let _avB64 = null;
@@ -10423,6 +10753,30 @@ if(_htmlCardHit){
         // 纯卡片模式：直接使用预构建的 iframe
         bubbleContent=_cardIframeHtml
 
+      }else if(m && m.dateInvite){
+        const _inv=m.dateInvite
+        const _st=_inv.status||'pending'
+        const _acc=_st==='accepted',_rej=_st==='rejected'
+        bubbleContent=`
+          <div class="_card-dateinvite" data-idx="${idx}" style="width:242px;max-width:242px;border-radius:18px;overflow:hidden;background:${n?'rgba(255,255,255,.05)':'rgba(255,255,255,.95)'};border:1px solid rgba(232,160,180,.35);box-shadow:0 6px 18px rgba(232,160,180,.16)">
+            <div style="padding:12px 14px 9px;background:linear-gradient(135deg,rgba(245,213,222,.55),rgba(255,255,255,0))">
+              <div style="font-size:8.5px;letter-spacing:2.5px;color:var(--rose-d);opacity:.75">DATE INVITATION</div>
+              <div style="font-size:14px;font-weight:600;color:${n?'#f2e4f6':'#3a2a3a'};margin-top:5px;line-height:1.4">${escHtml(_inv.title||'一起出去走走')}</div>
+            </div>
+            <div style="padding:0 14px 12px">
+              <div style="font-size:11px;color:${n?'#cbbad4':'#7a6a76'};line-height:1.9">
+                <div>${escHtml(_dateInviteLabel(_inv))}</div>
+                ${_inv.place?`<div>地点 · ${escHtml(_inv.place)}</div>`:''}
+                ${_inv.desc?`<div style="opacity:.85;font-style:italic">${escHtml(_inv.desc)}</div>`:''}
+              </div>
+              ${_st==='pending'
+                ? `<div style="display:flex;gap:8px;margin-top:11px">
+                     <div class="_diYes" data-idx="${idx}" style="flex:1;text-align:center;padding:7px 0;border-radius:12px;background:linear-gradient(135deg,var(--rose-l),var(--rose));color:#fff;font-size:11px;cursor:pointer;letter-spacing:1px">接受</div>
+                     <div class="_diNo" data-idx="${idx}" style="flex:1;text-align:center;padding:7px 0;border-radius:12px;background:${n?'rgba(255,255,255,.08)':'rgba(160,160,160,.12)'};color:${n?'#c0b0c8':'#8a7a86'};font-size:11px;cursor:pointer;letter-spacing:1px">拒绝</div>
+                   </div>`
+                : `<div style="margin-top:10px;font-size:10px;color:${_acc?'var(--green)':'#b08080'};letter-spacing:.5px">${_acc?'已接受 · 已记进约会日历':(_rej?'已拒绝':'已处理')}</div>`}
+            </div>
+          </div>`
       }else if(txt.startsWith('[红包]')){
 
         const info=txt.replace('[红包]','').trim()
@@ -11280,6 +11634,19 @@ ${bubbleContent}${toolsHtml}</div>
         walletReceive(amt,`${c.name}的红包`)
         render('chat')
       }
+    })
+  })
+  // 约会邀请卡片：接受 / 拒绝
+  ml.querySelectorAll('._diYes[data-idx]').forEach(el=>{
+    el.addEventListener('click',function(){
+      const i=parseInt(this.dataset.idx)
+      if(!isNaN(i))acceptDateInvite(i)
+    })
+  })
+  ml.querySelectorAll('._diNo[data-idx]').forEach(el=>{
+    el.addEventListener('click',function(){
+      const i=parseInt(this.dataset.idx)
+      if(!isNaN(i))rejectDateInvite(i)
     })
   })
   // 点角色的转账卡片 → 弹领取/退还
@@ -13602,6 +13969,7 @@ if(typing.parentElement) typing.remove()
 
  // 解析AI主动行为
     const processedLines=[]
+    let _diMade=false
     lines.forEach((line, idx)=>{
       if(!line) return;
       // 🌟 AI 主动换头像指令：[换头像]
@@ -13680,6 +14048,28 @@ if(typing.parentElement) typing.remove()
         const rest=line.replace(gfMatch[0],'').trim();
         if(rest)processedLines.push({text:rest,from:'c'});
         return;
+      }
+
+      // === 角色主动约会邀请（线上） ===
+      const _diMatch=line.match(/\[约会邀请\s*[|｜]\s*([^\]]*)\]/)
+      if(_diMatch){
+        const _diRest=line.replace(_diMatch[0],'').trim()
+        if(!_diMade && !c.offlineMode && !_pendingDateInvite(targetCharId)){
+          const _diF=_diMatch[1].split(/[|｜]/).map(x=>x.trim())
+          const _diDate=_resolveInviteDate(_diF[0])
+          if(_diDate){
+            processedLines.push({text:`[约会邀请] ${_diF[3]||'约会邀请'}`,from:'c',dateInvite:{
+              dateRaw:_diF[0]||'',date:_diDate,time:_diF[1]||'',place:_diF[2]||'',
+              title:_diF[3]||'一起出去走走',desc:_diF[4]||'',
+              status:'pending',createdAt:now().getTime()
+            }})
+            _diMade=true
+            if(_diRest)processedLines.push({text:_diRest,from:'c'})
+            return
+          }
+        }
+        if(_diRest)processedLines.push({text:_diRest,from:'c'})
+        return
       }
 
       // === 角色点歌解析 ===
@@ -13801,6 +14191,7 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
       if(item._recallAfter) _msgObj._recallAfter=true
       if(item._needMusicSearch) _msgObj._needMusicSearch=item._needMusicSearch
       if(item.musicCard) _msgObj.musicCard=item.musicCard
+      if(item.dateInvite) _msgObj.dateInvite=item.dateInvite
       newArr.push(_msgObj)
 
       // 线上可以直接追加普通气泡；
@@ -16232,7 +16623,7 @@ pages.worldbooks=()=>{
   p.appendChild(topBar('世界书','home'))
   const body=ce('div');Object.assign(body.style,{flex:'1',overflowY:'auto',padding:'16px'})
 
-  let html=`<div style="font-size:11px;color:var(--ink-l);font-style:italic;padding:0 4px 12px;line-height:1.7">世界书会注入角色记忆。你也可以把某本世界书挂载给指定角色。</div>`
+  let html=`<div style="font-size:11px;color:var(--ink-l);font-style:italic;padding:0 4px 12px;line-height:1.7">世界书 = 世界的事实：人物背景、地点、术语、规则。填了触发词就只在聊天提到时注入，留空则每轮都带。互动卡片已移到预设页。</div>`
   if(worldBooks.length===0) html+=`<div style="text-align:center;padding:30px;font-size:12px;color:var(--ink-l);font-style:italic">还没有世界书～</div>`
 
   // 渲染单个世界书卡片的函数
@@ -16472,47 +16863,21 @@ body.querySelectorAll('._wbview').forEach(el=>{
     el.onclick=()=>{
       const i=+el.dataset.i,b=worldBooks[i]
       showModal('编辑世界书',(mb,close)=>{
-        const isCard=b.type==='card'
         mb.innerHTML=`
           <div class="card"><div class="card-t">标题</div><input class="inp" id="_wbt" value="${escHtml(b.title||'')}"></div>
-          <div class="card"><div class="card-t">类型</div>
-            <div style="display:flex;gap:10px;margin-top:6px">
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_wbtype" value="normal" ${!isCard?'checked':''} style="accent-color:var(--rose)">普通世界观</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_wbtype" value="card" ${isCard?'checked':''} style="accent-color:var(--rose)">互动卡片</label>
-            </div>
-          </div>
-          <div id="_wbnormal" style="${isCard?'display:none':''}">
-            <div class="card"><div class="card-t">内容</div><textarea class="tarea" id="_wbc" rows="7">${escHtml(b.content||'')}</textarea></div>
-          </div>
-          <div id="_wbcard" style="${isCard?'':'display:none'}">
-            <div class="card"><div class="card-t">触发词（逗号分隔）</div><input class="inp" id="_wbtriggers" value="${escHtml(b.triggers||'')}" placeholder="如：生病,发烧,难受,不舒服"></div>
-            <div class="card"><div class="card-t">AI填充指令</div><textarea class="tarea" id="_wbinst" rows="4" placeholder="告诉AI如何填充模板中的占位符">${escHtml(b.instruction||'')}</textarea></div>
-            <div class="card"><div class="card-t">HTML模板</div><textarea class="tarea" id="_wbtpl" rows="6" placeholder="粘贴HTML模板，用 [AI填:xxx] 标记占位符">${escHtml(b.template||'')}</textarea></div>
-          </div>
+          <div class="card"><div class="card-t">内容</div><textarea class="tarea" id="_wbc" rows="7">${escHtml(b.content||'')}</textarea></div>
+          <div class="card"><div class="card-t">触发词（可选，逗号分隔）</div><input class="inp" id="_wbtr" value="${escHtml(b.triggers||'')}" placeholder="留空 = 每轮注入"><div style="font-size:10px;color:var(--ink-l);margin-top:4px;font-style:italic">填了只在最近聊天提到时注入。例：宗门,灵根,渡劫</div></div>
           <div class="card"><div class="card-t">挂载给角色</div><div style="display:flex;flex-direction:column;gap:6px">
   ${getMyChars().map(c=>`<label class="list-item" style="cursor:pointer;padding:10px"><input type="checkbox" class="_wch" value="${c.id}" ${(c.worldBookIds||[]).includes(b.id)?'checked':''} style="accent-color:var(--rose)"><div style="flex:1;font-size:12px;color:var(--ink)">${escHtml(c.name)}</div></label>`).join('')}
 </div></div>
           <div class="btn-main" id="_wbs">保存</div>
         `
-        // 切换类型显示
-        mb.querySelectorAll('input[name="_wbtype"]').forEach(r=>{r.onchange=()=>{
-          const card=r.value==='card'
-          mb.querySelector('#_wbnormal').style.display=card?'none':''
-          mb.querySelector('#_wbcard').style.display=card?'':'none'
-        }})
         mb.querySelector('#_wbs').onclick=()=>{
-          const typeVal=mb.querySelector('input[name="_wbtype"]:checked').value
           b.title=mb.querySelector('#_wbt').value.trim()||'无标题'
-          b.type=typeVal
-          if(typeVal==='card'){
-            b.triggers=mb.querySelector('#_wbtriggers').value.trim()
-            b.instruction=mb.querySelector('#_wbinst').value.trim()
-            b.template=mb.querySelector('#_wbtpl').value
-            b.content=''
-          }else{
-            b.content=mb.querySelector('#_wbc').value.trim()
-            b.triggers='';b.instruction='';b.template=''
-          }
+          b.type='normal'
+          b.content=mb.querySelector('#_wbc').value.trim()
+          b.triggers=(mb.querySelector('#_wbtr').value||'').trim()
+          b.instruction='';b.template=''
           charList.forEach(c=>{c.worldBookIds=(c.worldBookIds||[]).filter(id=>id!==b.id)})
           ;[...mb.querySelectorAll('._wch:checked')].forEach(x=>{
             const ch=charList.find(c=>c.id===x.value)
@@ -16675,7 +17040,7 @@ pages.stylebooks=()=>{
   p.appendChild(topBar('预设','home'))
   const body=ce('div');Object.assign(body.style,{flex:'1',overflowY:'auto',padding:'16px'})
 
-  let html=`<div style="font-size:11px;color:var(--ink-l);font-style:italic;padding:0 4px 12px;line-height:1.7">预设 = 文风 + 酒馆预设。支持导入酒馆JSON预设，也可手动创建。绑定给角色后生效，支持 {{char}} {{user}} 占位符。</div>`
+  let html=`<div style="font-size:11px;color:var(--ink-l);font-style:italic;padding:0 4px 12px;line-height:1.7">预设 = 输出契约：文风、写作约束、状态栏与 HTML 模板。世界书管世界是什么样，预设管怎么写、输出什么格式。绑定给角色后生效，支持 {{char}} {{user}}。</div>`
   
   if(!styleBooks.length) html+=`<div style="text-align:center;padding:30px;font-size:12px;color:var(--ink-l);font-style:italic">还没有预设～</div>`
 
@@ -16690,14 +17055,16 @@ pages.stylebooks=()=>{
         ${escHtml(b.title||'无标题')}
       </div>
       <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
-        <span style="font-size:10px;padding:3px 8px;border-radius:8px;background:${b.position==='jailbreak'?'rgba(196,122,146,.15)':'rgba(138,154,110,.15)'};color:${b.position==='jailbreak'?'#c47a92':'var(--green)'}">${b.position==='jailbreak'?'越狱':'系统提示'}</span>
+        ${b.type==='card'
+          ? `<span style="font-size:10px;padding:3px 8px;border-radius:8px;background:rgba(138,154,110,.15);color:var(--green)">互动卡片</span><span style="font-size:10px;padding:3px 8px;border-radius:8px;background:rgba(196,186,212,.15);color:var(--lav)">${escHtml((b.triggers||'').split(/[,，、\s]+/).filter(Boolean).length)} 个触发词</span>`
+          : `<span style="font-size:10px;padding:3px 8px;border-radius:8px;background:${b.position==='jailbreak'?'rgba(196,122,146,.15)':'rgba(138,154,110,.15)'};color:${b.position==='jailbreak'?'#c47a92':'var(--green)'}">${b.position==='jailbreak'?'越狱':'系统提示'}</span>`}
         ${b.pov?`<span style="font-size:10px;padding:3px 8px;border-radius:8px;background:rgba(196,186,212,.15);color:var(--lav)">${escHtml(b.pov)}</span>`:''}
         ${b.wordCount?`<span style="font-size:10px;padding:3px 8px;border-radius:8px;background:rgba(232,160,180,.12);color:var(--rose-d)">${escHtml(b.wordCount)}</span>`:''}
       </div>
       <div style="margin-top:6px;font-size:10px;color:var(--rose-d);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
         绑定角色：${escHtml(mountedChars)}
       </div>
-      <div style="margin-top:4px;font-size:10px;color:var(--ink-l);opacity:.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px">${escHtml((b.content||'').slice(0,60))}</div>
+      <div style="margin-top:4px;font-size:10px;color:var(--ink-l);opacity:.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px">${escHtml(((b.type==='card'?(b.triggers||'')+' '+(b.instruction||''):b.content)||'').slice(0,60))}</div>
     </div>
     <div class="_st" data-i="${i}" style="flex-shrink:0;padding:4px 10px;border-radius:10px;font-size:10px;cursor:pointer;${b.enabled?'background:rgba(138,154,110,.15);color:var(--green)':'background:rgba(200,200,200,.15);color:var(--ink-l)'}">${b.enabled?'启用中':'已关闭'}</div>
     <div class="_se" data-i="${i}" style="flex-shrink:0;cursor:pointer;padding:4px">${I.quill('var(--ink-l)',14)}</div>
@@ -16746,6 +17113,9 @@ pages.stylebooks=()=>{
     <div class="list-item" id="_importPreset" style="border:1px dashed rgba(232,160,180,.3);justify-content:center;gap:8px;opacity:.8">
       <svg viewBox="0 0 24 24" fill="none" stroke="var(--rose)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       <span style="font-size:13px;color:var(--ink-l)">导入酒馆预设 (JSON)</span>
+    </div>
+    <div class="list-item" id="_addcard" style="border:1px dashed rgba(138,154,110,.35);justify-content:center;gap:8px;opacity:.8">
+      ${I.plus('var(--green)',18)}<span style="font-size:13px;color:var(--ink-l)">新建角色卡片（仅绑定的角色触发）</span>
     </div>
     <div class="list-item" id="_addsb" style="border:1px dashed rgba(196,186,212,.3);justify-content:center;gap:8px;opacity:.7">
       ${I.plus('var(--lav)',18)}<span style="font-size:13px;color:var(--ink-l)">手动新建预设</span>
@@ -16805,59 +17175,33 @@ body.querySelectorAll('._sbview').forEach(el=>{
       .join('、')||'未绑定角色'
 
     showModal('预设详情',(mb,close)=>{
-      mb.innerHTML=`
-        <div class="card">
-          <div class="card-t">预设名称</div>
-          <div style="font-size:15px;font-weight:500;color:var(--ink);line-height:1.6;word-break:break-word">
-            ${escHtml(b.title||'无标题')}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-t">状态</div>
-          <div style="font-size:12px;color:${b.enabled?'var(--green)':'var(--ink-l)'}">
-            ${b.enabled?'启用中':'已关闭'}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-t">人称视角</div>
-          <div style="font-size:12px;color:var(--ink);line-height:1.8;white-space:pre-wrap;word-break:break-word;user-select:text">
-            ${escHtml(b.pov||'未设置')}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-t">字数偏好</div>
-          <div style="font-size:12px;color:var(--ink);line-height:1.8;white-space:pre-wrap;word-break:break-word;user-select:text">
-            ${escHtml(b.wordCount||'未设置')}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-t">文风正文</div>
-          <div style="font-size:12px;color:var(--ink);line-height:1.9;white-space:pre-wrap;word-break:break-word;user-select:text">
-            ${escHtml(b.content||'暂无内容')}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-t">禁忌项</div>
-          <div style="font-size:12px;color:var(--ink);line-height:1.9;white-space:pre-wrap;word-break:break-word;user-select:text">
-            ${escHtml(b.forbid||'未设置')}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-t">绑定角色</div>
-          <div style="font-size:12px;color:var(--ink);line-height:1.8;word-break:break-word">
-            ${escHtml(mountedChars)}
-          </div>
-        </div>
-
+      const _isCard=b.type==='card'
+      let _h=`
+        <div class="card"><div class="card-t">预设名称</div><div style="font-size:15px;font-weight:500;color:var(--ink);line-height:1.6;word-break:break-word">${escHtml(b.title||'无标题')}</div></div>
+        <div class="card"><div class="card-t">状态</div><div style="font-size:12px;color:${b.enabled?'var(--green)':'var(--ink-l)'}">${b.enabled?'启用中':'已关闭'}</div></div>
+      `
+      if(_isCard){
+        _h+=`
+        <div class="card"><div class="card-t">类型</div><div style="font-size:12px;color:var(--green)">互动卡片</div></div>
+        <div class="card"><div class="card-t">触发词</div><div style="font-size:12px;color:var(--ink);line-height:1.8;white-space:pre-wrap;word-break:break-word;user-select:text">${escHtml(b.triggers||'未设置')}</div></div>
+        <div class="card"><div class="card-t">AI 填充指令</div><div style="font-size:12px;color:var(--ink);line-height:1.8;white-space:pre-wrap;word-break:break-word;user-select:text">${escHtml(b.instruction||'未设置')}</div></div>
+        <div class="card"><div class="card-t">HTML 模板</div><div style="font-size:11px;color:var(--ink);line-height:1.7;white-space:pre-wrap;word-break:break-word;user-select:text;font-family:monospace">${escHtml(b.template||'未设置')}</div></div>
+        `
+      }else{
+        _h+=`
+        <div class="card"><div class="card-t">注入位置</div><div style="font-size:12px;color:var(--ink)">${b.position==='jailbreak'?'越狱（追加到用户消息末尾）':'系统提示（注入到人设开头）'} · ${_styleScope(b)==='all'?'线上+线下':'仅线下'}</div></div>
+        <div class="card"><div class="card-t">人称视角</div><div style="font-size:12px;color:var(--ink);line-height:1.8;white-space:pre-wrap;word-break:break-word;user-select:text">${escHtml(b.pov||'未设置')}</div></div>
+        <div class="card"><div class="card-t">字数偏好</div><div style="font-size:12px;color:var(--ink);line-height:1.8;white-space:pre-wrap;word-break:break-word;user-select:text">${escHtml(b.wordCount||'未设置')}</div></div>
+        <div class="card"><div class="card-t">文风正文</div><div style="font-size:12px;color:var(--ink);line-height:1.9;white-space:pre-wrap;word-break:break-word;user-select:text">${escHtml(b.content||'暂无内容')}</div></div>
+        <div class="card"><div class="card-t">禁忌项</div><div style="font-size:12px;color:var(--ink);line-height:1.9;white-space:pre-wrap;word-break:break-word;user-select:text">${escHtml(b.forbid||'未设置')}</div></div>
+        `
+      }
+      _h+=`
+        <div class="card"><div class="card-t">绑定角色</div><div style="font-size:12px;color:var(--ink);line-height:1.8;word-break:break-word">${escHtml(mountedChars)}</div></div>
         <div class="btn-main" id="_sbdetail_edit">编辑预设</div>
         <div class="btn-sub" id="_sbdetail_close" style="margin-top:10px">关闭</div>
       `
+      mb.innerHTML=_h
 
       mb.querySelector('#_sbdetail_close').onclick=close
 
@@ -16881,29 +17225,66 @@ body.querySelectorAll('._sbview').forEach(el=>{
       showModal('编辑预设',(mb,close)=>{
         mb.innerHTML=`
           <div class="card"><div class="card-t">预设名称</div><input class="inp" id="_sbt" value="${escHtml(b.title||'')}"></div>
+          <div class="card"><div class="card-t">类型</div>
+            <div style="display:flex;gap:10px;margin-top:6px">
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_sbtype" value="style" ${b.type!=='card'?'checked':''} style="accent-color:var(--rose)">文风 / 越狱</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_sbtype" value="card" ${b.type==='card'?'checked':''} style="accent-color:var(--rose)">互动卡片</label>
+            </div>
+          </div>
+          <div id="_sbstyle" style="${b.type==='card'?'display:none':''}">
           <div class="card"><div class="card-t">注入位置</div>
             <div style="display:flex;gap:10px;margin-top:6px">
               <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_sbpos" value="system" ${b.position!=='jailbreak'?'checked':''} style="accent-color:var(--rose)">系统提示 (System)</label>
               <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_sbpos" value="jailbreak" ${b.position==='jailbreak'?'checked':''} style="accent-color:var(--rose)">越狱 (Jailbreak)</label>
             </div>
-            <div style="font-size:10px;color:var(--ink-l);margin-top:4px;font-style:italic">系统提示 = 注入到开头；越狱 = 追加到用户消息末尾</div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:4px;font-style:italic">系统提示 = 注入到人设开头；越狱 = 追加到用户消息末尾</div>
+          </div>
+          <div class="card"><div class="card-t">生效范围</div>
+            <div style="display:flex;gap:10px;margin-top:6px">
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_sbscope" value="all" ${_styleScope(b)==='all'?'checked':''} style="accent-color:var(--rose)">线上 + 线下</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink);cursor:pointer"><input type="radio" name="_sbscope" value="offline" ${_styleScope(b)==='offline'?'checked':''} style="accent-color:var(--rose)">仅线下剧情</label>
+            </div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:4px;font-style:italic">从酒馆导入的预设默认只在线下生效，避免长篇写作指令打断日常聊天</div>
           </div>
           <div class="card"><div class="card-t">人称视角（可选）</div><input class="inp" id="_sbpov" value="${escHtml(b.pov||'')}" placeholder="例如：第三人称 / 第二人称 / 不填也行"></div>
           <div class="card"><div class="card-t">字数偏好（可选）</div><input class="inp" id="_sbwc" value="${escHtml(b.wordCount||'')}" placeholder="例如：200-500字 / 不填也行"></div>
           <div class="card"><div class="card-t">预设正文（支持 {{char}} {{user}}）</div><textarea class="tarea" id="_sbc" rows="8">${escHtml(b.content||'')}</textarea></div>
           <div class="card"><div class="card-t">禁忌项（可选）</div><textarea class="tarea" id="_sbforbid" rows="3" placeholder="不要写什么...">${escHtml(b.forbid||'')}</textarea></div>
+          </div>
+          <div id="_sbcard" style="${b.type==='card'?'':'display:none'}">
+            <div class="card"><div class="card-t">触发词（逗号分隔）</div><input class="inp" id="_sbtrig" value="${escHtml(b.triggers||'')}" placeholder="如：生病,发烧,难受,不舒服"></div>
+            <div class="card"><div class="card-t">AI 填充指令</div><textarea class="tarea" id="_sbinst" rows="4" placeholder="告诉 AI 如何填充模板中的占位符">${escHtml(b.instruction||'')}</textarea></div>
+            <div class="card"><div class="card-t">HTML 模板</div><textarea class="tarea" id="_sbtpl" rows="6" placeholder="粘贴 HTML 模板，用 [AI填:xxx] 标记占位符">${escHtml(b.template||'')}</textarea></div>
+          </div>
           <div class="card"><div class="card-t">绑定给角色</div><div style="display:flex;flex-direction:column;gap:6px">
   ${getMyChars().map(c=>`<label class="list-item" style="cursor:pointer;padding:10px"><input type="checkbox" class="_sbch" value="${c.id}" ${(c.styleBookIds||[]).includes(b.id)?'checked':''} style="accent-color:var(--rose)"><div style="flex:1;font-size:12px;color:var(--ink)">${escHtml(c.name)}</div></label>`).join('')}
 </div></div>
           <div class="btn-main" id="_sbsave">保存</div>
         `
+        mb.querySelectorAll('input[name="_sbtype"]').forEach(r=>{r.onchange=()=>{
+          const card=r.value==='card'
+          mb.querySelector('#_sbstyle').style.display=card?'none':''
+          mb.querySelector('#_sbcard').style.display=card?'':'none'
+        }})
         mb.querySelector('#_sbsave').onclick=()=>{
+          const _type=mb.querySelector('input[name="_sbtype"]:checked')?.value||'style'
           b.title=mb.querySelector('#_sbt').value.trim()||'无标题'
-          b.position=mb.querySelector('input[name="_sbpos"]:checked')?.value||'system'
-          b.pov=mb.querySelector('#_sbpov').value.trim()
-          b.wordCount=mb.querySelector('#_sbwc').value.trim()
-          b.content=mb.querySelector('#_sbc').value.trim()
-          b.forbid=mb.querySelector('#_sbforbid').value.trim()
+          b.type=_type
+          if(_type==='card'){
+            b.position='card'
+            b.triggers=(mb.querySelector('#_sbtrig').value||'').trim()
+            b.instruction=(mb.querySelector('#_sbinst').value||'').trim()
+            b.template=mb.querySelector('#_sbtpl').value||''
+            b.content='';b.pov='';b.wordCount='';b.forbid=''
+          }else{
+            b.position=mb.querySelector('input[name="_sbpos"]:checked')?.value||'system'
+            b.scope=mb.querySelector('input[name="_sbscope"]:checked')?.value||'all'
+            b.pov=mb.querySelector('#_sbpov').value.trim()
+            b.wordCount=mb.querySelector('#_sbwc').value.trim()
+            b.content=mb.querySelector('#_sbc').value.trim()
+            b.forbid=mb.querySelector('#_sbforbid').value.trim()
+            b.triggers='';b.instruction='';b.template=''
+          }
           // 更新绑定
           charList.forEach(c=>{c.styleBookIds=(c.styleBookIds||[]).filter(id=>id!==b.id)})
           ;[...mb.querySelectorAll('._sbch:checked')].forEach(x=>{
@@ -16925,6 +17306,16 @@ body.querySelectorAll('._sbview').forEach(el=>{
       saveStyleBooks();saveCharList();render('stylebooks')
     }
   })
+
+  body.querySelector('#_addcard').onclick=()=>{
+    styleBooks.push({id:uid(),title:'新互动卡片',type:'card',position:'card',triggers:'',instruction:'',template:'',content:'',enabled:true})
+    saveStyleBooks();render('stylebooks')
+    setTimeout(()=>{
+      const editBtns=document.querySelectorAll('._se')
+      const lastBtn=editBtns[editBtns.length-1]
+      if(lastBtn)lastBtn.click()
+    },50)
+  }
 
   body.querySelector('#_addsb').onclick=()=>{
     styleBooks.push({id:uid(),title:'新文风',pov:'',wordCount:'',content:'',forbid:'',enabled:true})
@@ -17110,8 +17501,10 @@ function mapSysPrompt(placeObj,charObj){
 （※ 强制规则：你没有上帝视角，看不透用户的内心和秘密，只能根据用户表面的言行做出反应。）
 地点设定：地点：${pl?.name||'未知地点'}，描述：${pl?.desc||''}，氛围：${pl?.mood||''}
 `
-  const cBooks=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled)
-  if(cBooks.length)cBooks.forEach(b=>{s+=`\n【世界观·${b.title}】${b.content}`})
+  const cBooks=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card')
+  if(cBooks.length)cBooks.forEach(b=>{s+=`\n【世界观·${b.title}】${_fillCharUser(b.content||'',c)}`})
+  const mapStyles=(c.styleBookIds||[]).map(id=>styleBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card'&&b.position!=='jailbreak')
+  if(mapStyles.length)mapStyles.forEach(b=>{const _t=_stylePromptText(b,c);if(_t)s+=`\n【预设·${b.title||'未命名'}】\n${_t}`})
   s+=`\n\n你必须严格遵守以下规则：
 1. 这是"剧情对话模式"，每次回复都要是可继续互动的一小段剧情推进。
 2. 混合场景描写、角色动作/神态描写、角色台词。
@@ -18079,13 +18472,148 @@ ${me.name||'我'}：${me.identity||'普通人'}${me.personality?`；性格：${m
 
 
 // ===== 约会日历 =====
+let _dateCalYM=null
+function _dateDayDiff(dateStr){
+  const d=new Date(dateStr+'T00:00:00')
+  if(isNaN(d.getTime()))return null
+  const t=now(),t0=new Date(t.getFullYear(),t.getMonth(),t.getDate())
+  return Math.round((d.getTime()-t0.getTime())/86400000)
+}
+function _dateRelLabel(diff){
+  if(diff===0)return '今天'
+  if(diff===1)return '明天'
+  if(diff===2)return '后天'
+  if(diff===-1)return '昨天'
+  return diff>0?(diff+'天后'):((-diff)+'天前')
+}
+function _upcomingDateText(cid){
+  if(!cid)return ''
+  const list=(events||[]).filter(e=>e&&e.charId===cid&&!e.done)
+    .map(e=>({e,d:_dateDayDiff(e.date)}))
+    .filter(o=>o.d!==null&&o.d>=-1&&o.d<=14)
+    .sort((a,b)=>a.d-b.d||(''+(a.e.time||'')).localeCompare(''+(b.e.time||'')))
+    .slice(0,3)
+  if(!list.length)return ''
+  return list.map(o=>{
+    const e=o.e,wd='日一二三四五六'[new Date(e.date+'T00:00:00').getDay()]
+    const bits=[_dateRelLabel(o.d)]
+    bits.push('（'+e.date.slice(5).replace('-','/')+' 周'+wd+'）')
+    if(e.time)bits.push(e.time)
+    if(e.place)bits.push('在'+e.place)
+    if(e.title)bits.push(e.title)
+    let line='- '+bits.join(' ')
+    if(e.desc)line+='。'+e.desc
+    return line
+  }).join('\n')
+}
+function _findEventChar(e){
+  if(!e)return null
+  return charList.find(c=>c.id===e.charId&&!c.isDeleted)||charList.find(c=>!c.isDeleted&&c.name===e.charName)||null
+}
+function _resolveInviteDate(v){
+  const str=(''+(v||'')).trim()
+  if(/^\d{4}-\d{1,2}-\d{1,2}$/.test(str)){
+    const p=str.split('-').map(Number)
+    return p[0]+'-'+pad(p[1])+'-'+pad(p[2])
+  }
+  const t=now()
+  const add=n=>{
+    const x=new Date(t.getFullYear(),t.getMonth(),t.getDate()+n)
+    return x.getFullYear()+'-'+pad(x.getMonth()+1)+'-'+pad(x.getDate())
+  }
+  if(/大后天/.test(str))return add(3)
+  if(/后天/.test(str))return add(2)
+  if(/明天|明日/.test(str))return add(1)
+  if(/今天|今日/.test(str))return add(0)
+  return ''
+}
+function _dateInviteLabel(inv){
+  const d=inv&&(inv.date||_resolveInviteDate(inv.dateRaw))
+  if(!d)return '时间待定'
+  const diff=_dateDayDiff(d)
+  const md=d.slice(5).replace('-','/')
+  const wd='周'+'日一二三四五六'[new Date(d+'T00:00:00').getDay()]
+  return [diff===null?'':_dateRelLabel(diff),md,wd,inv.time].filter(Boolean).join(' · ')
+}
+function _pendingDateInvite(cid){
+  if(!cid)return false
+  const cut=now().getTime()-3*86400000
+  return getMsgs(cid).some(m=>m&&m.dateInvite&&m.dateInvite.status==='pending'&&(m.dateInvite.createdAt||0)>cut)
+}
+function _nudgeReply(delay){
+  setTimeout(()=>{const b=document.getElementById('_creply');if(b)b.click()},delay||600)
+}
+function acceptDateInvite(mi){
+  const arr=getMsgs(activeCharId)
+  const m=arr[mi]
+  if(!m||!m.dateInvite||m.dateInvite.status!=='pending')return
+  const inv=m.dateInvite
+  const c=charList.find(x=>x.id===activeCharId)
+  if(!c)return
+  const d=inv.date||_resolveInviteDate(inv.dateRaw)
+  if(!d){alert('这个邀请的日期没看懂');return}
+  const evt={id:uid(),date:d,time:inv.time||'',title:inv.title||'约会',charId:c.id,charName:c.name,place:inv.place||'',desc:inv.desc||'',fromInvite:true}
+  events.push(evt);saveEvents()
+  inv.status='accepted';inv.eventId=evt.id
+  arr.push({from:'system',text:'你接受了'+c.name+'的邀约：'+(evt.title||'约会')+'（'+d+(evt.time?' '+evt.time:'')+(evt.place?' · '+evt.place:'')+'）',time:ftime(now()),isSystem:true,_dateNotice:true})
+  saveMsgs(activeCharId,arr)
+  addMemoryEvent(c.id,'你答应了'+c.name+'的约会邀请：'+(evt.title||'约会')+'，时间'+d+(evt.time?' '+evt.time:'')+(evt.place?'，地点'+evt.place:''),'约会','online',true)
+  render('chat')
+  if(_dateDayDiff(d)===0){
+    showModal('就是今天',(mb,close)=>{
+      mb.innerHTML=`<div style="text-align:center;padding:8px 0 16px"><div style="font-size:15px;color:var(--ink);font-weight:500">${escHtml(evt.title||'约会')}</div><div style="font-size:11px;color:var(--ink-l);margin-top:6px;line-height:1.9">${escHtml(_dateInviteLabel(inv))}${evt.place?'<br>'+escHtml(evt.place):''}</div></div><div class="btn-main" id="_diGo">现在就去赴约</div><div class="btn-sub" id="_diLater" style="margin-top:8px">先在日历里记着</div>`
+      mb.querySelector('#_diGo').onclick=()=>{close();goOnDate(evt.id)}
+      mb.querySelector('#_diLater').onclick=()=>{close();_nudgeReply(500)}
+    })
+  }else{
+    showToast('已记进约会日历')
+    _nudgeReply(500)
+  }
+}
+function rejectDateInvite(mi){
+  const arr=getMsgs(activeCharId)
+  const m=arr[mi]
+  if(!m||!m.dateInvite||m.dateInvite.status!=='pending')return
+  const inv=m.dateInvite
+  const c=charList.find(x=>x.id===activeCharId)
+  if(!c)return
+  inv.status='rejected'
+  arr.push({from:'system',text:'你婉拒了'+c.name+'的邀约（'+(inv.title||'约会')+'）',time:ftime(now()),isSystem:true,_dateNotice:true})
+  saveMsgs(activeCharId,arr)
+  addMemoryEvent(c.id,'你拒绝了'+c.name+'的邀约：'+(inv.title||'约会')+(inv.place?'（原计划去'+inv.place+'）':''),'约会','online',true)
+  render('chat')
+  _nudgeReply(700)
+}
+function goOnDate(eid,closeFn){
+  const e=(events||[]).find(x=>x.id===eid)
+  if(!e){alert('找不到这个约会');return}
+  if(e.done){alert('这个约会已经赴过了');return}
+  const c=_findEventChar(e)
+  if(!c){alert('这个约会还没指定角色，先编辑选一个');return}
+  const diff=_dateDayDiff(e.date)
+  if(diff>0&&!confirm('这个约会安排在'+_dateRelLabel(diff)+'，现在就去赴约？'))return
+  if(typeof closeFn==='function')closeFn()
+  activeCharId=c.id
+  c.offlineMode=true
+  const arr=getMsgs(c.id)
+  arr.push({from:'system',text:'—— 赴约：'+(e.title||'约会')+(e.time?' · '+e.time:'')+(e.place?' · '+e.place:'')+' ——',time:ftime(now()),isSystem:true,mode:'offline'})
+  saveMsgs(c.id,arr)
+  addMemoryEvent(c.id,'你们按约定见了面：'+(e.title||'约会')+(e.place?'，地点是'+e.place:'')+(e.desc?'。'+e.desc:''),'约会','offline',true)
+  e.done=true;e.doneAt=now().getTime()
+  saveEvents();saveCharList()
+  render('chat')
+  setTimeout(()=>{const b=document.getElementById('_creply');if(b)b.click()},450)
+}
 pages.dates=()=>{
   const p=ce('div','page')
   p.style.background=bgNow()
   p.appendChild(topBar('约会日历','home'))
   const body=ce('div');Object.assign(body.style,{flex:'1',overflowY:'auto',padding:'16px'})
 
-  const today=now(),y=today.getFullYear(),m=today.getMonth()
+  const t=now(),ty=t.getFullYear(),tm=t.getMonth()
+  if(!_dateCalYM)_dateCalYM={y:ty,m:tm}
+  const y=_dateCalYM.y,m=_dateCalYM.m
+  const todayKey=`${ty}-${pad(tm+1)}-${pad(t.getDate())}`
   const firstDay=new Date(y,m,1).getDay(),daysInMonth=new Date(y,m+1,0).getDate()
 
   let cal=`<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:16px">`
@@ -18093,50 +18621,75 @@ pages.dates=()=>{
   for(let i=0;i<firstDay;i++)cal+=`<div></div>`
   for(let d=1;d<=daysInMonth;d++){
     const dateStr=`${y}-${pad(m+1)}-${pad(d)}`
-    const dayEvents=events.filter(e=>e.date===dateStr),isToday=d===today.getDate()
-    cal+=`<div class="_day" data-date="${dateStr}" style="min-height:48px;padding:6px 2px;border-radius:12px;text-align:center;cursor:pointer;background:${isToday?'rgba(232,160,180,.18)':'rgba(255,255,255,.35)'};border:1px solid ${isToday?'rgba(232,160,180,.35)':'rgba(232,160,180,.06)'}"><div style="font-size:12px;color:${isToday?'var(--rose-d)':'var(--ink)'};font-weight:${isToday?'600':'400'}">${d}</div>${dayEvents.length?`<div style="margin-top:4px;font-size:9px;color:var(--rose-d)">${dayEvents.length}约</div>`:''}</div>`
+    const dayEvents=(events||[]).filter(e=>e&&e.date===dateStr)
+    const todoN=dayEvents.filter(e=>!e.done).length
+    const isToday=dateStr===todayKey
+    cal+=`<div class="_day" data-date="${dateStr}" style="min-height:48px;padding:6px 2px;border-radius:12px;text-align:center;cursor:pointer;background:${isToday?'rgba(232,160,180,.18)':'rgba(255,255,255,.35)'};border:1px solid ${isToday?'rgba(232,160,180,.35)':'rgba(232,160,180,.06)'}"><div style="font-size:12px;color:${isToday?'var(--rose-d)':'var(--ink)'};font-weight:${isToday?'600':'400'}">${d}</div>${todoN?`<div style="margin-top:4px;font-size:9px;color:var(--rose-d)">${todoN}约</div>`:(dayEvents.length?'<div style="margin-top:4px;font-size:9px;color:var(--ink-l);opacity:.6">已赴</div>':'')}</div>`
   }
   cal+=`</div>`
 
-  const upcoming=events.slice().sort((a,b)=>{
-    const timeA=`${a.date} ${a.time||'00:00'}`.replace(/\s+/g,' ')
-    const timeB=`${b.date} ${b.time||'00:00'}`.replace(/\s+/g,' ')
-    return timeA.localeCompare(timeB)
-  }).slice(0,20)
+  const all=(events||[]).filter(e=>e&&e.date)
+  const todo=all.filter(e=>!e.done).map(e=>({e,d:_dateDayDiff(e.date)})).filter(o=>o.d!==null)
+    .sort((a,b)=>a.d-b.d||(''+(a.e.time||'')).localeCompare(''+(b.e.time||'')))
+  const doneList=all.filter(e=>e.done).sort((a,b)=>(b.doneAt||0)-(a.doneAt||0)).slice(0,6)
+
+  const cardHTML=(e,dim)=>{
+    const diff=_dateDayDiff(e.date)
+    const missed=!e.done&&diff!==null&&diff<0
+    const rel=diff===null?'':_dateRelLabel(diff)
+    const relColor=e.done?'var(--ink-l)':(diff===0?'#fff':'var(--rose-d)')
+    const relBg=e.done?'rgba(0,0,0,.05)':(diff===0?'rgba(232,160,180,.85)':'rgba(232,160,180,.14)')
+    return `<div class="card" style="opacity:${dim?0.55:1}"><div style="display:flex;gap:12px;align-items:flex-start">
+      <div style="min-width:62px;text-align:center"><div style="font-size:12px;color:var(--rose-d);font-weight:500">${escHtml(e.date.slice(5).replace('-','/'))}</div><div style="font-size:11px;color:var(--ink-l);margin-top:3px">${escHtml(e.time||'--:--')}</div>${rel?`<div style="margin-top:5px;font-size:9px;padding:1px 6px;border-radius:8px;display:inline-block;background:${relBg};color:${relColor}">${e.done?'已赴约':(missed?'已错过':rel)}</div>`:''}</div>
+      <div style="flex:1"><div style="font-size:13px;color:var(--ink);font-weight:500">${escHtml(e.title||'约会')}</div>${e.desc?`<div style="font-size:11px;color:var(--ink-l);margin-top:3px;line-height:1.7">${escHtml(e.desc)}</div>`:''}<div style="font-size:10px;color:var(--rose-d);margin-top:5px">${escHtml(e.charName||'未指定角色')} · ${escHtml(e.place||'未指定地点')}</div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:8px">${e.done?'':`<div class="_ego" data-eid="${e.id}" style="font-size:10px;padding:5px 14px;border-radius:12px;background:linear-gradient(135deg,var(--rose-l),var(--rose));color:#fff;cursor:pointer">赴约</div>`}<div class="_edel" data-eid="${e.id}" style="font-size:10px;color:#c47a7a;cursor:pointer;opacity:.75">删除</div></div>
+      </div></div></div>`
+  }
 
   body.innerHTML=`
-    <div style="text-align:center;margin-bottom:14px"><div style="font-size:16px;color:var(--ink);letter-spacing:3px">${y}年${m+1}月</div><div style="font-size:11px;color:var(--ink-l);margin-top:4px;font-style:italic">把见面和约定都写进日历里</div></div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:14px">
+      <div id="_dprev" style="cursor:pointer;font-size:18px;color:var(--rose-d);padding:2px 8px">‹</div>
+      <div style="text-align:center;min-width:120px"><div style="font-size:16px;color:var(--ink);letter-spacing:3px">${y}年${m+1}月</div><div style="font-size:11px;color:var(--ink-l);margin-top:4px;font-style:italic">把见面和约定都写进日历里</div></div>
+      <div id="_dnext" style="cursor:pointer;font-size:18px;color:var(--rose-d);padding:2px 8px">›</div>
+    </div>
+    ${(y!==ty||m!==tm)?`<div style="text-align:center;margin-bottom:10px"><span id="_dback" style="font-size:10px;color:var(--rose-d);cursor:pointer;border-bottom:1px dashed rgba(232,160,180,.5)">回到本月</span></div>`:''}
     ${cal}
     <div style="font-size:11px;color:var(--rose-d);font-weight:500;letter-spacing:2px;padding:0 4px 10px">即将到来的约会</div>
-    <div id="_evtlist"></div>
-    <div class="list-item" id="_addevt" style="border:1px dashed rgba(232,160,180,.25);justify-content:center;gap:8px;opacity:.7">${I.plus('var(--rose-l)',18)}<span style="font-size:13px;color:var(--ink-l)">添加约会</span></div>
+    <div id="_evtlist">${todo.length?todo.map(o=>cardHTML(o.e,false)).join(''):'<div class="card" style="text-align:center;font-size:12px;color:var(--ink-l);font-style:italic">还没有安排约会</div>'}</div>
+    ${doneList.length?`<div style="font-size:11px;color:var(--ink-l);font-weight:500;letter-spacing:2px;padding:14px 4px 10px">已经赴过的约</div><div id="_evtdone">${doneList.map(e=>cardHTML(e,true)).join('')}</div>`:''}
+    <div class="list-item" id="_addevt" style="border:1px dashed rgba(232,160,180,.25);justify-content:center;gap:8px;opacity:.7;margin-top:10px">${I.plus('var(--rose-l)',18)}<span style="font-size:13px;color:var(--ink-l)">添加约会</span></div>
   `
-
-  const evtList=body.querySelector('#_evtlist')
-  if(!upcoming.length){
-    evtList.innerHTML=`<div class="card" style="text-align:center;font-size:12px;color:var(--ink-l);font-style:italic">还没有安排约会～</div>`
-  }else{
-    evtList.innerHTML=upcoming.map((e,i)=>`
-      <div class="card"><div style="display:flex;gap:12px;align-items:flex-start">
-        <div style="min-width:70px;text-align:center"><div style="font-size:12px;color:var(--rose-d);font-weight:500">${escHtml(e.date)}</div><div style="font-size:11px;color:var(--ink-l);margin-top:3px">${escHtml(e.time||'--:--')}</div></div>
-        <div style="flex:1"><div style="font-size:13px;color:var(--ink);font-weight:500">${escHtml(e.title||'约会')}</div><div style="font-size:11px;color:var(--ink-l);margin-top:3px;line-height:1.7">${escHtml(e.desc||'')}</div><div style="font-size:10px;color:var(--rose-d);margin-top:5px">${escHtml(e.charName||'未指定角色')} · ${escHtml(e.place||'未指定地点')}</div></div>
-        <div class="_edel" data-i="${events.indexOf(e)}" style="cursor:pointer;padding:4px">${I.del('#caa',14)}</div>
-      </div></div>
-    `).join('')
-  }
 
   p.appendChild(body);app.appendChild(p)
 
-  body.querySelectorAll('._edel').forEach(el=>{el.onclick=()=>{if(!confirm('删除这个约会？'))return;events.splice(+el.dataset.i,1);saveEvents();render('dates')}})
+  const shift=(dm)=>{
+    let nm=m+dm,ny=y+Math.floor(nm/12)
+    nm=((nm%12)+12)%12
+    _dateCalYM={y:ny,m:nm}
+    render('dates')
+  }
+  body.querySelector('#_dprev').onclick=()=>shift(-1)
+  body.querySelector('#_dnext').onclick=()=>shift(1)
+  const backBtn=body.querySelector('#_dback')
+  if(backBtn)backBtn.onclick=()=>{_dateCalYM={y:ty,m:tm};render('dates')}
+
+  body.querySelectorAll('._ego').forEach(el=>{el.onclick=()=>goOnDate(el.dataset.eid)})
+  body.querySelectorAll('._edel').forEach(el=>{el.onclick=()=>{
+    if(!confirm('删除这个约会？'))return
+    const i=events.findIndex(x=>x.id===el.dataset.eid)
+    if(i>=0)events.splice(i,1)
+    saveEvents();render('dates')
+  }})
   body.querySelectorAll('._day').forEach(el=>{
     el.onclick=()=>{
       const dateStr=el.dataset.date
       showModal(dateStr+' 的安排',(mb,close)=>{
-        const dayEvents=events.filter(e=>e.date===dateStr)
+        const dayEvents=(events||[]).filter(e=>e&&e.date===dateStr)
         mb.innerHTML=`
-          ${dayEvents.length?dayEvents.map(e=>`<div class="card"><div style="font-size:13px;color:var(--ink);font-weight:500">${escHtml(e.title||'约会')}</div><div style="font-size:11px;color:var(--ink-l);margin-top:4px;line-height:1.8">${escHtml(e.time||'')} · ${escHtml(e.charName||'')} · ${escHtml(e.place||'')}</div><div style="font-size:11px;color:var(--ink-l);margin-top:6px;line-height:1.8">${escHtml(e.desc||'')}</div></div>`).join(''):`<div class="card" style="text-align:center;font-size:12px;color:var(--ink-l);font-style:italic">这一天还没有安排</div>`}
+          ${dayEvents.length?dayEvents.map(e=>`<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px"><div><div style="font-size:13px;color:var(--ink);font-weight:500">${escHtml(e.title||'约会')}</div><div style="font-size:11px;color:var(--ink-l);margin-top:4px;line-height:1.8">${escHtml(e.time||'')} · ${escHtml(e.charName||'')} · ${escHtml(e.place||'')}</div>${e.desc?`<div style="font-size:11px;color:var(--ink-l);margin-top:6px;line-height:1.8">${escHtml(e.desc)}</div>`:''}</div>${e.done?'<div style="font-size:10px;color:var(--ink-l)">已赴约</div>':`<div class="_dmgo" data-eid="${e.id}" style="font-size:10px;padding:5px 12px;border-radius:12px;background:linear-gradient(135deg,var(--rose-l),var(--rose));color:#fff;cursor:pointer;white-space:nowrap">赴约</div>`}</div></div>`).join(''):`<div class="card" style="text-align:center;font-size:12px;color:var(--ink-l);font-style:italic">这一天还没有安排</div>`}
           <div class="btn-main" id="_quickadd">新增安排</div>
         `
+        mb.querySelectorAll('._dmgo').forEach(b=>{b.onclick=()=>goOnDate(b.dataset.eid,close)})
         mb.querySelector('#_quickadd').onclick=()=>{close();openEventEditor(dateStr)}
       })
     }
@@ -19317,6 +19870,12 @@ ${userHint?'用户要求：'+userHint:'自由发挥'}
         <div style="max-width:78%;padding:11px 15px;border-radius:${isU?'18px 4px 18px 18px':'4px 18px 18px 18px'};background:${isU?(n?'linear-gradient(135deg,rgba(200,168,208,.25),rgba(180,148,198,.2))':'linear-gradient(135deg,rgba(245,213,222,.6),rgba(240,200,212,.5))'):(n?'rgba(255,255,255,.08)':'rgba(255,255,255,.85)')};font-size:12px;color:${tc};line-height:1.8;letter-spacing:.3px;word-break:break-word;white-space:pre-wrap;${isU?'':`box-shadow:0 1px 6px rgba(0,0,0,.04);border:1px solid ${n?'rgba(255,255,255,.04)':'rgba(232,160,180,.06)'}`}">${escHtml(m.text)}</div>
       `
       ml.appendChild(bub)
+      if(!isU&&m.tools&&m.tools.length){
+        const chip=ce('div')
+        chip.style.cssText='margin:-4px 0 10px 38px;font-size:9px;color:#8a9a6e;letter-spacing:.5px;line-height:1.7'
+        chip.innerHTML=m.tools.map(t=>'· '+escHtml(t)).join('<br>')
+        ml.appendChild(chip)
+      }
     })
   }
 
@@ -19449,6 +20008,29 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
 例如用户说「帮我去设置」→ 你回复「好嘞~ [跳转:settings]」
 例如用户说「打开美化」→「这就带你去~ [跳转:beauty]」
 
+══════ 动手能力：工具调用 ══════
+你可以直接改小手机里的数据（角色人设、世界书），不用让用户自己点。
+需要动手时，在回复里单独占一行输出：
+[工具|{"name":"工具名","args":{...}}]
+一次最多 3 行。系统会执行并把结果回给你，你再用人话告诉用户结果，不要复述 JSON。
+用户没说清的字段不要改；不确定就先 list_* / get_* 查一下，查不到就老实说没有，绝对不要编。
+
+工具清单：
+- list_chars {} → 列出所有角色（名字、关系、好感）
+- get_char {"name":"苏白"} → 读某个角色的完整设定
+- update_char {"name":"苏白","personality":"…","relation":"…","mood":"…","status":"…","quote":"…"} → 改角色设定，只传要改的字段
+- create_char {"name":"…","personality":"…","relation":"…","mood":"…","status":"…","quote":"…","greeting":"…","worldbook":"…"} → 新建角色，greeting 是加好友后对方的第一句话，worldbook 会建成 TA 的专属世界书并自动挂载
+- list_worldbooks {} → 列出所有世界书
+- get_worldbook {"title":"…"} → 读某本世界书正文
+- create_worldbook {"title":"…","content":"…","triggers":"关键词1,关键词2","attachTo":"角色名"} → 新建世界书，triggers 留空表示常驻注入，attachTo 可顺便挂到角色身上
+- update_worldbook {"title":"…","newTitle":"…","content":"…","triggers":"…","enabled":true} → 改世界书
+- attach_worldbook {"title":"…","char":"角色名"} / detach_worldbook {"title":"…","char":"角色名"} → 挂载或卸下
+
+例：用户说「给苏白加个青梅竹马设定」→
+[工具|{"name":"get_char","args":{"name":"苏白"}}]
+（拿到结果后再 update_char 补上，或者 create_worldbook 建一本专属世界书挂上去）
+用户只丢一句人设让你捏人 → 直接 create_char，别反问一堆。
+
 ══════ 回答规则 ══════
 - 简洁可爱，3-6句话以内
 - 不确定就说「这个花枝不太确定呢，你点进去看看~」，不要编！
@@ -19456,6 +20038,141 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
 - 用户吐槽bug要共情，不要装没事
 - 不要用markdown（不要**加粗**和#标题），纯文本就好
 - 语气词自然地用，但不要每句都堆`
+
+  function _asFindChar(name){
+    const key=(''+(name||'')).trim()
+    if(!key) return null
+    const live=charList.filter(c=>!c.isDeleted)
+    return live.find(c=>c.name===key)||live.find(c=>(c.name||'').includes(key))||null
+  }
+  function _asFindWB(title){
+    const key=(''+(title||'')).trim()
+    if(!key) return null
+    return worldBooks.find(b=>b.title===key)||worldBooks.find(b=>(b.title||'').includes(key))||null
+  }
+  function _asWBLink(a,on){
+    a=a||{}
+    const b=_asFindWB(a.title),c=_asFindChar(a.char)
+    if(!b) return {err:`没有找到世界书「${a.title||''}」`}
+    if(!c) return {err:`没有找到角色「${a.char||''}」`}
+    c.worldBookIds=c.worldBookIds||[]
+    const has=c.worldBookIds.includes(b.id)
+    if(on===has) return {text:`${c.name}${on?'本来就挂着':'本来就没挂'}《${b.title}》`}
+    if(on)c.worldBookIds.push(b.id)
+    else c.worldBookIds=c.worldBookIds.filter(x=>x!==b.id)
+    saveCharList()
+    return {text:`已${on?'给':'从'}${c.name}${on?'挂上':'卸下'}《${b.title}》`,chip:`已${on?'挂载':'卸下'}《${b.title}》`}
+  }
+  const _asTools={
+    list_chars(){
+      const rows=charList.filter(c=>!c.isDeleted)
+      if(!rows.length)return {text:'（还没有角色）'}
+      return {text:rows.map(c=>`- ${c.name}｜${c.relation||'无关系'}｜好感${c.affection||0}｜${c.status||'无状态'}`).join('\n')}
+    },
+    get_char(a){
+      const c=_asFindChar(a&&a.name)
+      if(!c)return {err:`没有找到角色「${a&&a.name||''}」，先用 list_chars 看看`}
+      const wbs=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(Boolean).map(b=>b.title).join('、')||'无'
+      return {text:[`名字：${c.name}`,`关系：${c.relation||'无'}`,`心情：${c.mood||'无'}`,`状态：${c.status||'无'}`,`好感：${c.affection||0}`,`口头禅：${c.quote||'无'}`,`性格：${c.personality||'无'}`,`挂载世界书：${wbs}`].join('\n')}
+    },
+    update_char(a){
+      a=a||{}
+      const c=_asFindChar(a.name)
+      if(!c)return {err:`没有找到角色「${a.name||''}」，先用 list_chars 看看`}
+      const fields=[['personality','性格'],['relation','关系'],['mood','心情'],['status','状态'],['quote','口头禅'],['patSuffix','拍一拍']]
+      const changed=[]
+      const newName=(''+(a.name||'')).trim()
+      if(typeof a.newName==='string'&&a.newName.trim()&&a.newName.trim()!==c.name){
+        if(charList.some(x=>x!==c&&!x.isDeleted&&x.name===a.newName.trim()))return {err:`已经有同名角色「${a.newName.trim()}」`}
+        c.name=a.newName.trim();changed.push('名字')
+      }
+      fields.forEach(([k,label])=>{
+        if(typeof a[k]!=='string'||!a[k].trim())return
+        if(c[k]!==a[k].trim()){c[k]=a[k].trim();changed.push(label)}
+      })
+      if(a.affection!=null&&!isNaN(+a.affection)){c.affection=Math.max(0,Math.min(100,Math.round(+a.affection)));changed.push('好感')}
+      if(!changed.length)return {err:'这次没有内容需要改，字段都是空的或者和原来一样'}
+      saveCharList()
+      return {text:`已更新 ${c.name}：${changed.join('、')}`,chip:`已更新「${c.name}」的${changed.join('、')}`}
+    },
+    create_char(a){
+      a=a||{}
+      const name=(''+(a.name||'')).trim()
+      if(!name)return {err:'create_char 需要 name'}
+      if(charList.some(c=>!c.isDeleted&&c.name===name))return {err:`角色「${name}」已经存在了`}
+      const nc={id:uid(),name,personality:(''+(a.personality||'')).trim(),relation:(''+(a.relation||'')).trim()||'初识',mood:(''+(a.mood||'')).trim()||'平静',status:(''+(a.status||'')).trim(),affection:a.affection!=null?Math.max(0,Math.min(100,Math.round(+a.affection)||0)):25,quote:(''+(a.quote||'')).trim(),firstMsg:(''+(a.greeting||'')).trim(),avatar:'',worldBookIds:[],bindPersonaId:activePersonaId,wechatId:genWcId(),createTime:new Date().toISOString()}
+      charList.push(nc)
+      if(nc.firstMsg)saveMsgs(nc.id,[{from:'c',text:nc.firstMsg,time:ftime(now())}])
+      const wbText=(''+(a.worldbook||'')).trim()
+      let chip=`已创建角色「${name}」`
+      if(wbText){
+        const wb={id:uid(),title:name+'的专属设定',content:wbText,triggers:'',enabled:true,fromCharId:nc.id}
+        worldBooks.push(wb);nc.worldBookIds.push(wb.id)
+        chip+='，并建好专属世界书'
+      }
+      saveCharList();saveWorldBooks();refreshPlaceUnlocks()
+      return {text:`已创建角色 ${name}（关系：${nc.relation}），去消息列表就能找到 TA`+(wbText?'，专属世界书已自动挂载':''),chip}
+    },
+    list_worldbooks(){
+      if(!worldBooks.length)return {text:'（还没有世界书）'}
+      return {text:worldBooks.map(b=>{const owners=charList.filter(c=>!c.isDeleted&&(c.worldBookIds||[]).includes(b.id)).map(c=>c.name);return `- 《${b.title||'无标题'}》｜触发词：${b.triggers||'常驻'}｜${b.enabled===false?'已停用':'启用中'}｜挂载：${owners.join('、')||'无'}`}).join('\n')}
+    },
+    get_worldbook(a){
+      const b=_asFindWB(a&&a.title)
+      if(!b)return {err:`没有找到世界书「${a&&a.title||''}」，先用 list_worldbooks 看看`}
+      return {text:`《${b.title}》\n触发词：${b.triggers||'常驻'}\n状态：${b.enabled===false?'停用':'启用'}\n正文：\n${b.content||''}`}
+    },
+    create_worldbook(a){
+      a=a||{}
+      const title=(''+(a.title||'')).trim(),content=(''+(a.content||'')).trim()
+      if(!title||!content)return {err:'create_worldbook 需要 title 和 content'}
+      if(_asFindWB(title))return {err:`已经有同名世界书「${title}」`}
+      const wb={id:uid(),title,content,triggers:(''+(a.triggers||'')).trim(),enabled:true}
+      worldBooks.push(wb)
+      const owner=_asFindChar(a.attachTo)
+      if(owner){owner.worldBookIds=owner.worldBookIds||[];if(!owner.worldBookIds.includes(wb.id))owner.worldBookIds.push(wb.id);saveCharList()}
+      saveWorldBooks()
+      return {text:`已创建世界书《${title}》${owner?`，挂到 ${owner.name} 身上`:'，触发词：'+(wb.triggers||'常驻')}`,chip:`已创建世界书《${title}》`+(owner?`，挂给${owner.name}`:'')}
+    },
+    update_worldbook(a){
+      a=a||{}
+      const b=_asFindWB(a.title)
+      if(!b)return {err:`没有找到世界书「${a.title||''}」，先用 list_worldbooks 看看`}
+      const changed=[]
+      if(typeof a.newTitle==='string'&&a.newTitle.trim()&&a.newTitle.trim()!==b.title){b.title=a.newTitle.trim();changed.push('标题')}
+      if(typeof a.content==='string'&&a.content.trim()&&a.content.trim()!==b.content){b.content=a.content.trim();changed.push('正文')}
+      if(typeof a.triggers==='string'&&a.triggers.trim()!==(b.triggers||'')){b.triggers=a.triggers.trim();changed.push('触发词')}
+      if(typeof a.enabled==='boolean'&&a.enabled!==(b.enabled!==false)){b.enabled=a.enabled;changed.push(a.enabled?'启用':'停用')}
+      if(!changed.length)return {err:'世界书没有变化，内容都一样'}
+      saveWorldBooks()
+      return {text:`已更新《${b.title}》：${changed.join('、')}`,chip:`已更新世界书《${b.title}》`}
+    },
+    attach_worldbook(a){return _asWBLink(a,true)},
+    detach_worldbook(a){return _asWBLink(a,false)}
+  }
+  function _asRunTool(name,args){
+    try{
+      const fn=_asTools[name]
+      if(!fn)return {ok:false,msg:'没有这个工具：'+name}
+      const r=fn(args||{})||{}
+      if(r.err)return {ok:false,msg:r.err}
+      return {ok:true,msg:r.text||'',chip:r.chip||''}
+    }catch(e){return {ok:false,msg:String(e&&e.message||e)}}
+  }
+  function _asParseTools(text){
+    const calls=[],keep=[]
+    const raw=''+(text||'')
+    raw.split('\n').forEach(line=>{
+      const hit=line.match(/^\s*[\[【]\s*工具\s*[|｜]\s*(\{[\s\S]*\})\s*[\]】]\s*$/)
+      if(!hit){keep.push(line);return}
+      try{
+        const o=JSON.parse(hit[1])
+        if(o&&o.name)calls.push({name:String(o.name),args:o.args||{}})
+        else keep.push(line)
+      }catch(e){keep.push(line)}
+    })
+    return {clean:keep.join('\n').trim(),calls}
+  }
 
   async function _asSend(text){
     if(!text.trim())return
@@ -19488,13 +20205,28 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
     ml.scrollTop=ml.scrollHeight
 
     try{
-      const hist=asMsgs.slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text}))
-      const r=await callLLM({system:_asSysPrompt,messages:hist,maxTokens:2000,temperature:0.7})
-      if(r.ok){
-        asMsgs.push({from:'a',text:r.text})
-      }else{
-        asMsgs.push({from:'a',text:'呜…出错了啦 '+r.text})
+      let hist=asMsgs.slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text}))
+      let finalText='',chips=[],rounds=0
+      while(rounds<3){
+        rounds++
+        const r=await callLLM({system:_asSysPrompt,messages:hist,maxTokens:2000,temperature:0.7})
+        if(!r.ok){finalText='呜…出错了啦 '+r.text;break}
+        const parsed=_asParseTools(r.text)
+        if(!parsed.calls.length){finalText=parsed.clean;break}
+        const notes=[]
+        parsed.calls.slice(0,3).forEach(call=>{
+          const res=_asRunTool(call.name,call.args)
+          notes.push((res.ok?'成功：':'失败：')+call.name+' → '+res.msg)
+          if(res.ok&&res.chip)chips.push(res.chip)
+        })
+        if(rounds>=3){finalText=parsed.clean||('弄好了：'+chips.join('；'));break}
+        hist=hist.concat([
+          {role:'assistant',content:r.text},
+          {role:'user',content:'【工具执行结果】\n'+notes.join('\n')+'\n已经执行完了，用一两句话自然地把结果告诉用户，不要再输出工具标签。'}
+        ])
       }
+      if(!finalText)finalText=chips.length?('弄好了：'+chips.join('；')):'……嗯，弄好了'
+      asMsgs.push({from:'a',text:finalText,tools:chips})
     }catch(e){
       console.error('[花枝报错]',e)
       asMsgs.push({from:'a',text:'哎呀断线了…花枝连不上了 '+String(e.message||e).slice(0,200)})
@@ -19654,7 +20386,7 @@ pages.settings=()=>{
 <div class="card-t">自动功能开关</div>
 <div style="font-size:11px;color:var(--ink-l);line-height:1.8;margin-bottom:10px">控制聊天时是否自动调用生图和语音API（手动点击按钮触发的不受影响）</div>
 <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 0;border-bottom:1px solid rgba(232,160,180,.08)">
-    <input type="checkbox" id="_sw_autoimg" ${store.set('autoImageEnabled',false),''} style="accent-color:var(--rose);width:18px;height:18px">
+    <input type="checkbox" id="_sw_autoimg" ${store.get('autoImageEnabled',false)?'checked':''} style="accent-color:var(--rose);width:18px;height:18px">
 
     <div style="flex:1">
       <div style="font-size:13px;color:var(--ink)">自动生图</div>
@@ -19678,6 +20410,13 @@ pages.settings=()=>{
           [授权后台通知]
         </span>
       </div>
+    </div>
+  </label>
+  <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 0;border-top:1px solid rgba(232,160,180,.08)">
+    <input type="checkbox" id="_sw_automoment" ${store.get('autoMomentEnabled',true)?'checked':''} style="accent-color:var(--rose);width:18px;height:18px">
+    <div style="flex:1">
+      <div style="font-size:13px;color:var(--ink)">角色自动发朋友圈</div>
+      <div style="font-size:10px;color:var(--ink-l);margin-top:2px">角色按各自的节奏发动态（约 1-2 天一条），全天最多 4 条</div>
     </div>
   </label>
 
@@ -19780,6 +20519,7 @@ pages.settings=()=>{
   if($('#_sw_autoimg'))$('#_sw_autoimg').onchange=function(){store.set('autoImageEnabled',this.checked)}
 if($('#_sw_autovoice'))$('#_sw_autovoice').onchange=function(){store.set('autoVoiceEnabled',this.checked)}
 if($('#_sw_autobgmsg'))$('#_sw_autobgmsg').onchange=function(){store.set('autoBgMsgEnabled',this.checked)}
+if($('#_sw_automoment'))$('#_sw_automoment').onchange=function(){store.set('autoMomentEnabled',this.checked)}
 if($('#_sw_stream'))$('#_sw_stream').onchange=function(){store.set('streamDisplay',this.checked)}
 body.querySelectorAll('._povopt').forEach(el=>{el.onclick=()=>{store.set('callPov',el.dataset.v);body.querySelectorAll('._povopt').forEach(e2=>{e2.style.background='rgba(255,255,255,.55)';e2.style.border='1px solid transparent'});el.style.background='rgba(245,213,222,.45)';el.style.border='1.5px solid var(--rose)'}})
 
@@ -25802,7 +26542,7 @@ function collectNotifications(){
 
   // 3. 论坛：用户发的帖子有未读评论
   loadForumPosts && loadForumPosts()
-  const posts = (typeof forumPosts !== 'undefined' ? forumPosts : []) || []
+  const posts = ((typeof forumPosts !== 'undefined' ? forumPosts : []) || []).filter(p => typeof forumPostVisible === 'undefined' || forumPostVisible(p))
   for(const p of posts){
     if(p.authorType !== 'user') continue
     const unread = (p.comments||[]).filter(c=>c.fromType!=='user' && !c._readByUser)
@@ -26078,7 +26818,7 @@ ${c.personality||'无'}
 
         // 收集完整人设 + 全部世界书内容
         const _src = [`【${c.name}的完整人设】\n${c.personality||'无'}`]
-        const _cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled)
+        const _cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card')
         _cBooks.forEach(b=>_src.push(`【世界书·${b.title||'设定'}】\n${b.content}`))
 
         // 已有角色名单，防重复
@@ -27893,10 +28633,10 @@ async function genPhoneContent(charId){
   }).filter(t => t && !t.endsWith('：')).join('\n');
 
   // 🌟 读取角色绑定的世界书全部内容
-  const cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled);
+  const cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card');
   let worldBookText = '';
   if(cBooks.length){
-    worldBookText = '【绑定的世界书背景与关系网设定】：\n' + cBooks.map(b=>`【${b.title||'设定'}】\n${b.content}`).join('\n\n');
+    worldBookText = '【绑定的世界书背景与关系网设定】：\n' + cBooks.map(b=>`【${b.title||'设定'}】\n${_fillCharUser(b.content||'',c)}`).join('\n\n');
   }
 
   const _snoopMemFull = getMemoryPromptText(charId) || ''
@@ -28290,10 +29030,10 @@ pages.snoopphone=()=>{
     const mem = getMemoryPromptText(charId);
 
     // 🌟 读取角色绑定的世界书
-    const cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled);
+    const cBooks = (c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card');
     let worldBookText = '';
     if(cBooks.length){
-      worldBookText = '【世界观背景与人物关系网设定（极其重要，严格遵守）】：\n' + cBooks.map(b=>`【${b.title||'设定'}】\n${b.content}`).join('\n\n');
+      worldBookText = '【世界观背景与人物关系网设定（极其重要，严格遵守）】：\n' + cBooks.map(b=>`【${b.title||'设定'}】\n${_fillCharUser(b.content||'',c)}`).join('\n\n');
     }
 
     // 只有在人设或世界书中明确提到了其他角色时，才视作认识，严禁随意抓取无辜角色
@@ -29040,7 +29780,7 @@ function saveForumPosts(){
     // 优先保留：置顶帖 + 用户自己发的帖 + 收藏的帖
     const keep = forumPosts.filter(p => p.pinned || p.authorType==='user' || forumFavs.includes(p.id))
     const rest = forumPosts.filter(p => !(p.pinned || p.authorType==='user' || forumFavs.includes(p.id)))
-    rest.sort((a,b) => (b.createdAt||0) - (a.createdAt||0))
+    rest.sort((a,b) => (b.timestamp||0) - (a.timestamp||0))
     forumPosts = keep.concat(rest.slice(0, Math.max(0, 200 - keep.length)))
   }
   store.set('forumPosts', forumPosts)
@@ -29054,6 +29794,7 @@ let forumFavs = store.get('forumFavs', [])
 function saveForumFavs(){ store.set('forumFavs', forumFavs) }
 
 let forumState = store.get('forumState', { boardId:'all' })
+let _forumDetailRefresh = null
 function saveForumState(){ store.set('forumState', forumState) }
 
 function ensureForumNpcUsers(){
@@ -29156,6 +29897,26 @@ function getForumCharCorePrompt(charId){
   const c = charList.find(x=>x.id===charId)
   if(!c) return ''
 
+  let _books = ''
+  try{
+    _books = (c.worldBookIds||[])
+      .map(id => worldBooks.find(b=>b.id===id))
+      .filter(b => b && b.enabled && b.type !== 'card')
+      .map(b => b.content).join('\n').slice(0, 1200)
+  }catch(e){}
+  let _mem = ''
+  try{ _mem = getMemoryPromptText(c.id) || '' }catch(e){}
+  let _recent = ''
+  try{
+    _recent = getMsgs(c.id).slice(-12).map(m =>
+      `${m.from==='u'?(P().name||'用户'):c.name}：${(m.text||'').replace(/\[.*?\]/g,'').slice(0,60)}`
+    ).join('\n')
+  }catch(e){}
+
+  const _nd = new Date()
+  const _hh = _nd.getHours()
+  const _slot = _hh < 5 ? '凌晨' : _hh < 9 ? '清晨' : _hh < 12 ? '上午' : _hh < 14 ? '中午' : _hh < 18 ? '下午' : _hh < 22 ? '晚上' : '深夜'
+
   return `你就是「${c.name}」本人，现在要去论坛发帖。
 
 【你的完整人设】
@@ -29165,17 +29926,22 @@ ${c.personality || '未设定'}
 ${c.relation || '普通'}
 
 【你当前状态】
+现在时间：${_nd.getMonth()+1}月${_nd.getDate()}日 ${String(_hh).padStart(2,'0')}:${String(_nd.getMinutes()).padStart(2,'0')}（${_slot}）
 心情：${c.mood || '平静'}
 状态：${c.status || '在线'}
 口吻参考：${c.quote || '自然发挥'}
+${c.storyTimeline ? `当前剧情时间：${c.storyTimeline}` : ''}
 
+${_books ? `【世界观与关系网】\n${_books}\n` : ''}
+${_mem ? `【你的记忆】\n${_mem}\n` : ''}
+${_recent ? `【你和${P().name||'用户'}最近的聊天】\n${_recent}\n` : ''}
 【发帖要求】
 1. 你是在论坛发帖，不是在私聊
-2. 发帖内容必须符合你的性格、关系、情绪和说话方式
+2. 发帖内容必须符合你的性格、关系、情绪和说话方式，并和最近发生的事对得上
 3. 可以像真人一样吐槽、分析、树洞、发疯、冷嘲热讽，但必须像你本人
-4. 不要emoji
-5. 不要AI腔
-6. 不要脱离人设`
+4. 帖子大多在说你自己的生活（工作、训练、行程、烦心事、看到的东西），不要每条都围绕${P().name||'用户'}
+5. 不要emoji，不要标题党模板腔，不要总结式结尾
+6. 不要AI腔，不要脱离人设`
 }
 
 function calcForumHotScore(post){
@@ -29188,22 +29954,33 @@ function calcForumHotScore(post){
   return Math.round((commentScore + likeScore + repostScore + favScore + viewScore) / Math.sqrt(ageHours))
 }
 
-function refreshForumHotData(){
+function refreshForumHotData(persist){
   forumPosts.forEach(p=>{
     p.hotScore = calcForumHotScore(p)
     p.isHot = p.hotScore >= 18
   })
-  saveForumPosts()
+  if(persist) saveForumPosts()
+}
+
+// 论坛是公开社区，但马甲之间要隔离：别人的马甲发的帖、别人马甲的角色，在当前马甲下不可见
+function forumPostVisible(p){
+  if(!p) return false
+  if(p.authorType === 'user') return !p.authorId || p.authorId === activePersonaId
+  if(p.authorType === 'char'){
+    const c = charList.find(x=>x.id===p.authorId)
+    return !c || c.bindPersonaId === activePersonaId
+  }
+  return true
 }
 
 function getForumHotPosts(limit=8){
   refreshForumHotData()
-  return [...forumPosts].sort((a,b)=>(b.hotScore||0)-(a.hotScore||0)).slice(0, limit)
+  return [...forumPosts].filter(forumPostVisible).sort((a,b)=>(b.hotScore||0)-(a.hotScore||0)).slice(0, limit)
 }
 
 function getForumPostsByBoard(boardId){
   refreshForumHotData()
-  let arr = [...forumPosts]
+  let arr = [...forumPosts].filter(forumPostVisible)
   if(boardId && boardId !== 'all'){
     if(boardId === 'hot') arr = arr.filter(p=>p.isHot)
     else arr = arr.filter(p=>p.boardId === boardId)
@@ -29214,6 +29991,14 @@ function getForumPostsByBoard(boardId){
 function forumMakeSummary(text){
   if(!text) return ''
   return text.replace(/\n+/g,' ').slice(0, 80)
+}
+
+function stripForumEmoji(s){
+  if(!s) return ''
+  return String(s)
+    .replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u2600-\u27BF\uFE0F\u200D]/gu,'')
+    .replace(/[ \t]{2,}/g,' ')
+    .trim()
 }
 
 function createForumPost(opt){
@@ -29297,7 +30082,7 @@ async function generateForumNpcComments(postId, count=4){
   ensureForumNpcUsers()
   loadForumPosts()
   const p = forumPosts.find(x=>x.id===postId)
-  if(!p) return 0
+  if(!p || !forumPostVisible(p)) return 0
   const api = getApi()
   if(!api||!api.key){ alert('请先配置聊天API'); return 0 }
 
@@ -29344,7 +30129,7 @@ ${npcListText}
       fromId: npc.id,
       fromName: npc.name,
       fromAvatar: npc.avatar||'',
-      text: String(item.text).trim().slice(0, 260)
+      text: stripForumEmoji(item.text).slice(0, 260)
     })
     added++
   }
@@ -29355,9 +30140,10 @@ ${npcListText}
 async function generateForumCharComment(postId, charId){
   loadForumPosts()
   const p = forumPosts.find(x=>x.id===postId)
-  if(!p) return false
+  if(!p || !forumPostVisible(p)) return false
   const c = charList.find(x=>x.id===charId)
-  if(!c) return false
+  if(!c || c.isDeleted || c.bindPersonaId !== activePersonaId) return false
+  if((p.comments||[]).some(cm=>cm.fromType==='char' && cm.fromId===charId)) return false
   const api = getApi()
   if(!api||!api.key){ alert('请先配置聊天API'); return false }
 
@@ -29400,13 +30186,16 @@ ${existing}
   const reply = await askAI(sys, user, 300)
   if(!reply || reply.includes('API')) return false
 
+  const clean = stripForumEmoji(reply).slice(0, 300)
+  if(!clean) return false
   addForumComment(postId, {
     fromType:'char',
     fromId: c.id,
     fromName: c.name,
     fromAvatar: c.avatar||'',
-    text: reply.trim().slice(0, 300)
+    text: clean
   })
+  addMemoryEvent(c.id, `（论坛·评论）我在一篇帖子下留了句评论："${clean.slice(0,60)}"`, 'forum', 'online')
   return true
 }
 
@@ -29448,6 +30237,8 @@ async function generateForumReplyToUser(postId, targetCommentId, userText){
   const reply = await askAI(sys, user, 220)
   if(!reply || reply.includes('API')) return false
 
+  const clean = stripForumEmoji(reply).slice(0, 260)
+  if(!clean) return false
   if(!target.replies) target.replies = []
   target.replies.push({
     id: uid(),
@@ -29455,16 +30246,49 @@ async function generateForumReplyToUser(postId, targetCommentId, userText){
     fromId: target.fromId,
     fromName: target.fromName,
     fromAvatar: target.fromAvatar,
-    text: reply.trim().slice(0, 260),
+    text: clean,
     time: ftime(now())
   })
-  refreshForumHotData()
+  refreshForumHotData(true)
   saveForumPosts()
+  if(target.fromType==='char'){
+    addMemoryEvent(target.fromId, `（论坛·回复）有人在论坛评论区回我："${String(userText||'').slice(0,50)}"，我回了："${clean.slice(0,50)}"`, 'forum', 'online')
+  }
   return true
+}
+
+// 角色发帖后，后台把评论区热起来：2-3 条网友评论，外加 60% 概率让另一个角色插一句
+function forumAutoCommentAfterCharPost(post, poster){
+  if(!post || !poster) return
+  const postId = post.id
+  setTimeout(async () => {
+    try{
+      loadForumPosts()
+      if(!forumPosts.find(x=>x.id===postId)) return
+      if(!store.get('forumBlockNpcPosts', false)){
+        try{ await generateForumNpcComments(postId, 2 + Math.floor(Math.random()*2)) }catch(e){}
+      }
+      loadForumPosts()
+      if(forumPosts.find(x=>x.id===postId) && Math.random() < 0.6){
+        const others = getMyChars().filter(c=>!c.isDeleted && c.id!==poster.id)
+        if(others.length){
+          const c = others[Math.floor(Math.random()*others.length)]
+          try{ await generateForumCharComment(postId, c.id) }catch(e){}
+        }
+      }
+      refreshForumHotData()
+      saveForumPosts()
+      const _rf = _forumDetailRefresh
+      _forumDetailRefresh = null
+      if(_rf) try{ _rf() }catch(e){}
+      if(_curPage === 'forum') render('forum')
+    }catch(e){}
+  }, 1200 + Math.random()*1800)
 }
 
 // 用户评论完之后，随机让一个 NPC 跟一句（可选）
 async function maybeForumAutoReplyAfterUserComment(postId){
+  if(store.get('forumBlockNpcPosts', false)) return
   if(Math.random() > 0.65) return
   if(!getApi()?.key) return
   await generateForumNpcComments(postId, 1)
@@ -29566,7 +30390,7 @@ function makeForumShareText(post){
 function openForumPost(postId){
   loadForumPosts()
   const p = forumPosts.find(x=>x.id===postId)
-  if(!p) return
+  if(!p || !forumPostVisible(p)) return
   p.views = (p.views||0) + 1
   refreshForumHotData()
   saveForumPosts()
@@ -29575,52 +30399,60 @@ function openForumPost(postId){
 
   showModal('帖子详情', async (mb, close) => {
     const renderPost = async () => {
+      loadForumPosts()
+      const cur = forumPosts.find(x=>x.id===postId) || p
+      _forumDetailRefresh = () => {
+        if(!mb.isConnected) return
+        const _inp = mb.querySelector('#_fpcommentinp')
+        if(_inp && document.activeElement === _inp) return
+        renderPost()
+      }
       const faved = forumFavs.includes(postId)
-      const authorColor = p.authorType==='char'
+      const authorColor = cur.authorType==='char'
         ? (n?'#c8a8d0':'var(--rose-d)')
-        : p.authorType==='npc'
+        : cur.authorType==='npc'
           ? (n?'#d0c0d8':'#6a90c0')
           : 'var(--lav)'
 
       let imgsHtml = ''
-      if(Array.isArray(p.images) && p.images.length){
+      if(Array.isArray(cur.images) && cur.images.length){
         imgsHtml = `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">` +
-          p.images.map((imgId, i)=>`<img data-fpimg="${escHtml(imgId)}" data-idx="${i}" src="" style="width:calc(50% - 4px);max-height:180px;object-fit:cover;border-radius:10px;background:rgba(0,0,0,.05);cursor:pointer">`).join('') +
+          cur.images.map((imgId, i)=>`<img data-fpimg="${escHtml(imgId)}" data-idx="${i}" src="" style="width:calc(50% - 4px);max-height:180px;object-fit:cover;border-radius:10px;background:rgba(0,0,0,.05);cursor:pointer">`).join('') +
           `</div>`
       }
 
       mb.innerHTML = `
-        <div style="font-size:10px;color:var(--ink-l);margin-bottom:10px;letter-spacing:1px">${escHtml(p.createTime||'')}</div>
-        <div style="font-size:18px;font-weight:600;color:${n?'#f0e0f0':'var(--ink)'};line-height:1.5">${escHtml(p.title||'无题')}</div>
+        <div style="font-size:10px;color:var(--ink-l);margin-bottom:10px;letter-spacing:1px">${escHtml(cur.createTime||'')}</div>
+        <div style="font-size:18px;font-weight:600;color:${n?'#f0e0f0':'var(--ink)'};line-height:1.5">${escHtml(cur.title||'无题')}</div>
         <div style="display:flex;align-items:center;gap:10px;margin-top:14px">
-          ${avatarEl(p.authorAvatar,36,p.authorType==='user'?I.mirror('var(--lav)',16):I.rose(authorColor,16))}
+          ${avatarEl(cur.authorAvatar,36,cur.authorType==='user'?I.mirror('var(--lav)',16):I.rose(authorColor,16))}
           <div style="flex:1">
-            <div style="font-size:13px;color:${authorColor};font-weight:500">${escHtml(p.authorName||'匿名')}</div>
-            <div style="font-size:10px;color:var(--ink-l);margin-top:2px">${escHtml(p.authorMeta?.tag||'路人')}</div>
+            <div style="font-size:13px;color:${authorColor};font-weight:500">${escHtml(cur.authorName||'匿名')}</div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:2px">${escHtml(cur.authorMeta?.tag||'路人')}</div>
           </div>
         </div>
 
-        <div style="margin-top:16px;font-size:14px;color:${n?'#e0d0e8':'var(--ink)'};line-height:2;white-space:pre-wrap">${escHtml(p.content||'')}</div>
+        <div style="margin-top:16px;font-size:14px;color:${n?'#e0d0e8':'var(--ink)'};line-height:2;white-space:pre-wrap">${escHtml(cur.content||'')}</div>
         ${imgsHtml}
 
-        ${p.tags?.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px">${p.tags.map(t=>`<div style="padding:4px 10px;border-radius:999px;background:${n?'rgba(255,255,255,.06)':'rgba(245,213,222,.35)'};font-size:10px;color:${n?'#c8a8d0':'var(--rose-d)'}">#${escHtml(t)}</div>`).join('')}</div>` : ''}
+        ${cur.tags?.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px">${cur.tags.map(t=>`<div style="padding:4px 10px;border-radius:999px;background:${n?'rgba(255,255,255,.06)':'rgba(245,213,222,.35)'};font-size:10px;color:${n?'#c8a8d0':'var(--rose-d)'}">#${escHtml(t)}</div>`).join('')}</div>` : ''}
 
         <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap">
-  <div id="_fplike" class="btn-sub" style="flex:1;margin:0;min-width:90px">${p.liked?'取消点赞':'点赞'} (${p.likes||0})</div>
-  <div id="_fpfav" class="btn-sub" style="flex:1;margin:0;min-width:90px">${faved?'取消收藏':'收藏'} (${p.favCount||0})</div>
-  <div id="_fprepost" class="btn-sub" style="flex:1;margin:0;min-width:90px">转发 (${p.repostCount||0})</div>
+  <div id="_fplike" class="btn-sub" style="flex:1;margin:0;min-width:90px">${cur.liked?'取消点赞':'点赞'} (${cur.likes||0})</div>
+  <div id="_fpfav" class="btn-sub" style="flex:1;margin:0;min-width:90px">${faved?'取消收藏':'收藏'} (${cur.favCount||0})</div>
+  <div id="_fprepost" class="btn-sub" style="flex:1;margin:0;min-width:90px">转发 (${cur.repostCount||0})</div>
   <div id="_fpsendchar" class="btn-sub" style="flex:1;margin:0;min-width:90px;color:var(--lav)">转发给TA</div>
 </div>
 <div id="_fpdelete" class="btn-sub" style="margin-top:8px;color:#c47a7a;border-color:rgba(196,122,122,.3)">删除帖子</div>
 
         <div style="margin-top:18px;display:flex;align-items:center;gap:10px">
-          <div style="flex:1;font-size:12px;color:${n?'#c8a8d0':'var(--rose-d)'};font-weight:600;letter-spacing:1px">评论区 (${p.comments?.length||0})</div>
+          <div style="flex:1;font-size:12px;color:${n?'#c8a8d0':'var(--rose-d)'};font-weight:600;letter-spacing:1px">评论区 (${cur.comments?.length||0})</div>
           <div id="_fpgen_npc" style="padding:6px 10px;border-radius:12px;font-size:10px;background:${n?'rgba(200,168,208,.15)':'rgba(245,213,222,.45)'};color:${n?'#c8a8d0':'var(--rose-d)'};cursor:pointer">生成NPC评论</div>
           <div id="_fpgen_char" style="padding:6px 10px;border-radius:12px;font-size:10px;background:${n?'rgba(180,168,208,.15)':'rgba(220,208,235,.45)'};color:${n?'#c0a8d0':'var(--lav)'};cursor:pointer">喊角色来</div>
         </div>
 
         <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px;max-height:38vh;overflow-y:auto" id="_fpcomments">
-          ${(p.comments||[]).length ? (p.comments||[]).map(c=>{
+          ${(cur.comments||[]).length ? (cur.comments||[]).map(c=>{
             const cc = c.fromType==='user' ? 'var(--lav)' : (c.fromType==='char' ? 'var(--rose-d)' : '#6a90c0')
             const repliesHtml = (c.replies||[]).map(r=>{
               const rc = r.fromType==='user' ? 'var(--lav)' : (r.fromType==='char' ? 'var(--rose-d)' : '#6a90c0')
@@ -29636,7 +30468,7 @@ function openForumPost(postId){
               <div style="padding:10px 12px;border-radius:12px;background:${n?'rgba(255,255,255,.05)':'rgba(0,0,0,.03)'}">
                 <div style="display:flex;align-items:center;gap:8px">
                   <div style="flex:1;font-size:11px;color:${cc};font-weight:500">${escHtml(c.fromName||'路人')}</div>
-                  ${c.fromType!=='user' ? `<div class="_fpreplybtn" data-cid="${c.id}" data-cname="${escHtml(c.fromName||'')}" style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};cursor:pointer;padding:2px 6px">回复</div>` : ''}
+                  ${c.fromType!=='user' ? `<div class="_fpreplybtn" data-cid="${c.id}" style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};cursor:pointer;padding:2px 6px">回复</div>` : ''}
                 </div>
                 <div style="font-size:12px;color:${n?'#e0d0e8':'var(--ink)'};line-height:1.8;margin-top:4px;white-space:pre-wrap">${escHtml(c.text||'')}</div>
                 <div style="font-size:9px;color:var(--ink-l);margin-top:4px">${escHtml(c.time||'')}</div>
@@ -29719,11 +30551,11 @@ function openForumPost(postId){
                   time: ftime(now()),
                   replied:false,
                   forumCard: {
-                    postId: p.id,
-                    title: p.title || '无题',
-                    author: p.authorName || '匿名',
-                    summary: (p.content || '').slice(0,100),
-                    boardId: p.boardId || 'daily'
+                    postId: cur.id,
+                    title: cur.title || '无题',
+                    author: cur.authorName || '匿名',
+                    summary: (cur.content || '').slice(0,100),
+                    boardId: cur.boardId || 'daily'
                   }
                 })
                 saveMsgs(cid, arr)
@@ -29736,9 +30568,9 @@ function openForumPost(postId){
                     const aiReply = await askAI(
                       `你是${c.name}。性格：${(c.personality||'').slice(0,180)}。你和对方的关系：${c.relation||'未知'}。现在对方给你转发了一条论坛帖子。请像真人私聊一样回复，短一点，不要emoji。`,
                       `对方转发给你的论坛帖子内容是：
-标题：${p.title || '无题'}
-作者：${p.authorName || '匿名'}
-正文：${(p.content || '').slice(0,400)}
+标题：${cur.title || '无题'}
+作者：${cur.authorName || '匿名'}
+正文：${(cur.content || '').slice(0,400)}
 
 请根据你的性格和你们的关系，自然地回复这条转发。你可以吐槽、分析、阴阳怪气、吃醋、认同、反驳，但一定像真人聊天。`,
                       300
@@ -29769,7 +30601,7 @@ function openForumPost(postId){
       const delBtn = mb.querySelector('#_fpdelete')
       if(delBtn){
         delBtn.onclick = () => {
-          const isOwn = p.authorType === 'user'
+          const isOwn = cur.authorType === 'user'
           const msg = isOwn 
             ? '确定要删除这条帖子吗？删除后无法恢复。'
             : '这是别人发的帖子，确定要删除吗？'
@@ -29869,7 +30701,10 @@ function openForumPost(postId){
       mb.querySelectorAll('._fpreplybtn').forEach(el=>{
         el.onclick = () => {
           const cid = el.dataset.cid
-          const cname = el.dataset.cname
+          loadForumPosts()
+          const _pp = forumPosts.find(x=>x.id===postId)
+          const _cm = _pp && (_pp.comments||[]).find(x=>x.id===cid)
+          const cname = String((_cm && _cm.fromName) || 'TA').replace(/[<>"]/g,'')
           showModal('回复 '+cname, (mb4, close4) => {
             mb4.innerHTML = `
               <div class="card">
@@ -30209,16 +31044,23 @@ async function aiGenerateForumPost(charId, boardId='daily'){
 
   if(!res || !res.title || !res.content) return null
 
+  const title = stripForumEmoji(res.title).slice(0,60)
+  const content = stripForumEmoji(res.content)
+  if(!title || !content) return null
+
   const post = createForumPost({
     boardId,
-    title: res.title,
-    content: res.content,
+    title,
+    content,
     tags: Array.isArray(res.tags) ? res.tags.slice(0,5) : [],
     postType: res.postType || 'normal',
     source: 'char_ai',
     ...getForumAuthorInfo('char', charId)
   })
-
+  if(post){
+    addMemoryEvent(charId, `（论坛·我发的帖）我在论坛发了一篇帖子《${title}》："${content.slice(0,60)}"`, 'forum', 'online')
+    forumAutoCommentAfterCharPost(post, c)
+  }
   return post
 }
 async function openForumAiCharPost(){
@@ -30581,6 +31423,7 @@ function createForumNpcPostSimple(){
 }
 
 function addForumNpcCommentSimple(post){
+  if(store.get('forumBlockNpcPosts', false)) return
   ensureForumNpcUsers()
   if(!post) return
   const npc = forumRandomNpc()
@@ -30619,6 +31462,7 @@ function addForumNpcCommentSimple(post){
 }
 
 function forumAutoTickSimple(){
+  if(store.get('forumBlockNpcPosts', false)) return
   ensureForumNpcUsers()
   if(!forumPosts.length){
     ensureForumSeedPosts()
@@ -30825,8 +31669,8 @@ body.appendChild(cover);
   const list = ce('div');
   list.style.cssText = 'padding: 40px 16px 20px; display:flex; flex-direction:column; gap: 24px';
 
-  const visibleCharIds = getMyChars().map(c => c.id);
-  const visibleMoments = momentsData.filter(m => visibleCharIds.includes(m.charId) || m.charId === 'u');
+  const visibleCharIds = getMyChars().filter(c => !c.isDeleted).map(c => c.id);
+  const visibleMoments = momentsData.filter(m => m.charId === 'u' || visibleCharIds.includes(m.charId));
 
   if (!visibleMoments.length) {
     list.innerHTML = `<div style="text-align:center;color:var(--ink-l);font-size:12px;padding:40px 0">还没有朋友圈动态<br>点击右上角的相机 发一条吧</div>`;
@@ -30894,6 +31738,7 @@ body.appendChild(cover);
   body.appendChild(list); p.appendChild(body); 
 p.appendChild(socialBottomBar('moments')); // 挂载底部栏
 app.appendChild(p);
+  maybeAutoCharMoment();
   // 异步加载IndexedDB里的图片
   body.querySelectorAll('img[data-imgid]').forEach(async img=>{
     const id=img.dataset.imgid
@@ -31043,7 +31888,7 @@ app.appendChild(p);
 
       // 朋友圈互动写入全局记忆
       if(m.charId !== 'u') {
-        addMemoryEvent(m.charId, `（朋友圈）${charList.find(x=>x.id===m.charId)?.name||'?'}发了动态："${m.text.slice(0,30)}"，用户评论了："${txt.slice(0,30)}"`, 'moments')
+        addMemoryEvent(m.charId, `（朋友圈）${charList.find(x=>x.id===m.charId)?.name||'?'}发了动态："${m.text.slice(0,30)}"，用户评论了："${txt.slice(0,30)}"`, 'moments', 'online')
       }
 
       // AI角色回复评论（支持识图+其他角色跟风）
@@ -31132,16 +31977,16 @@ ${m.image ? '[你发了一张图片]' : ''}
                   if(cleanReply){
                     m.comments.push({ from: c.id, text: cleanReply, time: ftime(now()), replyTo: 'u' });
                     // 角色回复评论写入记忆
-                    addMemoryEvent(c.id, `（朋友圈·评论互动）${P().name||'用户'}在我的朋友圈"${m.text.slice(0,30)}"下评论了"${txt.slice(0,30)}"，我回复了"${cleanReply.slice(0,30)}"`, 'moments');
+                    addMemoryEvent(c.id, `（朋友圈·评论互动）${P().name||'用户'}在我的朋友圈"${m.text.slice(0,30)}"下评论了"${txt.slice(0,30)}"，我回复了"${cleanReply.slice(0,30)}"`, 'moments', 'online');
                     saveMoments();
                     if(_curPage==='moments') render('moments');
                   }
                 }
                 
-                const otherChars = getMyChars().filter(x => x.id !== c.id && x.id !== m.charId).slice(0, 2);
+                const otherChars = momentCommentCandidates(c.id).filter(x => x.id !== c.id && x.id !== m.charId).slice(0, 2);
                 for(const oc of otherChars) {
                   if(Math.random() > 0.35) continue;
-                  const existingComments = m.comments.map(cm => {
+                  const existingComments = m.comments.filter(cm => momentCommentVisibleTo(oc.id, cm)).map(cm => {
                     const cmName = cm.from === 'u' ? (P().name || '你') : (charList.find(x => x.id === cm.from)?.name || '?');
                     return cmName + '：' + cm.text;
                   }).join('\n');
@@ -31159,7 +32004,7 @@ ${m.image ? '[你发了一张图片]' : ''}
                       m.comments.push({ from: oc.id, text: cleanOc, time: ftime(now()), replyTo: lastCm?.from || null });saveMoments();
                       bumpFamiliarityByCoOccur(c.id, oc.id, 5, oc.name+'在'+c.name+'的朋友圈评论过')
                       // 跟评角色也写入记忆
-                      addMemoryEvent(oc.id, `（朋友圈·评论）我在${c.name}的朋友圈"${m.text.slice(0,30)}"下评论了"${cleanOc.slice(0,30)}"`, 'moments');
+                      addMemoryEvent(oc.id, `（朋友圈·评论）我在${c.name}的朋友圈"${m.text.slice(0,30)}"下评论了"${cleanOc.slice(0,30)}"`, 'moments', 'online');
                     }
                   }
                 }
@@ -31241,10 +32086,15 @@ ${m.image ? '[你发了一张图片]' : ''}
             });
             saveMoments(); close2(); render('moments');
             
+            // 用户自己发的动态写入角色记忆（线上线下都能想起来）
+            getMyChars().filter(x=>!x.isDeleted&&!x.isHidden).slice(0,6).forEach(x=>{
+              addMemoryEvent(x.id, `（朋友圈）${P().name||'用户'}发了一条朋友圈："${txt.slice(0,40)}"`, 'moments', 'online')
+            })
+
             // 让角色们来评论用户的朋友圈
             const userPost = momentsData[0]
             if(userPost && getApi()?.key){
-              const myCharsForComment = getMyChars().slice(0,4)
+              const myCharsForComment = getMyChars().filter(x=>!x.isDeleted&&!x.isHidden).slice(0,4)
               ;(async()=>{
                 for(const oc of myCharsForComment){
                   if(Math.random()>0.5) continue
@@ -31259,6 +32109,7 @@ ${m.image ? '[你发了一张图片]' : ''}
                       userPost.comments = userPost.comments || []
                       userPost.comments.push({from:oc.id, text:cleanU, time:ftime(now())})
                       saveMoments()
+                      addMemoryEvent(oc.id, `（朋友圈·评论）我在${P().name||'用户'}的朋友圈"${txt.slice(0,30)}"下评论了"${cleanU.slice(0,30)}"`, 'moments', 'online')
                     }
                   }
                 }
@@ -31274,7 +32125,7 @@ ${m.image ? '[你发了一张图片]' : ''}
             // 让AI发圈
       mb.querySelector('#_post_ai').onclick = async () => {
         close();
-        const myChars = getMyChars();
+        const myChars = getMyChars().filter(c=>!c.isDeleted);
         if(!myChars.length) return alert('当前马甲还没有联系人哦');
         if(!getApi()?.key) return alert('请先配置聊天API');
         
@@ -31286,103 +32137,7 @@ ${m.image ? '[你发了一张图片]' : ''}
         const selectedChars = [...myChars].sort(() => 0.5 - Math.random()).slice(0, postCount);
         
         for (const c of selectedChars) {
-            // 收集角色的完整上下文：聊天记录、世界书、记忆
-            const _mRecentMsgs = getMsgs(c.id).slice(-20).map(m => 
-              `${m.from==='u'?(P().name||'用户'):c.name}：${m.text.replace(/\[.*?\]/g,'').slice(0,80)}`
-            ).join('\n');
-            
-            const _mWorldBooks = (c.worldBookIds||[])
-              .map(id => worldBooks.find(b=>b.id===id))
-              .filter(b => b && b.enabled && b.type !== 'card')
-              .map(b => b.content)
-              .join('\n').slice(0, 1500);
-            
-            const _mMemory = getMemoryPromptText(c.id);
-            
-            const _mRelation = c.relation || '未知';
-            const _mAffection = c.affection || 0;
-            const _mTimeline = c.storyTimeline || '';
-            
-            // 最近朋友圈（避免重复内容）
-            const _mRecentMoments = momentsData
-              .filter(x => x.charId === c.id)
-              .slice(0, 3)
-              .map(x => x.text.slice(0, 50))
-              .join('；');
-
-            const aiPrompt = `你是「${c.name}」。你现在要发一条朋友圈。
-
-【你的完整人设】
-${c.personality||'未定'}
-
-${_mWorldBooks ? `【世界观与关系网】\n${_mWorldBooks}\n` : ''}
-${_mMemory ? `【你的记忆】\n${_mMemory}\n` : ''}
-【当前状态】
-- 心情：${c.mood||'平静'}
-- 与${P().name||'用户'}的关系：${_mRelation}（好感度${_mAffection}）
-${_mTimeline ? `- 当前剧情时间：${_mTimeline}` : ''}
-
-${_mRecentMsgs ? `【你和${P().name||'用户'}最近的聊天】\n${_mRecentMsgs}\n` : ''}
-${_mRecentMoments ? `【你最近发过的朋友圈（不要重复类似内容）】\n${_mRecentMoments}\n` : ''}
-要求：
-1. 结合当前剧情和心情，像真人一样发一条朋友圈（绝对不要用emoji）。内容要和最近聊天的情境、你当前的状态相关，而不是凭空乱写。
-2. 决定是否配图（50%概率）。如果配图，给出一个能代表内容的英文生图提示词（Danbooru tag风格），不需要配图则留空。
-3. 严格按照此JSON格式返回：{"text":"文案内容","imagePrompt":"英文提示词或空"}`;
-
-            const res = await askAIJson('只返回JSON格式', aiPrompt, 600);
-            if(!res) continue; // 如果某一条生成失败，跳过继续生成下一条
-
-           let imgUrl = '';
-            // 🌟 修复：严格遵守自动生图开关
-            if(res.imagePrompt && imgApi.key && store.get('autoImageEnabled', true)) {
-               const oldNeg = imgApi.negativePrompt;
-               const rawUrl = await genImage(res.imagePrompt + ", masterpiece, best quality");
-               imgApi.negativePrompt = oldNeg;
-               if(rawUrl) imgUrl = await saveImage(rawUrl);
-            }
-            momentsData.unshift({
-               id: uid(), charId: c.id, text: res.text, image: imgUrl || '',
-               time: new Date().toLocaleString(), likes: Math.floor(Math.random()*5),
-               comments: [], liked: false
-            });
-            
-            // 角色发朋友圈写入记忆
-            addMemoryEvent(c.id, `（朋友圈·自己发的）我发了一条朋友圈："${res.text.slice(0,60)}"`, 'moments');
-            
-            saveMoments(); 
-            
-            // 让其他角色来互动评论
-            const newPost = momentsData[0]
-            if(newPost && getApi()?.key){
-              const otherChars = getMyChars().filter(x=>x.id!==c.id).slice(0,3)
-              if(otherChars.length){
-                ;(async()=>{
-                  for(const oc of otherChars){
-                    // 每个角色30%概率评论
-                    if(Math.random()>0.3) continue
-                    const _ocBooks = (oc.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card').map(b=>b.content).join('\n').slice(0,800);
-                    const _ocMem = getMemoryPromptText(oc.id);
-                    const ocReply = await askAI(
-                      `你是${oc.name}。性格：${oc.personality||'未设定'}。${_ocBooks?'【世界观】'+_ocBooks:''}${_ocMem?'\n'+_ocMem:''}你在看朋友圈。不要用emoji，只输出一句简短评论。`,
-                      `${c.name}发了一条朋友圈："${newPost.text.slice(0,100)}"${newPost.image?'（还配了一张图）':''}。你和${c.name}的关系：${oc.relation||'认识'}。你要不要评论一句？如果想评论就直接输出评论内容，不想评论就输出"不评论"。`,
-                      150
-                    )
-                    if(ocReply && !ocReply.includes('不评论') && !ocReply.includes('API')){
-                      const cleanN=ocReply.replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u2600-\u27BF]/gu,'').replace(/^["「『]|["」』]$/g,'').trim();
-                      if(cleanN){
-                        newPost.comments = newPost.comments || []
-                        newPost.comments.push({from:oc.id, text:cleanN, time:ftime(now())})
-                        saveMoments()
-                      }
-                    }
-                  }
-                  // 用户的马甲也有概率被别人点赞
-                  newPost.likes = (newPost.likes||0) + Math.floor(Math.random()*3)
-                  saveMoments()
-                  if(app.innerHTML.includes('朋友圈')) render('moments')
-                })()
-              }
-            }
+          await aiCharPostMoment(c)
         } // for 循环结束
         
         camBtn.style.animation='';
