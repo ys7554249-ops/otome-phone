@@ -5057,6 +5057,12 @@ function render(page){
   _navSkipPush = false;
   _curPage = page;
 
+  // 页面级清理钩子：例如直播间在任意方式离开时都要停掉计时器、恢复自定义CSS
+  if(typeof window._pageTeardown==='function'){
+    try{ window._pageTeardown() }catch(e){ console.error('页面清理出错:',e) }
+    window._pageTeardown=null
+  }
+
   _pgCleanup()
   const _lpPrev=document.getElementById('_cssLivePreview');if(_lpPrev)_lpPrev.remove()
   const _fab=document.getElementById('_apiFab');if(_fab)_fab.style.display=''
@@ -6383,14 +6389,24 @@ function genStreamerPool(){
 viewers:Math.floor(50+Math.random()*800),color:colors[Math.floor(Math.random()*colors.length)],personality:c.personality||''})
     usedNames.add(c.name)
   })
-  // 再生成虚拟主播
-  for(let i=0;i<18;i++){
+  // 复用上一次的虚拟主播身份（id/名字/头像/人设），避免每小时刷新导致关注、私信、记忆全部失效
+  const _oldNpcs=((pool&&Array.isArray(pool.list))?pool.list:[]).filter(x=>x&&x.type==='npc'&&x.id)
+  _oldNpcs.forEach(x=>{
+    if(usedNames.has(x.name))return
+    usedNames.add(x.name)
+    list.push(Object.assign({},x,{viewers:Math.floor(30+Math.random()*2000)}))
+  })
+  // 再补齐虚拟主播
+  const _npcCount=()=>list.filter(x=>x.type==='npc').length
+  const imgUrls=store.get('livePortraitUrls',[])||[]
+  const personalityPool=['温柔话少但偶尔毒舌','元气满满话痨型','冷淡高冷偶尔破功','慵懒低音炮','傲娇嘴硬心软','神秘深沉偶尔幽默','阳光爽朗大男孩','腹黑微笑型']
+  for(let i=_npcCount();i<18;i++){
     let n=''
-    do{n=surnames[Math.floor(Math.random()*surnames.length)]+names[Math.floor(Math.random()*names.length)]}while(usedNames.has(n))
+    let guard=0
+    do{n=surnames[Math.floor(Math.random()*surnames.length)]+names[Math.floor(Math.random()*names.length)];guard++}while(usedNames.has(n)&&guard<300)
+    if(usedNames.has(n))n=n+Math.floor(Math.random()*99)
     usedNames.add(n)
     const tag=tags[Math.floor(Math.random()*tags.length)]
-    const personalityPool=['温柔话少但偶尔毒舌','元气满满话痨型','冷淡高冷偶尔破功','慵懒低音炮','傲娇嘴硬心软','神秘深沉偶尔幽默','阳光爽朗大男孩','腹黑微笑型']
-    const imgUrls=store.get('livePortraitUrls',[])||[]
     const av=imgUrls.length?imgUrls[Math.floor(Math.random()*imgUrls.length)]:''
     list.push({type:'npc',id:'npc_'+uid(),name:n,avatar:av,tag,viewers:Math.floor(30+Math.random()*2000),color:colors[Math.floor(Math.random()*colors.length)],personality:personalityPool[Math.floor(Math.random()*personalityPool.length)]})
   }
@@ -6477,7 +6493,7 @@ window.openLiveInbox = () => {
        if(!s) return;
        const lastMsg = lpms[sid][lpms[sid].length - 1];
        html += `
-         <div class="list-item" style="cursor:pointer" onclick="close(); openLivePM('${sid}')">
+         <div class="list-item" data-sid="${escHtml(sid)}" style="cursor:pointer">
            ${avatarEl(s.avatar, 40)}
            <div style="flex:1;min-width:0">
              <div style="font-size:14px;color:var(--ink);font-weight:500">${escHtml(s.name)}</div>
@@ -6488,6 +6504,9 @@ window.openLiveInbox = () => {
     });
     if(!html) html = '<div style="text-align:center;padding:40px 0;font-size:12px;color:var(--ink-l)">暂无私信</div>';
     mb.innerHTML = html;
+    mb.querySelectorAll('.list-item[data-sid]').forEach(el=>{
+      el.onclick = () => { const sid = el.dataset.sid; close(); openLivePM(sid) }
+    });
   });
 };
 
@@ -6495,6 +6514,10 @@ window.openLivePM = (sid) => {
   const pool = store.get('streamerPool', {list:[]}).list;
   const s = pool.find(x => x.id === sid);
   if(!s) return;
+  // 打开即标记已读，消除红点
+  const _rm = store.get('live_pms_read', {})
+  _rm[sid] = (store.get('live_pms', {})[sid] || []).length
+  store.set('live_pms_read', _rm)
   
   showModal(`与 ${s.name} 的私信`, (mb, close) => {
     mb.style.height = '70vh'; mb.style.display = 'flex'; mb.style.flexDirection = 'column';
@@ -6533,8 +6556,9 @@ window.openLivePM = (sid) => {
       lpms[sid].push({from:'u', text:text, time:ftime(now())});
       
       // 核心：如果玩家发送了微聊号（6位以上数字），触发加好友逻辑！
-      const myWc = P().wechatId || '';
-      if((text.includes(myWc) || /\d{6,}/.test(text)) && !charList.find(x=>x.id===sid)) {
+      const myWc = String(P().wechatId || '');
+      const looksLikeWc = /\d{6,}/.test(text) || (myWc.length >= 5 && text.includes(myWc));
+      if(looksLikeWc && !charList.find(x=>x.id===sid)) {
          lpms[sid].push({from:'anchor', text:'收到！我去加你啦，记得通过一下哦~', time:ftime(now())});
          store.set('live_pms', lpms);
          
@@ -6550,6 +6574,8 @@ window.openLivePM = (sid) => {
          store.set('live_pms', lpms);
       }
       listEl.innerHTML = renderMsgs(); listEl.scrollTop = listEl.scrollHeight;
+      // 弹窗打开状态下收到主播回复，同步已读
+      const _rm2 = store.get('live_pms_read', {}); _rm2[sid] = (lpms[sid] || []).length; store.set('live_pms_read', _rm2);
     };
   });
 };
@@ -6563,7 +6589,7 @@ window.openLiveGroupList = () => {
       const members=g.charIds.map(id=>charList.find(c=>c.id===id)).filter(Boolean)
       const avatars=members.slice(0,4).map(c=>avatarEl(c.avatar,28)).join('')
       return `
-        <div class="list-item" style="cursor:pointer" onclick="close(); store.set('activeGroupId', '${g.id}'); render('groupchat')">
+        <div class="list-item" style="cursor:pointer" onclick="store.set('activeGroupId', '${g.id}'); render('groupchat')">
           <div style="display:flex;flex-wrap:wrap;gap:2px;width:58px;flex-shrink:0">${avatars}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;color:var(--ink);font-weight:500">${escHtml(g.name)}</div>
@@ -6584,49 +6610,64 @@ pages.live=()=>{
   const p=ce('div','page')
   p.style.cssText='background:#0a0812;color:#fff;overflow:hidden'
 
-  // 顶栏
+  // 隐藏标签栏横向滚动条（只注入一次）
+  if(!document.getElementById('_liveplazacss')){
+    const _lpst=document.createElement('style');_lpst.id='_liveplazacss'
+    _lpst.textContent='#_livetags{scrollbar-width:none;-ms-overflow-style:none}#_livetags::-webkit-scrollbar{display:none}'
+    document.head.appendChild(_lpst)
+  }
+
+  // 顶栏（第一行：返回 / 标题 / 直播币 / 充值 / 订单）
   const top=ce('div')
-  top.style.cssText='display:flex;align-items:center;padding:8px 14px;padding-top:max(8px,env(safe-area-inset-top));background:rgba(0,0,0,.7);flex-shrink:0;gap:8px;z-index:2'
-            top.innerHTML=`
-    <div id="_lbk" style="padding:6px;cursor:pointer">${I.back('#fff')}</div>
-    <div style="flex:1;font-size:16px;font-weight:600;letter-spacing:3px">直播广场</div>
-    <div id="_livetags" style="display:flex;gap:4px;margin-left:8px"></div>
-    <div style="display:flex;align-items:center;gap:3px;padding:3px 8px;border-radius:10px;background:rgba(255,200,50,.12);border:1px solid rgba(255,200,50,.2)">
+  top.style.cssText='display:flex;align-items:center;padding:10px 14px;padding-top:max(10px,env(safe-area-inset-top));background:linear-gradient(180deg,rgba(22,15,34,.98),rgba(10,8,18,.92));flex-shrink:0;gap:8px;z-index:2;border-bottom:1px solid rgba(255,255,255,.05)'
+  top.innerHTML=`
+    <div id="_lbk" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.06);cursor:pointer;flex-shrink:0">${I.back('#fff')}</div>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+      <div style="font-size:16px;font-weight:600;letter-spacing:2px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直播广场</div>
+      <div style="font-size:9px;color:rgba(255,255,255,.35);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayPool.length} 个直播间正在直播</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:12px;background:rgba(255,200,50,.1);border:1px solid rgba(255,200,50,.18);flex-shrink:0">
       ${lI.coin('#ffd700',13)}<span style="font-size:11px;color:#ffd700;font-weight:600">${getLiveCoins()}</span>
     </div>
-    <div id="_lrc" style="padding:3px 8px;border-radius:10px;background:rgba(255,100,150,.15);border:1px solid rgba(255,100,150,.2);font-size:10px;color:#ff9ec6;cursor:pointer;margin-left:4px">充值</div>
-    <div id="_lord" style="padding:3px 6px;cursor:pointer;margin-left:4px">${lI.pkg('#90b8d0',16)}</div>
+    <div id="_lrc" style="padding:5px 10px;border-radius:12px;background:linear-gradient(135deg,rgba(255,107,157,.28),rgba(200,80,192,.28));border:1px solid rgba(255,100,150,.25);font-size:11px;color:#ffb3d1;cursor:pointer;flex-shrink:0">充值</div>
+    <div id="_lord" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.06);cursor:pointer;flex-shrink:0">${lI.pkg('#90b8d0',17)}</div>
   `
-
-
   p.appendChild(top)
 
+  // 标签筛选（第二行：横向可滑动）
+  const tagBar=ce('div')
+  tagBar.style.cssText='flex-shrink:0;display:flex;align-items:center;gap:6px;overflow-x:auto;overflow-y:hidden;padding:9px 14px;-webkit-overflow-scrolling:touch;background:rgba(10,8,18,.9);border-bottom:1px solid rgba(255,255,255,.04)'
+  tagBar.innerHTML='<div id="_livetags" style="display:flex;gap:6px"></div>'
+  p.appendChild(tagBar)
 
   // 主播网格
   const body=ce('div')
-  body.style.cssText='flex:1;overflow-y:auto;padding:8px'
-  let html='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">'
+  body.style.cssText='flex:1;overflow-y:auto;padding:10px 10px 88px'
+  let html='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">'
   if(!displayPool.length){
     html+=`<div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:rgba(255,255,255,.4);font-size:12px">该分类暂无主播</div>`
   }
+  const _cln=store.get('charLiveNow',null)
+  const _charLiveFresh=!!(_cln&&(Date.now()-(_cln.ts||0)<2*60*60*1000))
   displayPool.forEach(({s,i})=>{
-    const isLive=s.type==='char'&&store.get('charLiveNow',null)?.charId===s.id
+    const isLive=s.type==='char'&&_charLiveFresh&&_cln.charId===s.id
     const isFollowedCard=(()=>{const arr=store.get('liveFollows',[]);return arr.includes(s.id)})()
 
     html+=`
-      <div class="_lcard" data-idx="${i}" style="position:relative;border-radius:12px;overflow:hidden;cursor:pointer;aspect-ratio:.75;background:${s.avatar?`url('${s.avatar}') center/cover`:`linear-gradient(135deg,${s.color}30,#1a1020)`}">
-        <div style="position:absolute;inset:0;background:linear-gradient(transparent 40%,rgba(0,0,0,.8))"></div>
-        ${!s.avatar?`<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-60%);font-size:36px;font-weight:700;color:${s.color}40">${escHtml(s.name[0])}</div>`:''}
-        <div style="position:absolute;top:8px;left:8px;display:flex;gap:4px">
-          ${isLive?`<div style="display:flex;align-items:center;gap:3px;padding:2px 6px;border-radius:6px;background:rgba(255,40,70,.85);font-size:9px;color:#fff"><div style="width:4px;height:4px;border-radius:50%;background:#fff;animation:breathe 1.2s infinite"></div>LIVE</div>`:''}
-          ${isFollowedCard?`<div style="padding:2px 6px;border-radius:6px;background:rgba(255,100,150,.3);font-size:9px;color:#ff9ec6">已关注</div>`:''}
-
-          <div style="padding:2px 6px;border-radius:6px;background:rgba(0,0,0,.5);font-size:9px;color:rgba(255,255,255,.7)">${escHtml(s.tag)}</div>
+      <div class="_lcard" data-idx="${i}" style="position:relative;border-radius:16px;overflow:hidden;cursor:pointer;aspect-ratio:.72;background:${s.avatar?`url('${s.avatar}') center/cover`:`linear-gradient(135deg,${s.color}33,#150f22)`};box-shadow:0 6px 18px rgba(0,0,0,.35);${isLive?'outline:1.5px solid rgba(255,60,90,.55);outline-offset:-1.5px;':''}">
+        <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.26) 0%,transparent 28%,transparent 46%,rgba(0,0,0,.84) 100%)"></div>
+        ${!s.avatar?`<div style="position:absolute;top:42%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:${s.color}22;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:${s.color}99">${escHtml(s.name[0])}</div>`:''}
+        <div style="position:absolute;top:8px;left:8px;display:flex;align-items:center;gap:4px;max-width:62%">
+          ${isLive?`<div style="display:flex;align-items:center;gap:3px;padding:3px 7px;border-radius:7px;background:linear-gradient(135deg,#ff3b64,#ff2846);font-size:9px;font-weight:600;color:#fff;box-shadow:0 2px 8px rgba(255,40,70,.45);flex-shrink:0"><div style="width:4px;height:4px;border-radius:50%;background:#fff;animation:breathe 1.2s infinite"></div>LIVE</div>`:''}
+          <div style="padding:3px 7px;border-radius:7px;background:rgba(0,0,0,.45);font-size:9px;color:rgba(255,255,255,.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(s.tag)}</div>
+          ${isFollowedCard?`<div style="padding:3px 7px;border-radius:7px;background:rgba(255,100,150,.28);font-size:9px;color:#ffb3d1;flex-shrink:0">已关注</div>`:''}
         </div>
-        <div style="position:absolute;top:8px;right:8px;padding:2px 6px;border-radius:6px;background:rgba(0,0,0,.5);font-size:9px;color:rgba(255,255,255,.6)">${s.viewers}人</div>
-        <div style="position:absolute;bottom:0;left:0;right:0;padding:10px">
-          <div style="font-size:13px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8)">${escHtml(s.name)}</div>
-          <div style="font-size:9px;color:rgba(255,255,255,.5);margin-top:2px">${escHtml(s.personality.slice(0,12))}</div>
+        <div style="position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:3px;padding:3px 7px;border-radius:7px;background:rgba(0,0,0,.45);font-size:9px;color:rgba(255,255,255,.75)">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>${s.viewers}
+        </div>
+        <div style="position:absolute;bottom:0;left:0;right:0;padding:11px 11px 10px">
+          <div style="font-size:13px;font-weight:600;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(s.name)}</div>
+          <div style="font-size:9.5px;color:rgba(255,255,255,.55);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml((s.personality||'').slice(0,14))}</div>
         </div>
       </div>
     `
@@ -6636,7 +6677,11 @@ pages.live=()=>{
   p.appendChild(body)
    // 绝美可拖拽悬浮消息按钮
   const fab = ce('div');
-  const hasUnread = Object.keys(store.get('live_pms', {})).length > 0;
+  // 只有「最后一条是主播发来的、且还没点开看过」才算未读
+  const _readMap = store.get('live_pms_read', {})
+  const hasUnread = Object.entries(store.get('live_pms', {})).some(([sid, arr]) =>
+    Array.isArray(arr) && arr.length && arr[arr.length - 1].from === 'anchor' && arr.length > (_readMap[sid] || 0)
+  );
   // 记住上次拖动的位置，默认在右下角
   const savedPos = store.get('live_fab_pos', { bottom: 'max(30px, env(safe-area-inset-bottom))', right: '20px', left: 'auto', top: 'auto' });
 
@@ -6657,7 +6702,7 @@ pages.live=()=>{
   // 标签筛选
   const tagsCon=$('#_livetags')
   const allTags=['全部','唱歌','游戏','聊天','户外','才艺','学习','美食','穿搭','读书','弹琴','画画','深夜电台']
-  tagsCon.innerHTML=allTags.map(t=>`<div class="_ltag" data-tag="${t}" style="padding:4px 8px;border-radius:10px;font-size:10px;cursor:pointer;background:${t===activeTag?'var(--rose)':'rgba(255,255,255,.25)'};color:${t===activeTag?'#fff':'rgba(0,0,0,.5)'}">${t}</div>`).join('')
+  tagsCon.innerHTML=allTags.map(t=>`<div class="_ltag" data-tag="${t}" style="flex:0 0 auto;white-space:nowrap;padding:6px 13px;border-radius:14px;font-size:11px;cursor:pointer;transition:background .15s,color .15s;background:${t===activeTag?'linear-gradient(135deg,#ff8fb1,#e86f9a)':'rgba(255,255,255,.07)'};color:${t===activeTag?'#fff':'rgba(255,255,255,.62)'};border:1px solid ${t===activeTag?'transparent':'rgba(255,255,255,.06)'};font-weight:${t===activeTag?'600':'400'}">${t}</div>`).join('')
   tagsCon.querySelectorAll('._ltag').forEach(el=>{
     el.onclick=()=>{
       store.set('liveActiveTag',el.dataset.tag)
@@ -6729,14 +6774,14 @@ pages.live=()=>{
       }
     };
 
-    // 绑定鼠标和触摸拖拽事件
+    // 绑定鼠标和触摸拖拽事件（用 _pgListen 注册，切页时自动解绑，避免监听器越积越多）
     fabBtn.addEventListener('mousedown', dragStart);
-    document.addEventListener('mousemove', dragMove, { passive: false });
-    document.addEventListener('mouseup', dragEnd);
+    _pgListen(document, 'mousemove', dragMove, { passive: false });
+    _pgListen(document, 'mouseup', dragEnd);
 
     fabBtn.addEventListener('touchstart', dragStart, { passive: false });
-    document.addEventListener('touchmove', dragMove, { passive: false });
-    document.addEventListener('touchend', dragEnd);
+    _pgListen(document, 'touchmove', dragMove, { passive: false });
+    _pgListen(document, 'touchend', dragEnd);
 
     // 点击事件（智能区分是拖动还是纯点击）
     fabBtn.onclick = (e) => {
@@ -6783,12 +6828,14 @@ pages.liveroom=()=>{
   let roomCache = store.get('liveRoomCache_'+s.id, null);
   const nowTs = Date.now();
   if(!roomCache || nowTs - roomCache.lastUpdate > 15 * 60 * 1000) {
+    // 过期刷新时保留礼物榜、小黄车和弹幕历史，只重置人气数据
     roomCache = {
       viewerCount: s.viewers + Math.floor(Math.random()*200 - 100),
       likeCount: Math.floor(Math.random()*300),
-      history: [], 
-      giftLog: [],
-      giftBoard: {} // 新增礼物排行榜
+      history: (roomCache && roomCache.history) || [],
+      giftLog: (roomCache && roomCache.giftLog) || [],
+      giftBoard: (roomCache && roomCache.giftBoard) || {},
+      goodsList: (roomCache && roomCache.goodsList) || []
     };
   }
   
@@ -6813,6 +6860,15 @@ pages.liveroom=()=>{
   // 正确初始化玩家等级和粉丝数据（支持NPC）
   const userLevel = getUserLiveLevel();
   const fanData = getLiveFanData(s.id);
+  // 连续观看天数：同一天只记一次，断签则重新计 1
+  ;(()=>{
+    const today=new Date().toDateString()
+    if(fanData.lastWatchDate===today)return
+    const yest=new Date(Date.now()-86400000).toDateString()
+    fanData.consecutiveDays=fanData.lastWatchDate===yest?(fanData.consecutiveDays||0)+1:1
+    fanData.lastWatchDate=today
+    saveLiveFanData(s.id,fanData)
+  })();
   if(!roomCache.giftBoard) roomCache.giftBoard = {};
 if(!roomCache.goodsList) roomCache.goodsList = [];
 
@@ -6820,7 +6876,10 @@ if(!roomCache.goodsList) roomCache.goodsList = [];
   const _customCssEl=document.getElementById('_customCSS')
   if(_customCssEl) _customCssEl.disabled=true
 
+  let _teardownDone=false
   const cleanup=()=>{
+    if(_teardownDone) return
+    _teardownDone=true
     // 离开直播间时恢复自定义CSS
     if(_customCssEl) _customCssEl.disabled=false
     active=false; clearInterval(autoTimer); clearInterval(npcTimer); clearInterval(watchTimer); clearInterval(goodsTimer); clearInterval(npcGiftTimer);
@@ -6837,6 +6896,8 @@ if(!roomCache.goodsList) roomCache.goodsList = [];
 
       store.set('liveRoomCache_'+s.id, roomCache);
   }
+  // 注册为页面级清理钩子：无论返回键、浏览器后退还是跳转其它页面都会执行
+  window._pageTeardown = cleanup
   // 注入立绘动画CSS
   if(!$('#_portraitcss')){
     const pst=document.createElement('style');pst.id='_portraitcss'
@@ -6945,7 +7006,7 @@ if(!roomCache.goodsList) roomCache.goodsList = [];
   const stage=ce('div');stage.id='_lrstage'
   stage.style.cssText='position:absolute;top:0;left:0;right:0;bottom:42%;overflow:hidden;background:radial-gradient(ellipse at 50% 80%,#1a1030,#0a0812)'
   stage.innerHTML=`
-    <div id="_lrportrait" style="animation:portrait-idle 4s ease-in-out infinite;transform-origin:center bottom;width:100%;height:100%;background-size:contain;background-position:center bottom;background-repeat:no-repeat;transition:opacity .8s;opacity:0;display:flex;align-items:center;justify-content:center">
+    <div id="_lrportrait" style="animation:portraitBreathe 4s ease-in-out infinite;transform-origin:center bottom;width:100%;height:100%;background-size:contain;background-position:center bottom;background-repeat:no-repeat;transition:opacity .8s;opacity:0;display:flex;align-items:center;justify-content:center">
       <div id="_lrplaceholder" style="width:140px;height:140px;border-radius:50%;background:linear-gradient(135deg,${s.color||'#ff6b9d'},${s.color?s.color+'88':'#ff9dbb'});display:flex;align-items:center;justify-content:center;font-size:56px;color:rgba(255,255,255,.9);font-weight:600;text-shadow:0 2px 8px rgba(0,0,0,.3)">${escHtml((s.name||'主')[0])}</div>
     </div>
     <div id="_lrloading" style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
@@ -6968,6 +7029,15 @@ if(!roomCache.goodsList) roomCache.goodsList = [];
     chatArea.innerHTML += roomCache.history.join('');
   }
   p.appendChild(chatArea)
+
+  // 恢复历史弹幕时，重新绑定小黄车下单按钮（outerHTML 会丢失事件）
+  function bindBuyGoods(){
+    chatArea.querySelectorAll('._buygoods').forEach(btn=>{
+      if(btn._bound)return; btn._bound=true
+      btn.onclick=()=>openBuyGoods(decodeURIComponent(btn.dataset.name), +btn.dataset.price, decodeURIComponent(btn.dataset.anchor))
+    })
+  }
+  bindBuyGoods()
 
   // 底部操作栏
   const bottom=ce('div')
@@ -7180,12 +7250,12 @@ function showGiftFx(gift,sender,combo){
 }
   // ── 经验处理 ──
   function addFanExp(amt){
-    if(!c||fanData.level===0)return
+    if(fanData.level===0)return
     fanData.exp+=amt
     const newLv=calcLevel(fanData.exp,fanLvExp)
     if(newLv>fanData.level){fanData.level=newLv;pushComment(`灯牌升到 ${newLv} 级！`,'system')}
     fanData.level=Math.max(fanData.level,newLv)
-    saveLiveFanData(c.id,fanData)
+    saveLiveFanData(s.id,fanData)
   }
   function addUserExp(amt){
     userLevel.exp+=amt;userLevel.totalSpent+=amt
@@ -7389,9 +7459,14 @@ isDanmaku=true表示飘屏弹幕，false表示评论区。大约60%是弹幕40%�
     
     if(!res?.items || !res.items.length) return;
 
-    // 1. 保存到小黄车缓存中
+    // 1. 保存到小黄车缓存中（去重 + 最多保留 8 件，防止无限堆积）
     if(!roomCache.goodsList) roomCache.goodsList = [];
-    roomCache.goodsList.push(...res.items);
+    res.items.forEach(it=>{
+      if(!it || !it.name) return
+      if(roomCache.goodsList.some(g=>g.name===it.name)) return
+      roomCache.goodsList.push({name:it.name, desc:it.desc||'', price:+it.price||100})
+    })
+    if(roomCache.goodsList.length>8) roomCache.goodsList = roomCache.goodsList.slice(-8)
     store.set('liveRoomCache_'+s.id, roomCache);
     
     // 2. 主播开麦说话（这个会自动触发语音播放！）
@@ -7477,7 +7552,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
     },4000+Math.random()*2000)
   }
 
-  if(c&&fanData.level>0)pushComment(`灯牌 LV${fanData.level} · 连续观看 ${fanData.consecutiveDays} 天`,'system')
+  if(fanData.level>0)pushComment(`灯牌 LV${fanData.level} · 连续观看 ${fanData.consecutiveDays||1} 天`,'system')
 
   // ── 立绘显示逻辑 ──
   setTimeout(()=>{
@@ -7512,7 +7587,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
   // 定时任务
   setTimeout(async()=>{await anchorSpeak();autoTimer=setInterval(()=>{if(active)anchorSpeak()},14000+Math.random()*8000)},2500)
   npcTimer=setInterval(()=>{if(active)genAiNpcBatch()},4000+Math.random()*3000)
-  watchTimer=setInterval(()=>{if(active&&c&&fanData.level>0){fanData.watchTime+=10;if(fanData.watchTime%300===0)addFanExp(1);saveLiveFanData(c.id,fanData)}},10000)
+  watchTimer=setInterval(()=>{if(active&&fanData.level>0){fanData.watchTime+=10;if(fanData.watchTime%300===0)addFanExp(1);saveLiveFanData(s.id,fanData)}},10000)
   goodsTimer=setInterval(()=>{if(active)triggerGoods()},45000+Math.random()*30000)
   // ── NPC 富豪送礼 & 黑粉吵架 真实弹幕环境 ──
   npcGiftTimer=setInterval(()=>{
@@ -7535,8 +7610,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
           roomCache.giftBoard[name] = (roomCache.giftBoard[name]||0) + gift.price;
           viewerCount += Math.floor(gift.price/5); // 送礼涨人气
           likeCount += gift.price;
-          $('#_lrviewers').textContent = viewerCount;
-          $('#_lrlikes').textContent = likeCount;
+          {const _v=$('#_lrviewers'),_l=$('#_lrlikes');if(_v)_v.textContent=viewerCount;if(_l)_l.textContent=likeCount;}
           pushComment('', 'gift', {sender:name, gift, combo:1});
           showGiftFx(gift, name, 1);
           if(gift.tier >= 2 && getApi()?.key) {
@@ -7611,8 +7685,8 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
   }
 
   $('#_lrlike').onclick=()=>{
-    likeCount+=Math.floor(Math.random()*3+1);$('#_lrlikes').textContent=likeCount
-    if(c&&fanData.level>0)addFanExp(1)
+    likeCount+=Math.floor(Math.random()*3+1);{const _l=$('#_lrlikes');if(_l)_l.textContent=likeCount}
+    if(fanData.level>0)addFanExp(1)
     // 飘心
     const fxBox=$('#_lrgiftfx');if(fxBox){const h=ce('div');h.style.cssText=`position:absolute;bottom:15%;right:${8+Math.random()*20}%;font-size:${14+Math.random()*10}px;animation:petal 1.2s linear forwards;pointer-events:none`;h.textContent=['♥','💗','💕'][Math.floor(Math.random()*3)];fxBox.appendChild(h);setTimeout(()=>h.remove(),1300)}
   }
@@ -7636,7 +7710,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
     if(liveMem.chatHistory.length>20)liveMem.chatHistory=liveMem.chatHistory.slice(-20)
     saveLiveMemory(s.id,liveMem)
 
-    if(c&&fanData.level>0){fanData.danmakuCount++;addFanExp(2);saveLiveFanData(c.id,fanData)}
+    if(fanData.level>0){fanData.danmakuCount++;addFanExp(2);saveLiveFanData(s.id,fanData)}
     addUserExp(1)
     if(c) recordLiveInteraction(`发了弹幕："${text}"`);
 
@@ -7653,7 +7727,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
     liveMem.chatHistory.push(text.slice(0,30))
     if(liveMem.chatHistory.length>20)liveMem.chatHistory=liveMem.chatHistory.slice(-20)
     saveLiveMemory(s.id,liveMem)
-    if(c&&fanData.level>0){fanData.danmakuCount++;addFanExp(1);saveLiveFanData(c.id,fanData)}
+    if(fanData.level>0){fanData.danmakuCount++;addFanExp(1);saveLiveFanData(s.id,fanData)}
     if(c) recordLiveInteraction(`发了评论："${text}"`);
 
   }
@@ -7701,7 +7775,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
                 <div style="font-size:10px;color:var(--ink-l);margin-top:2px">${escHtml(item.desc||'')}</div>
                 <div style="font-size:13px;color:var(--rose-d);font-weight:bold;margin-top:4px">${item.price} 直播币</div>
               </div>
-              <div class="btn-main" onclick="close();openBuyGoods('${encodeURIComponent(item.name)}', ${item.price}, '${encodeURIComponent(s.name)}')">抢购</div>
+              <div class="btn-main" onclick="this.closest('.modal-mask').remove();openBuyGoods('${encodeURIComponent(item.name)}', ${item.price}, '${encodeURIComponent(s.name)}')">抢购</div>
             </div>
           `).join('')}
         </div>
@@ -7737,8 +7811,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
           // 玩家送礼涨人气
           viewerCount += Math.floor(gift.price / 5);
           likeCount += gift.price;
-          $('#_lrviewers').textContent = viewerCount;
-          $('#_lrlikes').textContent = likeCount;
+          {const _v=$('#_lrviewers'),_l=$('#_lrlikes');if(_v)_v.textContent=viewerCount;if(_l)_l.textContent=likeCount;}
           // ==========================================
 // 🔮 修罗场/查房系统：被其他角色的粉丝抓包！
 // ==========================================
@@ -20019,36 +20092,102 @@ body.querySelector('#_impbeauty')?.addEventListener('click',()=>{
 
   // 美化页也保留自定义CSS预览，方便用户看到效果
 
-  // ===== 自定义 CSS 实时预览 =====
+  // ===== 自定义 CSS 预览（弹窗 + iframe 沙箱，避免污染当前界面）=====
   const _cssTa = body.querySelector('#_customcss')
   const _prevBtn = body.querySelector('#_previewcss')
   let _cssPreviewOn = false
-  const _applyCssPreview = ()=>{
-    let st = document.getElementById('_cssLivePreview')
-    if(!st){ st = document.createElement('style'); st.id = '_cssLivePreview'; document.head.appendChild(st) }
-    st.textContent = _cssTa.value
+  let _cssPvFrame = null
+  let _cssPvClose = null
+
+  // 构造预览文档：内置一份基础样式，再把用户 CSS 追加在最末尾，保证能被覆盖
+  const _buildCssPreviewDoc = (cssText)=>{
+    const _base = `
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--rose:#e8a0b4;--rose-l:#f5d5de;--rose-d:#c47a92;--cream:#fef8f4;--ink:#4a3a3a;--ink-l:#8a7a7a;--lav:#c5b8d4;--gold:#d4a574;--bar-bg:rgba(254,248,244,.95)}
+html,body{height:auto}
+body{background:var(--cream);color:var(--ink);font-family:'Noto Serif SC',Georgia,serif;padding:12px;line-height:1.7}
+#app{width:100%}
+.page{position:relative;display:block}
+.card{padding:14px 16px;margin-bottom:10px;border-radius:14px;background:rgba(255,255,255,.6);border:1px solid rgba(232,160,180,.1)}
+.card-t{font-size:11px;color:var(--rose-d);letter-spacing:1.5px;margin-bottom:6px;font-weight:500}
+.btn-main{padding:11px;border-radius:20px;background:linear-gradient(135deg,#f5d5de,#f0c8d4);color:var(--ink);text-align:center;font-size:12px;margin-bottom:8px}
+.btn-sub{padding:10px;border-radius:18px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.18);color:var(--ink);text-align:center;font-size:12px}
+._pvrow{display:flex;margin-bottom:8px}
+._pvrow.r{justify-content:flex-end}
+._bubble{display:inline-block;max-width:80%;padding:10px 14px;font-size:13px;line-height:1.8;word-break:break-word}
+._bubble-self{background:rgba(245,213,222,.55);border-radius:18px 18px 4px 18px;border:1px solid rgba(232,160,180,.12)}
+._bubble-other{background:rgba(255,255,255,.85);border-radius:4px 18px 18px 18px;border:1px solid rgba(232,160,180,.12)}
+`
+    const _safeCss = String(cssText||'').replace(/<\//g,'<\\/')
+    return '<!DOCTYPE html><html><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<style>' + _base + '</style>'
+      + '<style id="_pvUserCss">' + _safeCss + '</style>'
+      + '</head><body><div id="app" class="page">'
+      + '<div class="card"><div class="card-t">卡片标题</div>'
+      + '<div style="font-size:12px">这是一段正文，用来查看文字颜色、字体和卡片背景的效果。</div></div>'
+      + '<div class="btn-main">主按钮</div>'
+      + '<div class="btn-sub">次按钮</div>'
+      + '<div class="_pvrow"><div class="_bubble _bubble-other">这是对方的气泡预览</div></div>'
+      + '<div class="_pvrow r"><div class="_bubble _bubble-self">这是你的气泡预览</div></div>'
+      + '<div class="card" style="margin-top:10px"><div class="card-t">输入框</div>'
+      + '<input placeholder="聊点什么…" style="width:100%;padding:9px 11px;border-radius:10px;border:1px solid rgba(232,160,180,.15);background:#fff;font-size:12px"></div>'
+      + '</div></body></html>'
   }
+
+  const _applyCssPreview = ()=>{
+    if(_cssPvFrame && _cssPvFrame.isConnected){
+      _cssPvFrame.srcdoc = _buildCssPreviewDoc(_cssTa ? _cssTa.value : '')
+    }
+  }
+  const _onCssInput = ()=>{ if(_cssPreviewOn) _applyCssPreview() }
   function stopCssPreview(){
     _cssPreviewOn = false
-    const st = document.getElementById('_cssLivePreview')
-    if(st) st.remove()
-    if(_cssTa) _cssTa.removeEventListener('input', _applyCssPreview)
+    _cssPvFrame = null
+    if(_cssTa) _cssTa.removeEventListener('input', _onCssInput)
+    if(typeof _cssPvClose === 'function'){ try{ _cssPvClose() }catch(e){} }
+    _cssPvClose = null
     if(_prevBtn){ _prevBtn.textContent = '预览效果'; _prevBtn.style.background = ''; _prevBtn.style.color = 'var(--rose-d)'; _prevBtn.style.border = '1.5px solid var(--rose)' }
   }
   if(_prevBtn){
     _prevBtn.onclick = ()=>{
-      if(!_cssPreviewOn){
+      if(_cssPreviewOn){ stopCssPreview(); return }
+      const cssText = _cssTa ? _cssTa.value : ''
+      showModal('CSS 预览',(mb,close)=>{
+        _cssPvClose = close
+        mb.innerHTML = `
+          <div style="font-size:11px;color:var(--ink-l);line-height:1.7;margin-bottom:10px">下面是用当前输入框里的 CSS 渲染的效果（实时更新，尚未保存）</div>
+          <iframe id="_cssPvFrame" style="width:100%;height:min(56vh,380px);border:1px solid rgba(232,160,180,.2);border-radius:14px;background:#fef8f4;display:block"></iframe>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <div class="btn-main" id="_cssPvApply" style="flex:1;margin:0;padding:10px;font-size:12px">应用并保存</div>
+            <div class="btn-sub" id="_cssPvCloseBtn" style="flex:1;margin:0;padding:10px;font-size:12px">关闭</div>
+          </div>
+        `
+        _cssPvFrame = mb.querySelector('#_cssPvFrame')
+        _cssPvFrame.srcdoc = _buildCssPreviewDoc(cssText)
         _cssPreviewOn = true
-        _applyCssPreview()
-        _cssTa.addEventListener('input', _applyCssPreview)
-        _prevBtn.textContent = '停止预览'
+        // 点遮罩关闭弹窗时同步复位按钮状态
+        const _mask = mb.closest('.modal-mask')
+        if(_mask && window.MutationObserver){
+          const _mo = new MutationObserver(()=>{
+            if(!_mask.isConnected){
+              _mo.disconnect()
+              if(_cssPvClose === close) stopCssPreview()
+            }
+          })
+          _mo.observe(document.body,{childList:true,subtree:true})
+        }
+        if(_cssTa) _cssTa.addEventListener('input', _onCssInput)
+        mb.querySelector('#_cssPvCloseBtn').onclick = ()=>stopCssPreview()
+        mb.querySelector('#_cssPvApply').onclick = ()=>{
+          stopCssPreview()
+          const saveBtn = body.querySelector('#_savecss')
+          if(saveBtn) saveBtn.click()
+        }
+        _prevBtn.textContent = '预览中'
         _prevBtn.style.background = 'rgba(245,213,222,.45)'
         _prevBtn.style.color = 'var(--rose)'
-        _prevBtn.style.border = '1.5px solid var(--rose)'
-        _prevBtn.scrollIntoView({behavior:'smooth', block:'nearest'})
-      }else{
-        stopCssPreview()
-      }
+      })
     }
   }
 
