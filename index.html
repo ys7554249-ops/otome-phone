@@ -1117,6 +1117,55 @@ function saveEvents(){store.set('events',events)}
 
 let memories=store.get('memories',[])
 function saveMem(){store.set('memories',memories)}
+// 某角色名下的回忆：优先 charId 精确匹配，老数据退回标题匹配（排除同名包含导致的误归属）
+function memsForChar(cid){
+  const id=cid||activeCharId
+  const cur=charList.find(x=>x.id===id)
+  if(!cur) return []
+  return (Array.isArray(memories)?memories:[]).filter(m=>{
+    if(m.charId) return m.charId===id
+    if(m.title && m.title.includes(cur.name)){
+      const otherMatch=charList.find(x=>x.id!==id && x.name!==cur.name && x.name.includes(cur.name) && m.title.includes(x.name))
+      return !otherMatch
+    }
+    return false
+  })
+}
+// 彻底销毁一个角色的全部数据（人设/消息/记忆/朋友圈/约会/群成员/自带世界书）
+function destroyCharData(c){
+  if(!c) return
+  const _rmMemIds = new Set(memsForChar(c.id).map(m=>m.id))
+  if(c.refImg) dropRefImage(c.refImg)
+  charList = charList.filter(x => x.id !== c.id)
+  store.del('msgs_' + c.id)
+  const _gCount = 1 + (c.altGreetings ? c.altGreetings.length : 0)
+  for(let gi=0; gi<_gCount+5; gi++){
+    store.del('msgs_' + c.id + '_g' + gi)
+    delete globalMemory[c.id + '_g' + gi]
+  }
+  delete globalMemory[c.id]
+  saveGlobalMemory()
+  momentsData = momentsData.filter(m => m.charId !== c.id)
+  saveMoments()
+  events = events.filter(e => e.charId !== c.id)
+  saveEvents()
+  memories = memories.filter(m => !_rmMemIds.has(m.id))
+  saveMem()
+  groups.forEach(g => { g.charIds = g.charIds.filter(id => id !== c.id) })
+  saveGroups()
+  const removedBookIds = worldBooks.filter(b => b.fromCharId === c.id).map(b => b.id)
+  if (removedBookIds.length) {
+    worldBooks = worldBooks.filter(b => b.fromCharId !== c.id)
+    charList.forEach(x => {
+      if (x.worldBookIds && x.worldBookIds.length) {
+        x.worldBookIds = x.worldBookIds.filter(id => !removedBookIds.includes(id))
+      }
+    })
+    saveWorldBooks()
+  }
+  activeCharId = getMyChars().filter(x=>!x.isDeleted)[0]?.id || charList[0]?.id || ''
+  saveCharList()
+}
 let diaries=store.get('diaries',{})
 function saveDiaries(){
   if(!diaries || typeof diaries!=='object' || Array.isArray(diaries)){
@@ -3253,22 +3302,25 @@ function _msgKey(cid){
 
 function getMsgs(cid){
   const key=_msgKey(cid);
-  let arr=store.get(key,[]);
-  if(!arr.length){
+  const raw=store.get(key,undefined);
+  // 只有“从未迁移过的旧数据”（key 不存在）才回退去读旧 key。
+  // 已经显式存成空数组代表用户把消息删光了，绝不能再把旧数据搬回来。
+  if(raw===undefined||raw===null){
     const id=cid||activeCharId;
     const ch=charList.find(x=>x.id===id);
     const gi=(ch&&typeof ch.currentGreeting==='number')?ch.currentGreeting:0;
     if(gi===0){
       const oldKey='msgs_'+id;
-      const oldArr=store.get(oldKey,[]);
-      if(oldArr.length){
+      const oldArr=store.get(oldKey,undefined);
+      if(Array.isArray(oldArr)&&oldArr.length){
         store.set(key,oldArr);
         store.del(oldKey);
         return store.get(key,[]);
       }
     }
+    return [];
   }
-  return arr;
+  return Array.isArray(raw)?raw:[];
 }
 
 function saveMsgs(cid,arr){
@@ -3329,8 +3381,17 @@ function avatarEl(src,size,icon){
 }
 // ===== 通用LLM调用（消灭所有重复代码） =====
 async function callLLM(opt){
-  // opt = { api, system, messages, maxTokens, timeout }
+  // opt = { api, system, messages, maxTokens, timeout, tools, toolChoice, stream }
+  // tools 为 OpenAI function-calling 格式：[{type:'function',function:{name,description,parameters}}]
   const a=opt.api||getApi()
+  const _oToolsRaw=Array.isArray(opt.tools)?opt.tools:[]
+  // Claude 原生接口需要 tool_result 块，这里统一走文本协议，不传 tools
+  const _isClaudeApi=!!a&&a.provider==='claude'&&(!a.baseUrl||/anthropic\.com/.test(a.baseUrl||''))
+  const _useTools=_oToolsRaw.length>0&&!_isClaudeApi
+  const _tools=_useTools?_oToolsRaw:[]
+  // 带 tools 时强制非流式，避免流式 tool_calls 增量解析问题
+  const _streamWanted=opt.stream!=null?!!opt.stream:store.get('streamDisplay',true)
+  const _stream=_tools.length?false:_streamWanted
 
   // ===== token 安全阀：粗估 system+messages 总量，超限时自动裁历史 =====
   const _estTokens = s => s ? Math.ceil(s.length / 1.8) : 0;  // 中文粗估
@@ -3355,6 +3416,11 @@ async function callLLM(opt){
   while(_sysTokens + _msgTokens + _reserveTokens > _ceiling && _msgArr.length > 2){
     const removed = _msgArr.shift();
     _msgTokens -= _estTokens(typeof removed.content === 'string' ? removed.content : JSON.stringify(removed.content));
+  }
+
+  // 裁剪后可能出现孤立的 tool 结果或失去配对的 tool_calls，去掉以免API报400
+  while(_msgArr.length&&(_msgArr[0].role==='tool'||(Array.isArray(_msgArr[0].tool_calls)&&_msgArr[0].tool_calls.length))){
+    _msgArr.shift()
   }
 
   // 如果裁完还超（system 本身就太大），给用户提示
@@ -3410,7 +3476,7 @@ async function callLLM(opt){
   model:a.model,
   max_tokens:opt.maxTokens||300,
   temperature:a.temperature||1.0,
-  stream:store.get('streamDisplay',true),
+  stream:_stream,
   system: sysArr,
   messages: (() => {
     const msgs = opt.messages || [];
@@ -3444,8 +3510,9 @@ async function callLLM(opt){
   model:a.model,
   max_tokens:opt.maxTokens||300,
   temperature:a.temperature||1.0,
-  stream:store.get('streamDisplay',true),
-  messages: msgs
+  stream:_stream,
+  messages: msgs,
+  ...(_tools.length?{tools:_tools,tool_choice:opt.toolChoice||'auto'}:{})
 })
 
   }
@@ -3467,18 +3534,37 @@ async function callLLM(opt){
     }
 
     // ===== 流式SSE解析：仅克劳德走流式，其他模型保持原样 =====
-    const _isStream=store.get('streamDisplay',true)&&/event-stream|octet-stream/i.test(r.headers.get('content-type')||'')
+    const _isStream=_stream&&/event-stream|octet-stream/i.test(r.headers.get('content-type')||'')
     let fullText=''
     if(!_isStream){
       const raw=await r.text()
       let d=null
       try{d=raw?JSON.parse(raw):null}catch(e){}
       if(!d) return {ok:false,text:'（API返回为空或不是有效JSON：'+String(raw).slice(0,300)+'）'}
-      fullText=d.choices?.[0]?.message?.content||'...'
+      const _msg=d.choices?.[0]?.message||null
+      let _toolCalls=[]
+      if(_msg){
+        fullText=typeof _msg.content==='string'?_msg.content:(Array.isArray(_msg.content)?_msg.content.map(p=>p&&p.text||'').join(''):'')
+        if(Array.isArray(_msg.tool_calls)){
+          _toolCalls=_msg.tool_calls.map((tc,i)=>({
+            id:tc.id||('call_'+i+'_'+Date.now()),
+            name:(tc.function&&tc.function.name)||tc.name||'',
+            args:(()=>{
+              const rawArgs=tc.function?tc.function.arguments:tc.arguments
+              if(rawArgs&&typeof rawArgs==='object')return rawArgs
+              try{return JSON.parse(rawArgs||'{}')}catch(e){return {}}
+            })()
+          })).filter(t=>t.name)
+        }
+      }else if(Array.isArray(d.content)){
+        // Claude 非流式
+        fullText=d.content.filter(b=>b&&b.type==='text').map(b=>b.text||'').join('')
+      }
       const _usage=d.usage||null
       const _inTk=_usage?((_usage.prompt_tokens||_usage.input_tokens)||0):0
       const _outTk=_usage?((_usage.completion_tokens||_usage.output_tokens)||0):0
-      return {ok:true,text:fullText,inTokens:_inTk,outTokens:_outTk}
+      if(!fullText&&!_toolCalls.length) fullText='...'
+      return {ok:true,text:fullText,toolCalls:_toolCalls,inTokens:_inTk,outTokens:_outTk}
     }
     try{
       const reader=r.body.getReader()
@@ -4591,8 +4677,20 @@ alert('语音失败: '+r.status+' '+errTxt.slice(0,200))
 }
 
 // 生图
-async function genImage(prompt){
+async function genImage(prompt,opts){
   if(!imgApi.key)return null
+  opts=opts||{}
+  const wanted=refListOf(opts)
+  const refs=[]
+  for(const rid of wanted){
+    try{
+      const rp=await _refToPayload(rid)
+      if(rp)refs.push(rp)
+    }catch(e){console.log('读取参考图失败:',e)}
+  }
+  const ref=refs[0]||null
+  if(wanted.length&&!ref)console.log('参考图不可用，按普通文生图处理')
+  const refStrength=Math.min(.9,Math.max(.2,parseFloat(opts.strength||P().refStrength||.55)||.55))
   try{
     const isNAI=imgApi.provider==='novelai'
     const base=(imgApi.baseUrl||'https://api.openai.com/v1').replace(/\/$/,'')
@@ -4602,6 +4700,45 @@ async function genImage(prompt){
       const size=imgApi.size||'832x1216'
       const [w,h]=size.split('x').map(Number)
       const negPrompt=imgApi.negativePrompt||'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry'
+      // v4 用参考图数组做角色参考（不复制构图）；v3 只能 img2img（会连构图一起参考）
+      const isV4=/^nai-diffusion-4/i.test(model)
+      const params={
+        width:w||832,
+        height:h||1216,
+        scale:imgApi.scale||5,
+        sampler:imgApi.sampler||'k_euler',
+        steps:imgApi.steps||28,
+        n_samples:1,
+        ucPreset:0,
+        negative_prompt:negPrompt,
+        seed:Math.floor(Math.random()*4294967295),
+        noise_schedule:'native',
+        cfg_rescale:0,
+        sm:false,
+        sm_dyn:false
+      }
+      if(refs.length){
+        if(isV4){
+          params.reference_image_multiple=refs.map(r=>r.base64)
+          params.reference_information_extracted_multiple=refs.map(()=>1)
+          params.reference_strength_multiple=refs.map(()=>refStrength)
+        }else{
+          params.image=ref.base64
+          params.strength=refStrength
+          params.noise=0
+          if(refs.length>1)console.log('NovelAI v3 只支持一张参考图，已使用第一张')
+        }
+      }
+      const payload={
+        input:prompt,
+        model:model,
+        action:(ref&&!isV4)?'img2img':'generate',
+        parameters:params
+      }
+      if(ref&&isV4){
+        payload.v4_prompt={caption:{base_caption:prompt,char_captions:[]},use_coords:false,use_order:true}
+        payload.v4_negative_prompt={caption:{base_caption:negPrompt,char_captions:[]}}
+      }
 
       const r=await fetch(base+'/ai/generate-image',{
         method:'POST',
@@ -4610,26 +4747,7 @@ async function genImage(prompt){
           'Authorization':'Bearer '+imgApi.key,
           'Accept':'application/zip'
         },
-        body:JSON.stringify({
-          input:prompt,
-          model:model,
-          action:'generate',
-          parameters:{
-            width:w||832,
-            height:h||1216,
-            scale:imgApi.scale||5,
-            sampler:imgApi.sampler||'k_euler',
-            steps:imgApi.steps||28,
-            n_samples:1,
-            ucPreset:0,
-            negative_prompt:negPrompt,
-            seed:Math.floor(Math.random()*4294967295),
-            noise_schedule:'native',
-            cfg_rescale:0,
-            sm:false,
-            sm_dyn:false
-          }
-        })
+        body:JSON.stringify(payload)
       })
 
       if(!r.ok){
@@ -4696,6 +4814,58 @@ async function genImage(prompt){
     } else {
       // ===== OpenAI 兼容生图 =====
 const isGptImage = (imgApi.model||'').startsWith('gpt-image')
+const _pickImg=d=>{
+  const item=d&&d.data&&d.data[0]
+  if(!item)return null
+  if(item.b64_json)return 'data:image/png;base64,'+item.b64_json
+  if(item.base64)return 'data:image/png;base64,'+item.base64
+  if(item.url)return item.url
+  return null
+}
+const _editSize=(imgApi.size||'').match(/^(1024x1024|1536x1024|1024x1536|auto)$/)?imgApi.size:''
+const _forceEdit=!!opts.forceEdit||imgApi.refMode==='edit'
+
+// 有参考图：优先 /images/edits 图生图；非强制模式下失败会退回纯文生图
+if(ref&&(_forceEdit||isGptImage)){
+  let editFailed=false
+  try{
+    const fd=new FormData()
+    fd.append('model',imgApi.model||'gpt-image-1')
+    fd.append('prompt',prompt)
+    fd.append('n','1')
+    if(_editSize)fd.append('size',_editSize)
+    if(refs.length>1){
+      refs.forEach((r,i)=>fd.append('image[]',r.blob,'ref'+(i+1)+'.'+(r.mime.indexOf('png')>=0?'png':'jpg')))
+    }else{
+      fd.append('image',ref.blob,'ref.'+(ref.mime.indexOf('png')>=0?'png':'jpg'))
+    }
+    const er=await fetch(base+'/images/edits',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+imgApi.key},
+      body:fd
+    })
+    if(er.ok){
+      const eurl=_pickImg(await er.json())
+      if(eurl)return eurl
+      editFailed=true
+      console.log('参考图生图：edits 返回无图片')
+    }else{
+      editFailed=true
+      const errText=await er.text().catch(()=>'')
+      console.log('参考图生图(edits)失败:',er.status,errText.slice(0,300))
+      if(_forceEdit){
+        alert('参考图生图失败: '+er.status+'\n'+errText.slice(0,300))
+        return null
+      }
+    }
+  }catch(e){
+    editFailed=true
+    console.log('参考图生图异常:',e)
+    if(_forceEdit){alert('参考图生图异常: '+e.message);return null}
+  }
+  if(editFailed)console.log('该接口不支持参考图生图，改用纯文生图')
+}
+
 const bodyObj={
   model:imgApi.model||'dall-e-3',
   prompt:prompt,
@@ -4866,6 +5036,16 @@ const imgDB={
       req.onerror=()=>resolve('')
     })
   },
+  async getBlob(id){
+    if(!id)return null
+    const db=await imgDB.open()
+    return new Promise((resolve)=>{
+      const tx=db.transaction('imgs','readonly')
+      const req=tx.objectStore('imgs').get(id)
+      req.onsuccess=()=>resolve(req.result&&req.result.blob?req.result.blob:null)
+      req.onerror=()=>resolve(null)
+    })
+  },
   async remove(id){
     if(!id)return
     const db=await imgDB.open()
@@ -4934,6 +5114,107 @@ async function loadImage(idOrUrl){
   }
   // 兼容旧的base64或http链接
   return idOrUrl
+}
+
+// ===== 马甲生图参考图 =====
+// 和 saveImage 不同：不压到 400px，参考图需要保留五官细节
+async function saveRefImageFile(file,maxSide){
+  if(!file)return''
+  const max=Math.max(256,Math.min(2048,maxSide||1024))
+  let blob=file
+  let src=''
+  try{
+    src=URL.createObjectURL(file)
+    const img=await new Promise((res,rej)=>{
+      const im=new Image()
+      const t=setTimeout(()=>rej(new Error('图片解码超时')),5000)
+      im.onload=()=>{clearTimeout(t);res(im)}
+      im.onerror=()=>{clearTimeout(t);rej(new Error('图片解码失败'))}
+      im.src=src
+    })
+    const w=img.naturalWidth||img.width||1,h=img.naturalHeight||img.height||1
+    const scale=Math.min(max/w,max/h,1)
+    const cvs=document.createElement('canvas')
+    cvs.width=Math.max(1,Math.round(w*scale))
+    cvs.height=Math.max(1,Math.round(h*scale))
+    const ctx=cvs.getContext?cvs.getContext('2d'):null
+    if(ctx){
+      ctx.drawImage(img,0,0,cvs.width,cvs.height)
+      const small=await new Promise(res=>cvs.toBlob?cvs.toBlob(res,'image/jpeg',0.92):res(null))
+      if(small&&small.size)blob=small
+    }
+  }catch(e){
+    console.log('参考图未压缩，直接保存原图:',e&&e.message)
+  }finally{
+    if(src){try{URL.revokeObjectURL(src)}catch(e){}}
+  }
+  if(!blob||!blob.size)return''
+  if(blob.size>8*1024*1024)return''
+  const id='img_'+uid()
+  await imgDB.save(id,blob)
+  return id
+}
+
+// 参考图 → {blob, base64, mime}，供 img2img / images/edits 使用
+async function _refToPayload(ref){
+  if(!ref)return null
+  let blob=null
+  if(String(ref).startsWith('img_')){
+    blob=await imgDB.getBlob(ref)
+  }else if(String(ref).startsWith('data:')){
+    const comma=String(ref).indexOf(',')
+    const head=comma>0?String(ref).slice(0,comma):''
+    const b64=comma>0?String(ref).slice(comma+1):''
+    const mime=(head.match(/:(.*?);/)||[])[1]||'image/png'
+    const bin=atob(b64||'')
+    const u8=new Uint8Array(bin.length)
+    for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i)
+    blob=new Blob([u8],{type:mime})
+  }else{
+    try{blob=await (await fetch(ref)).blob()}catch(e){blob=null}
+  }
+  if(!blob||!blob.size)return null
+  const base64=await new Promise((res,rej)=>{
+    const fr=new FileReader()
+    fr.onload=()=>res(String(fr.result).split(',')[1]||'')
+    fr.onerror=()=>rej(new Error('读取参考图失败'))
+    fr.readAsDataURL(blob)
+  })
+  if(!base64)return null
+  return {blob,base64,mime:blob.type||'image/png'}
+}
+
+async function dropRefImage(id){
+  if(!id)return
+  try{await imgDB.remove(id)}catch(e){}
+  const cached=imgDB._urlCache&&imgDB._urlCache[id]
+  if(cached){
+    try{URL.revokeObjectURL(cached)}catch(e){}
+    delete imgDB._urlCache[id]
+  }
+}
+
+// 当前马甲的生图参考图（refUse 可关）
+function personaRef(){
+  const p=P()
+  if(!p)return''
+  if(p.refUse===false)return''
+  return p.refImg||''
+}
+
+// 角色的生图参考图（refUse 可关）
+function charRef(charId){
+  const c=charList.find(x=>x.id===(charId||activeCharId))
+  if(!c)return''
+  if(c.refUse===false)return''
+  return c.refImg||''
+}
+function refListOf(opts){
+  const out=[]
+  const push=r=>{if(r&&out.indexOf(r)<0)out.push(r)}
+  if(opts&&opts.ref)push(opts.ref)
+  if(opts&&Array.isArray(opts.refs))opts.refs.forEach(push)
+  return out.slice(0,4)
 }
 
 
@@ -5174,7 +5455,7 @@ async function smartGenImage(charId){
   const oldNeg=imgApi.negativePrompt
   if(result.negative) imgApi.negativePrompt=result.negative
   
-  const url=await genImage(result.prompt)
+  const url=await genImage(result.prompt,{refs:[charRef(charId)],strength:(charList.find(x=>x.id===(charId||activeCharId))||{}).refStrength})
   
   imgApi.negativePrompt=oldNeg
   
@@ -9332,7 +9613,15 @@ else{p.style.background=bgNow()}
 })
 
   const msgs=getMsgs()
-  if(msgs.length===0 && c.altGreetings && c.altGreetings.length > 0){
+  // ★ 关键：区分「从没开始过（key 不存在）」和「用户把消息删光了（key 存在但为空）」
+  // 以前只判断 msgs.length===0，导致用户删光后一刷新就被自动开场白重新灌回来，看起来像没删掉。
+  const _gi0=(c.currentGreeting||0);
+  const _slotHas=(i)=>store.get('msgs_'+activeCharId+'_g'+i,undefined)!==undefined||(i===0&&store.get('msgs_'+activeCharId,undefined)!==undefined);
+  const _curSlotHas=_slotHas(_gi0);
+  const _greetPickerWanted=window._forceGreetPick===true;
+  if(_greetPickerWanted) window._forceGreetPick=false;
+
+  if(msgs.length===0 && c.altGreetings && c.altGreetings.length > 0 && (!_curSlotHas || _greetPickerWanted)){
     // ★ 酒馆卡多开场白选择器
     const _allG=[{label:'开场白 1（默认）',text:c.firstMsg||c.quote||''}];
     (c.altGreetings||[]).forEach((g,i)=>{_allG.push({label:'开场白 '+(i+2),text:g})});
@@ -9382,15 +9671,19 @@ else{p.style.background=bgNow()}
       }
     });
   }else if(msgs.length===0){
-    // 只有1个开场白时自动发送
+    // 只有1个开场白时自动发送（仅在“从没开始过”的情况下，用户删光了就不再灌回来）
     const _soloGreet=c.firstMsg||c.quote||'';
-    if(_soloGreet && !(c.altGreetings && c.altGreetings.length>0)){
+    if(_soloGreet && !(c.altGreetings && c.altGreetings.length>0) && !_curSlotHas && !_greetPickerWanted){
       saveMsgs(activeCharId,[{from:'c',text:_soloGreet,time:ftime(now())}]);
       render('chat');return;
     }
+    const _hasAlt=!!(c.altGreetings && c.altGreetings.length>0);
     ml.innerHTML=`<div style="text-align:center;padding:40px 20px;font-size:12px;color:${n?'#a898b8':'var(--ink-l)'};font-style:italic;line-height:1.8">
       还没有消息...<br>发几句话，然后点「回复」让${escHtml(c.name)}回你
+      ${_hasAlt?`<div id="_regreet" style="margin-top:14px;display:inline-block;padding:7px 16px;border-radius:14px;background:${n?'rgba(200,168,208,.15)':'rgba(245,213,222,.35)'};color:${n?'#d8c8e8':'var(--rose-d)'};font-style:normal;font-size:11.5px;cursor:pointer;letter-spacing:1px">重新选择开场白</div>`:''}
     </div>`
+    const _rg=ml.querySelector('#_regreet')
+    if(_rg)_rg.onclick=()=>{window._forceGreetPick=true;render('chat')}
   }else{
     msgs.forEach((m,idx)=>{
       // 【修复】渲染直播间同步过来的系统动作
@@ -9473,8 +9766,9 @@ const radius=bubbleVisual.borderRadius
     <div class="_paiyipai" data-name="${escHtml(c.name)}" style="font-size:9px;color:var(--rose-d);cursor:pointer;opacity:.8">拍一拍</div>
     <div class="_playtts" data-text="${encodeURIComponent(m.text)}" style="cursor:pointer;opacity:.5">${I.play(n?'#c8a8d0':'var(--rose)',13)}</div>
     <div class="_regen" data-idx="${idx}" style="font-size:9px;color:${n?'#c8a8d0':'var(--rose-d)'};cursor:pointer;opacity:.6">重说</div>
+    <div class="_msgdel" data-idx="${idx}" style="font-size:9px;color:#c47a7a;cursor:pointer;opacity:.7">删除</div>
   </div>
-`: `<div style="display:flex;justify-content:flex-end;margin-top:4px;gap:12px"><div class="_uedit" data-idx="${idx}" style="font-size:9px;color:var(--lav);cursor:pointer;opacity:.8">编辑</div><div class="_uwithdraw" data-idx="${idx}" style="font-size:9px;color:#c47a7a;cursor:pointer;opacity:.6">撤回</div></div>`;
+`: `<div style="display:flex;justify-content:flex-end;margin-top:4px;gap:12px"><div class="_uedit" data-idx="${idx}" style="font-size:9px;color:var(--lav);cursor:pointer;opacity:.8">编辑</div><div class="_uwithdraw" data-idx="${idx}" style="font-size:9px;color:#c47a7a;cursor:pointer;opacity:.6">撤回</div><div class="_msgdel" data-idx="${idx}" style="font-size:9px;color:#c47a7a;cursor:pointer;opacity:.7">删除</div></div>`;
 
 
            // 特殊卡片渲染
@@ -11611,6 +11905,16 @@ ${bubbleContent}${toolsHtml}</div>
 
       timeLine.textContent=m.time||''
 
+      if(_selectMode){
+        const _sb=ce('div')
+        _sb.className='_selbox'
+        _sb.dataset.idx=idx
+        const _on=_selected.has(String(idx))
+        _sb.style.cssText='position:absolute;top:50%;transform:translateY(-50%);'+(isU?'left:2px;':'right:2px;')+'width:20px;height:20px;border-radius:50%;border:2px solid var(--rose);background:'+(_on?'var(--rose)':'rgba(255,255,255,.85)')+';z-index:3;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.12)'
+        if(_on) _sb.innerHTML=I.check('#fff',13)
+        row.style.position='relative'
+        row.appendChild(_sb)
+      }
       row.appendChild(bubbleRow)
       row.appendChild(timeLine)
       ml.appendChild(row)
@@ -12248,9 +12552,10 @@ if (txtCharBtn) {
             // 清空重来
             var rstBtn=mb2.querySelector('#_gm_reset');
             if(rstBtn) rstBtn.onclick=function(){
-              if(!confirm('确定清空当前开场白的聊天记录？'))return;
-              saveMsgs(activeCharId,[]);
-              close2();render('chat');
+              showNiceConfirm('确定清空当前开场白的聊天记录？', function(){
+                saveMsgs(activeCharId,[]);
+                close2();render('chat');showToast('已清空当前开场白的记录');
+              });
             };
           }
           _renderGM();
@@ -12526,55 +12831,20 @@ mb.querySelector('#_mm_block').onclick=()=>{
         c.isBlocked = !c.isBlocked; saveCharList(); close(); render('chat');
       }
       mb.querySelector('#_mm_delete').onclick=()=>{
-  if(confirm('删除后TA将从列表消失，确定要删除好友吗？')) {
+  showNiceConfirm('删除后TA将从列表消失，确定要删除好友吗？',()=>{
     c.isDeleted = true; 
     c.deletedBy = 'u'; // 标记是你删的他
     saveCharList(); close(); render('msglist');
-  }
+  })
 }
 
 mb.querySelector('#_mm_destroy').onclick=()=>{
-  if(confirm('⚠️ 警告：此操作将彻底抹除该角色的所有数据（包括人设、聊天记录、朋友圈、约会和记忆），且无法恢复！\n\n确定要永久销毁TA吗？')) {
-    // 1. 从角色列表彻底抹除
-    charList = charList.filter(x => x.id !== c.id);
-    // 2. 清空所有开场白 slot 的聊天记录和记忆
-    store.del('msgs_' + c.id);
-    const _gCount = 1 + (c.altGreetings ? c.altGreetings.length : 0);
-    for(let gi=0; gi<_gCount+5; gi++){
-      store.del('msgs_' + c.id + '_g' + gi);
-      delete globalMemory[c.id + '_g' + gi];
-    }
-    delete globalMemory[c.id];
-    saveGlobalMemory();
-    // 3. 清理朋友圈、约会、图文羁绊
-    momentsData = momentsData.filter(m => m.charId !== c.id);
-    saveMoments();
-    events = events.filter(e => e.charId !== c.id);
-    saveEvents();
-    memories = memories.filter(m => m.charId !== c.id);
-    saveMem();
-    // 4. 从所有群聊中踢出
-    groups.forEach(g => { g.charIds = g.charIds.filter(id => id !== c.id); });
-    saveGroups();
-    // 5. 删除角色卡自带的世界书（只删导入时自动创建的，手动挂载的不动）
-    const removedBookIds = worldBooks.filter(b => b.fromCharId === c.id).map(b => b.id);
-    if (removedBookIds.length) {
-      worldBooks = worldBooks.filter(b => b.fromCharId !== c.id);
-      // 顺便从其他角色的挂载列表里清掉这些 id，防止悬空引用
-      charList.forEach(x => {
-        if (x.worldBookIds && x.worldBookIds.length) {
-          x.worldBookIds = x.worldBookIds.filter(id => !removedBookIds.includes(id));
-        }
-      });
-      saveWorldBooks();
-    }
-    
-    // 重置当前活跃角色
-    activeCharId = getMyChars().filter(x=>!x.isDeleted)[0]?.id || charList[0]?.id || '';
-    saveCharList();
-    close(); 
+  showNiceConfirm('警告：此操作将彻底抹除该角色的所有数据（包括人设、聊天记录、朋友圈、约会和记忆），且无法恢复。确定要永久销毁TA吗？',()=>{
+    destroyCharData(c)
+    close();
     render('msglist');
-  }
+    showToast('已销毁该角色')
+  })
 }
       mb.querySelector('#_mm_diary').onclick=()=>{
         close()
@@ -12750,11 +13020,12 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
         }
       })
       mb2.querySelector('#_clearmem').onclick=()=>{
-        if(!confirm('确定清除这个角色的所有记忆？'))return
-        delete globalMemory[_memKey(activeCharId)]
-        saveGlobalMemory()
-        close2()
-        alert('记忆已清除')
+        showNiceConfirm('确定清除这个角色的所有记忆？',()=>{
+          delete globalMemory[_memKey(activeCharId)]
+          saveGlobalMemory()
+          close2()
+          showToast('记忆已清除')
+        })
       }
       mb2.querySelector('#_forcesumm').onclick=async()=>{
         const btn=mb2.querySelector('#_forcesumm')
@@ -12969,79 +13240,129 @@ mb.querySelector('#_mm_destroy').onclick=()=>{
   if(el) el.textContent = _selected.size
 }
 
-  if($('#_selcancel'))$('#_selcancel').onclick=()=>{_selectMode=false;_selected.clear();render('chat')}
-  $('#_seldel').onclick=()=>{
-    if(!_selected.size){alert('还没选中任何消息');return}
-    if(!confirm(`删除选中的 ${_selected.size} 条消息？`))return
-    const arr=getMsgs()
-    const idxs=[..._selected].map(Number).sort((a,b)=>b-a)
-    // 清理被删消息对应的记忆
-    removeMemoryForMsgs(activeCharId, idxs.map(i=>arr[i]))
-    idxs.forEach(i=>{ arr.splice(i,1) })
-    saveMsgs(activeCharId,arr);_selectMode=false;_selected.clear();render('chat')
+  // 删除单条消息（统一入口，所有删除按钮/长按菜单都走这里）
+  function _deleteMsgAt(idx, then){
+    const a=getMsgs()
+    if(idx<0||idx>=a.length)return false
+    const dm=a[idx]
+    try{ removeMemoryForMsgs(activeCharId, [dm]) }catch(e){ console.warn('清理记忆失败',e) }
+    a.splice(idx,1)
+    saveMsgs(activeCharId,a)
+    if(then)then()
+    render('chat')
+    showToast('已删除 1 条消息')
+    return true
+  }
+  function _deleteMsgsFrom(idx){
+    const a=getMsgs()
+    if(idx<0||idx>=a.length)return
+    try{ removeMemoryForMsgs(activeCharId, a.slice(idx)) }catch(e){}
+    a.splice(idx)
+    saveMsgs(activeCharId,a)
+    render('chat')
+    showToast('已删除后续消息')
   }
 
-  // ===== 长按消息快速删除 =====
+  if($('#_selcancel'))$('#_selcancel').onclick=()=>{_selectMode=false;_selected.clear();render('chat')}
+  $('#_seldel').onclick=()=>{
+    if(!_selected.size){showToast('还没选中任何消息');return}
+    const idxs=[..._selected].map(Number).sort((a,b)=>b-a)
+    showNiceConfirm(`删除选中的 ${idxs.length} 条消息？`,()=>{
+      const arr=getMsgs()
+      try{ removeMemoryForMsgs(activeCharId, idxs.map(i=>arr[i])) }catch(e){}
+      idxs.forEach(i=>{ arr.splice(i,1) })
+      saveMsgs(activeCharId,arr);_selectMode=false;_selected.clear();render('chat')
+      showToast('已删除 '+idxs.length+' 条消息')
+    })
+  }
+
+  // ===== 长按 / 右键 / 按住消息 → 消息操作菜单 =====
   let _lpTimer=null, _lpFired=false
+  function _openMsgMenu(row, markFired){
+    if(!row || _selectMode) return
+    if(markFired){
+      _lpFired=true
+      setTimeout(()=>{_lpFired=false},800)
+    }
+    const idx=+row.dataset.idx
+    const arr=getMsgs()
+    const m=arr[idx]
+    if(!m) return
+    const n2=isN()
+    const preview=(m.text||'').replace(/<[^>]*>/g,'').slice(0,40)
+    showModal('消息操作',(mb,close)=>{
+      mb.innerHTML=`
+        <div style="padding:10px 0 16px;font-size:12px;color:${n2?'#c8b8d0':'var(--ink-l)'};line-height:1.6;text-align:center;word-break:break-all">${escHtml(preview)}${(m.text||'').length>40?'...':''}</div>
+        <div class="list-item" id="_lp_del" style="cursor:pointer">
+          <div style="flex:1;font-size:13px;color:#c47a7a">删除这条消息</div>
+          ${I.del('#c47a7a',16)}
+        </div>
+        <div class="list-item" id="_lp_delafter" style="cursor:pointer">
+          <div style="flex:1">
+            <div style="font-size:13px;color:#c47a7a">删除这条及之后所有</div>
+            <div style="font-size:10px;color:var(--ink-l);margin-top:2px">将删除第 ${idx+1} 条到最后一条</div>
+          </div>
+        </div>
+        <div class="list-item" id="_lp_select" style="cursor:pointer">
+          <div style="flex:1;font-size:13px;color:var(--ink)">进入多选模式</div>
+        </div>
+        <div class="btn-sub" id="_lp_cancel" style="margin-top:10px">取消</div>
+      `
+      mb.querySelector('#_lp_del').onclick=()=>{
+        close()
+        _deleteMsgAt(idx)
+      }
+      mb.querySelector('#_lp_delafter').onclick=()=>{
+        const cnt=arr.length-idx
+        showNiceConfirm(`确定删除从第 ${idx+1} 条开始的 ${cnt} 条消息？`, ()=>{
+          close()
+          _deleteMsgsFrom(idx)
+        })
+      }
+      mb.querySelector('#_lp_select').onclick=()=>{close();enterSelectMode()}
+      mb.querySelector('#_lp_cancel').onclick=close
+    })
+  }
+  const _lpFindRow=el=>{ try{ return el&&el.closest?el.closest('._msgrow'):null }catch(e){ return null } }
+
   ml.addEventListener('touchstart', e=>{
-    const row=e.target.closest('._msgrow')
+    const row=_lpFindRow(e.target)
     if(!row || _selectMode) return
     _lpFired=false
-    _lpTimer=setTimeout(()=>{
-      _lpFired=true
-      const idx=+row.dataset.idx
-      const arr=getMsgs()
-      const m=arr[idx]
-      if(!m) return
-      const n2=isN()
-      const isU=m.from==='u'
-      const preview=(m.text||'').replace(/<[^>]*>/g,'').slice(0,40)
-      showModal('消息操作',(mb,close)=>{
-        mb.innerHTML=`
-          <div style="padding:10px 0 16px;font-size:12px;color:${n2?'#c8b8d0':'var(--ink-l)'};line-height:1.6;text-align:center;word-break:break-all">${escHtml(preview)}${(m.text||'').length>40?'...':''}</div>
-          <div class="list-item" id="_lp_del" style="cursor:pointer">
-            <div style="flex:1;font-size:13px;color:#c47a7a">删除这条消息</div>
-            ${I.del('#c47a7a',16)}
-          </div>
-          <div class="list-item" id="_lp_delafter" style="cursor:pointer">
-            <div style="flex:1">
-              <div style="font-size:13px;color:#c47a7a">删除这条及之后所有</div>
-              <div style="font-size:10px;color:var(--ink-l);margin-top:2px">将删除第 ${idx+1} 条到最后一条</div>
-            </div>
-          </div>
-          <div class="list-item" id="_lp_select" style="cursor:pointer">
-            <div style="flex:1;font-size:13px;color:var(--ink)">进入多选模式</div>
-          </div>
-          <div class="btn-sub" id="_lp_cancel" style="margin-top:10px">取消</div>
-        `
-        mb.querySelector('#_lp_del').onclick=()=>{
-          if(!confirm('确定删除这条消息？')) return
-          const a=getMsgs()
-          const dm=a[idx]
-          removeMemoryForMsgs(activeCharId, [dm])
-          a.splice(idx,1)
-          saveMsgs(activeCharId,a);close();render('chat')
-        }
-        mb.querySelector('#_lp_delafter').onclick=()=>{
-          const cnt=arr.length-idx
-          showNiceConfirm(`确定删除从第 ${idx+1} 条开始的 ${cnt} 条消息？`, ()=>{
-            const a=getMsgs()
-            removeMemoryForMsgs(activeCharId, a.slice(idx))
-            a.splice(idx)
-            saveMsgs(activeCharId,a);close();render('chat')
-          })
-        }
-        mb.querySelector('#_lp_select').onclick=()=>{close();enterSelectMode()}
-        mb.querySelector('#_lp_cancel').onclick=close
-      })
-    }, 500)
+    _lpTimer=setTimeout(()=>{ _lpTimer=null; _openMsgMenu(row,true) }, 500)
   }, {passive:true})
-  ml.addEventListener('touchend', ()=>{clearTimeout(_lpTimer)}, {passive:true})
-  ml.addEventListener('touchmove', ()=>{clearTimeout(_lpTimer)}, {passive:true})
+  ml.addEventListener('touchend', ()=>{ if(_lpTimer){clearTimeout(_lpTimer);_lpTimer=null} }, {passive:true})
+  ml.addEventListener('touchmove', ()=>{ if(_lpTimer){clearTimeout(_lpTimer);_lpTimer=null} }, {passive:true})
+  // 桌面端：鼠标按住 0.5 秒同样弹菜单；右键也可以
+  ml.addEventListener('mousedown', e=>{
+    if(e.button!==0) return
+    const row=_lpFindRow(e.target)
+    if(!row || _selectMode) return
+    _lpFired=false
+    _lpTimer=setTimeout(()=>{ _lpTimer=null; _openMsgMenu(row,true) }, 500)
+  })
+  ml.addEventListener('mouseup', ()=>{ if(_lpTimer){clearTimeout(_lpTimer);_lpTimer=null} })
+  ml.addEventListener('mouseleave', ()=>{ if(_lpTimer){clearTimeout(_lpTimer);_lpTimer=null} })
+  ml.addEventListener('contextmenu', e=>{
+    const row=_lpFindRow(e.target)
+    if(!row || _selectMode) return
+    e.preventDefault()
+    _openMsgMenu(row)
+  })
   ml.addEventListener('click', e=>{if(_lpFired){_lpFired=false;e.stopPropagation();e.preventDefault();return}}, true)
 
     // 消息列表点击事件
   ml.addEventListener('click',async e=>{
+const msgDelBtn = e.target.closest('._msgdel');
+if(msgDelBtn){
+  e.stopPropagation();
+  const idx=+msgDelBtn.dataset.idx
+  const m=getMsgs()[idx]
+  if(!m) return;
+  const _pv=(m.text||'').replace(/<[^>]*>/g,'').slice(0,30)
+  showNiceConfirm('删除这条消息？\n'+_pv,()=>{ _deleteMsgAt(idx) })
+  return;
+}
 const forumOpenBtn = e.target.closest('._forumopenbtn');
 if(forumOpenBtn){
   const pid = forumOpenBtn.dataset.postid;
@@ -13118,8 +13439,11 @@ if(editBtn) {
    // 撤回与抓包
 const wBtn = e.target.closest('._uwithdraw');
     if(wBtn) {
-      if(!confirm('确定撤回这条消息吗？')) return;
-      const idx = +wBtn.dataset.idx;
+      const _wIdx = +wBtn.dataset.idx;
+      showNiceConfirm('确定撤回这条消息吗？',()=>_doWithdraw(_wIdx));
+      return;
+    }
+    function _doWithdraw(idx){
       const arr = getMsgs();
       arr.splice(idx, 1);
       arr.splice(idx, 0, {from: 'system', text: '你撤回了一条消息', time: ftime(now()), isSystem: true});
@@ -13193,7 +13517,7 @@ if(_selectMode){
     // 避免点击消息里的功能按钮时触发整条消息选择
     const isActionButton = e.target.closest(
       '._readmind,._quoteact,._paiyipai,._playtts,._regen,' +
-      '._uedit,._uwithdraw,._forumopenbtn,._chatmusicplay,' +
+      '._uedit,._uwithdraw,._msgdel,._forumopenbtn,._chatmusicplay,' +
       '._selbox'
     )
 
@@ -13698,6 +14022,7 @@ let bubbleStyle = isOnlySticker
   <div class="_paiyipai" data-name="${escHtml(c.name)}" style="font-size:9px;color:var(--rose-d);cursor:pointer;opacity:.8">拍一拍</div>
   ${!txt.startsWith('[语音]') ? `<div class="_playtts" data-text="${encodeURIComponent(text)}" style="cursor:pointer;opacity:.5">${I.play(n?'#c8a8d0':'var(--rose)',13)}</div>` : ''}
   <div class="_regen" data-idx="${idx}" style="font-size:9px;color:${n?'#c8a8d0':'var(--rose-d)'};cursor:pointer;opacity:.6">重说</div>
+  <div class="_msgdel" data-idx="${idx}" style="font-size:9px;color:#c47a7a;cursor:pointer;opacity:.7">删除</div>
 </div>
         </div>
         ${failedIconHtml}
@@ -14347,7 +14672,7 @@ if(!store.get('autoImageEnabled',false)){
   continue
 }
 
-const url=await genImage(prompt)
+const url=await genImage(prompt,{refs:[charRef(targetCharId)],strength:c.refStrength})
 imgApi.negativePrompt=oldNeg2
 
 if(!url){
@@ -14415,7 +14740,7 @@ if(url){
           )
           if(decision && decision.send && decision.prompt){
             const oldNeg = imgApi.negativePrompt
-            const imgUrl = await genImage(decision.prompt)
+            const imgUrl = await genImage(decision.prompt,{refs:[charRef(targetCharId)],strength:c.refStrength})
             imgApi.negativePrompt = oldNeg
             if(imgUrl){
               const imgArr = getMsgs(targetCharId)
@@ -14987,7 +15312,7 @@ callHistoryText[callHistoryText.length-1]=`${c.name}：${_vcR2}`
                 let prompt = 'masterpiece, best quality, 1boy, handsome, looking at viewer, selfie, video call pov, holding phone, close up';
                 const smart = await genSmartImagePrompt(activeCharId);
                 if(smart && smart.prompt) prompt = smart.prompt + ', selfie, video call pov';
-                const url = await genImage(prompt);
+                const url = await genImage(prompt,{refs:[charRef(activeCharId)],strength:(C()||{}).refStrength});
                 if(url && !isHungUp) {
                    bg.style.background = `url('${url}') center/cover`;
                    bg.style.opacity = '1';
@@ -15624,6 +15949,13 @@ ${recentMsgs}
               <div class="_sitag" data-t="dramatic lighting, dark" style="padding:5px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">暗系</div>
               <div class="_sitag" data-t="soft lighting, pastel" style="padding:5px 10px;border-radius:12px;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer">柔光</div>
             </div>
+            <label style="display:flex;align-items:flex-start;gap:9px;padding:10px 12px;border-radius:12px;background:rgba(196,186,212,.12);margin-bottom:12px;cursor:${P().refImg?'pointer':'default'};${P().refImg?'':'opacity:.6'}">
+              <input type="checkbox" id="_siref" style="margin-top:2px" ${P().refImg?'':'disabled'}>
+              <div style="flex:1">
+                <div style="font-size:11px;color:var(--ink);font-weight:500">画面里加入我</div>
+                <div style="font-size:10px;color:var(--ink-l);line-height:1.7;margin-top:2px">${P().refImg?'用马甲参考图生成，选「双人」时勾上更自然':'还没上传参考图，去「我的马甲」里加一张'}</div>
+              </div>
+            </label>
             <div class="btn-main" id="_sigo">开始生成</div>
             <div id="_siresult" style="display:none;margin-top:14px">
               <div id="_sireason" class="card" style="font-size:11px;color:var(--ink-l);line-height:1.8;font-style:italic"></div>
@@ -15679,7 +16011,8 @@ ${recentMsgs}
             // 生图
             const oldNeg=imgApi.negativePrompt
             if(promptResult.negative)imgApi.negativePrompt=promptResult.negative
-            const url=await genImage(finalPrompt)
+            const useRef=!!(mb.querySelector('#_siref')&&mb.querySelector('#_siref').checked)
+            const url=await genImage(finalPrompt,{refs:[charRef(activeCharId),useRef?personaRef():''],strength:(C()||{}).refStrength||P().refStrength})
             imgApi.negativePrompt=oldNeg
 
             btn.textContent='开始生成';btn.style.opacity='1'
@@ -15721,7 +16054,7 @@ ${recentMsgs}
             }
             if(saveBtn)saveBtn.onclick=()=>{
               if(!lastUrl)return
-              memories.unshift({id:uid(),title:`${c.name} · 剧情场景`,text:lastReason+'\n\nPrompt: '+lastPrompt,time:new Date().toLocaleString(),image:lastUrl,type:'image'})
+              memories.unshift({id:uid(),charId:c.id,title:`${c.name} · 剧情场景`,text:lastReason+'\n\nPrompt: '+lastPrompt,time:new Date().toLocaleString(),image:lastUrl,type:'image'})
               saveMem();alert('已保存到记忆')
             }
             if(redoBtn)redoBtn.onclick=()=>{
@@ -16240,6 +16573,31 @@ pages.charedit=()=>{
       <div id="_cavatar" style="cursor:pointer;display:inline-block">${avatarEl(c.avatar,80)}</div>
       <div style="font-size:10px;color:var(--ink-l);margin-top:6px;font-style:italic">点击更换头像</div>
     </div>
+
+    <div class="card">
+      <div class="card-t">生图参考图 <span style="font-size:9px;color:var(--ink-l);font-weight:400">锁定${escHtml(c.name||'角色')}的长相</span></div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <div id="_crefthumb" style="flex-shrink:0"></div>
+        <div style="flex:1;font-size:10px;color:var(--ink-l);line-height:1.8">
+          上传这张角色的照片或设定图，生图时作为参考。<br>NovelAI v4 走角色参考（不复制构图），v3 走图生图，GPT-Image 走图片编辑。
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <div class="btn-sub" id="_crefu" style="flex:1;margin:0">上传/更换</div>
+        <div class="btn-sub" id="_crefr" style="flex:0 0 90px;margin:0">删除</div>
+      </div>
+      <input type="file" id="_creffile" accept="image/*" style="display:none">
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+        <span style="font-size:10px;color:var(--ink-l);flex-shrink:0">参考强度</span>
+        <input type="range" id="_crefstr" min="30" max="85" step="5" value="${Math.round((c.refStrength||.55)*100)}" style="flex:1">
+        <span id="_crefstrv" style="font-size:10px;color:var(--rose-d);width:34px;text-align:right;flex-shrink:0">${Math.round((c.refStrength||.55)*100)}%</span>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:10px;color:var(--ink-l);cursor:pointer">
+        <input type="checkbox" id="_crefuse" ${c.refUse===false?'':'checked'}>
+        聊天、场景、相册生图时默认带上这张参考图
+      </label>
+    </div>
+
     <div class="card"><div class="card-t">微聊号</div><div style="font-size:16px; font-family:monospace; color:var(--rose-d); padding:8px 0">${c.wechatId || '暂无'}</div></div>
 
     <div class="card"><div class="card-t">名字</div><input class="inp" id="_cn" value="${escHtml(c.name||'')}"></div>
@@ -16297,6 +16655,58 @@ pages.charedit=()=>{
   p.appendChild(body);app.appendChild(p)
 
   body.querySelector('#_cavatar').onclick=()=>{pickAvatar(c,'avatar',()=>{saveCharList();render('charedit')})}
+
+  // 生图参考图
+  const cRefThumb=body.querySelector('#_crefthumb')
+  const cRefInput=body.querySelector('#_creffile')
+  const cRefDel=body.querySelector('#_crefr')
+  const paintCRef=async()=>{
+    let url=''
+    if(c.refImg){
+      try{url=await loadImage(c.refImg)}catch(e){url=''}
+    }
+    if(cRefThumb){
+      cRefThumb.innerHTML=url
+        ?`<div style="width:64px;height:64px;border-radius:14px;border:1px solid rgba(0,0,0,.06);background:url('${url}') center/cover"></div>`
+        :`<div style="width:64px;height:64px;border-radius:14px;border:1px dashed rgba(232,160,180,.5);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-l)">未上传</div>`
+    }
+    if(cRefDel){
+      cRefDel.style.opacity=c.refImg?'1':'.4'
+      cRefDel.style.pointerEvents=c.refImg?'auto':'none'
+    }
+  }
+  paintCRef()
+  body.querySelector('#_crefu').onclick=()=>cRefInput.click()
+  cRefInput.onchange=async e=>{
+    const f=e.target.files&&e.target.files[0]
+    if(!f)return
+    if(!/^image\//.test(f.type||'')){alert('请选择图片文件');return}
+    if(f.size>12*1024*1024){alert('图片有点大，换一张 12MB 以内的吧');return}
+    const btn=body.querySelector('#_crefu')
+    btn.textContent='处理中...';btn.style.pointerEvents='none';btn.style.opacity='.6'
+    const old=c.refImg
+    let id=''
+    try{id=await saveRefImageFile(f,1024)}catch(err){console.log('参考图保存失败:',err)}
+    btn.textContent='上传/更换';btn.style.pointerEvents='auto';btn.style.opacity='1'
+    cRefInput.value=''
+    if(!id){alert('图片保存失败，请重试');return}
+    c.refImg=id;c.refUse=true
+    if(old&&old!==id)dropRefImage(old)
+    saveCharList();paintCRef()
+  }
+  cRefDel.onclick=()=>{
+    if(!c.refImg)return
+    showNiceConfirm('删除这张生图参考图？',()=>{
+      const old=c.refImg
+      c.refImg=''
+      saveCharList();paintCRef();dropRefImage(old)
+    })
+  }
+  const cStrEl=body.querySelector('#_crefstr'),cStrV=body.querySelector('#_crefstrv')
+  cStrEl.oninput=()=>{cStrV.textContent=cStrEl.value+'%';c.refStrength=(+cStrEl.value)/100}
+  cStrEl.onchange=()=>saveCharList()
+  const cUseEl=body.querySelector('#_crefuse')
+  cUseEl.onchange=()=>{c.refUse=!!cUseEl.checked;saveCharList()}
 
   // 专属音色试听
   body.querySelectorAll('._cvoicepick').forEach(el=>{el.onclick=()=>{body.querySelector('#_cvoice').value=el.dataset.v}})
@@ -16382,6 +16792,7 @@ pages.personas=()=>{
   if(backup){
     const cur=personaList.find(q=>q.id===activePersonaId)
     if(cur && !cur.name && !cur.identity && !cur.personality){
+      if(cur.refImg)dropRefImage(cur.refImg)
       personaList=personaList.filter(q=>q.id!==activePersonaId)
       activePersonaId=backup
       savePersonaList()
@@ -16406,6 +16817,7 @@ pages.personas=()=>{
           <div style="font-size:14px;color:var(--ink);font-weight:500">
             ${escHtml(q.name||'未命名')}
             ${active?'<span style="font-size:10px;color:var(--lav)"> 使用中</span>':''}
+            ${q.refImg?'<span style="font-size:9px;color:var(--rose-d);margin-left:4px" title="已设置生图参考图">· 参考图</span>':''}
           </div>
           <div style="font-size:11px;color:var(--ink-l);margin-top:2px">${escHtml(q.identity||'身份未设')}</div>
           <div style="font-size:10px;color:var(--ink-l);margin-top:3px;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(q.personality||'性格未设')}</div>
@@ -16442,11 +16854,14 @@ pages.personas=()=>{
   el.onclick=()=>{
     if(!confirm('⚠️ 警告：删除马甲将连带【永久销毁】绑定在该马甲下的所有专属联系人、群聊、朋友圈和记忆！\n\n确定要删除这个马甲吗？'))return
     const id=el.dataset.id;
+    const _pDelObj=personaList.find(q=>q.id===id);
+    if(_pDelObj&&_pDelObj.refImg)dropRefImage(_pDelObj.refImg);
     
     // 1. 找出所有属于这个马甲的角色并彻底销毁数据
     const charsToDelete = charList.filter(c => c.bindPersonaId === id);
     const charIds = charsToDelete.map(c => c.id);
     charsToDelete.forEach(c => {
+       if(c.refImg) dropRefImage(c.refImg);
        store.del('msgs_' + c.id);
        const _gCount2 = 1 + (c.altGreetings ? c.altGreetings.length : 0);
        for(let gi=0; gi<_gCount2+5; gi++){
@@ -16458,11 +16873,13 @@ pages.personas=()=>{
     saveGlobalMemory();
     
     // 2. 清理这些角色发的朋友圈、约会、羁绊
+    const _rmMemIds2 = new Set();
+    charIds.forEach(cid => memsForChar(cid).forEach(m => _rmMemIds2.add(m.id)));
     momentsData = momentsData.filter(m => !charIds.includes(m.charId));
     saveMoments();
     events = events.filter(e => !charIds.includes(e.charId));
     saveEvents();
-    memories = memories.filter(m => !charIds.includes(m.charId));
+    memories = memories.filter(m => !_rmMemIds2.has(m.id));
     saveMem();
 
     // 3. 删除属于这个马甲的群聊
@@ -16582,6 +16999,30 @@ pages.personaedit=()=>{
       <div class="card" style="margin-top:10px;text-align:left"><div class="card-t">头像链接</div><input class="inp" id="_pavatarurl" value="${escHtml((q.avatar&&!q.avatar.startsWith('img_'))?q.avatar:'')}" placeholder="粘贴图片URL，例如 https://..."></div>
     </div>
 
+    <div class="card" style="text-align:left">
+      <div class="card-t">生图参考图 <span style="font-size:9px;color:var(--ink-l);font-weight:400">让生图里的你更像你</span></div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <div id="_prefthumb" style="flex-shrink:0"></div>
+        <div style="flex:1;font-size:10px;color:var(--ink-l);line-height:1.8">
+          上传这张马甲的照片或设定图，生图时作为参考。<br>NovelAI v4 走角色参考（不复制构图），v3 走图生图，GPT-Image 走图片编辑。
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <div class="btn-sub" id="_prefu" style="flex:1;margin:0">上传/更换</div>
+        <div class="btn-sub" id="_prefr" style="flex:0 0 90px;margin:0">删除</div>
+      </div>
+      <input type="file" id="_preffile" accept="image/*" style="display:none">
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+        <span style="font-size:10px;color:var(--ink-l);flex-shrink:0">参考强度</span>
+        <input type="range" id="_prefstr" min="30" max="85" step="5" value="${Math.round((q.refStrength||.55)*100)}" style="flex:1">
+        <span id="_prefstrv" style="font-size:10px;color:var(--rose-d);width:34px;text-align:right;flex-shrink:0">${Math.round((q.refStrength||.55)*100)}%</span>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:10px;color:var(--ink-l);cursor:pointer">
+        <input type="checkbox" id="_prefuse" ${q.refUse===false?'':'checked'}>
+        聊天里一键生图时默认带上这张参考图
+      </label>
+    </div>
+
 <div class="card"><div class="card-t">微聊号 (自动分配唯一标识)</div><div style="font-size:16px; font-family:monospace; color:var(--rose-d); padding:8px 0">${q.wechatId || '暂无'}</div></div>
 
     <div class="card"><div class="card-t">昵称</div><input class="inp" id="_pn" value="${escHtml(q.name||'')}"></div>
@@ -16592,6 +17033,70 @@ pages.personaedit=()=>{
     <div class="btn-main" id="_psave" style="margin-top:12px">保存马甲</div>
   `
   p.appendChild(body);app.appendChild(p)
+    const refThumb=body.querySelector('#_prefthumb')
+    const refInput=body.querySelector('#_preffile')
+    const refDel=body.querySelector('#_prefr')
+    const paintRef=async()=>{
+      let url=''
+      if(q.refImg){
+        try{url=await loadImage(q.refImg)}catch(e){url=''}
+      }
+      if(refThumb){
+        refThumb.innerHTML=url
+          ?`<div style="width:64px;height:64px;border-radius:14px;border:1px solid rgba(0,0,0,.06);background:url('${url}') center/cover"></div>`
+          :`<div style="width:64px;height:64px;border-radius:14px;border:1px dashed rgba(232,160,180,.5);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-l)">未上传</div>`
+      }
+      if(refDel){
+        refDel.style.opacity=q.refImg?'1':'.4'
+        refDel.style.pointerEvents=q.refImg?'auto':'none'
+      }
+    }
+    paintRef()
+    if(refInput){
+      body.querySelector('#_prefu').onclick=()=>refInput.click()
+      refInput.onchange=async e=>{
+        const f=e.target.files&&e.target.files[0]
+        if(!f)return
+        if(!/^image\//.test(f.type||'')){alert('请选择图片文件');return}
+        if(f.size>12*1024*1024){alert('图片有点大，换一张 12MB 以内的吧');return}
+        const btn=body.querySelector('#_prefu')
+        btn.textContent='处理中...';btn.style.pointerEvents='none';btn.style.opacity='.6'
+        const old=q.refImg
+        let id=''
+        try{id=await saveRefImageFile(f,1024)}catch(err){console.log('参考图保存失败:',err)}
+        btn.textContent='上传/更换';btn.style.pointerEvents='auto';btn.style.opacity='1'
+        refInput.value=''
+        if(!id){alert('图片保存失败，请重试');return}
+        q.refImg=id;q.refUse=true
+        if(old&&old!==id)dropRefImage(old)
+        savePersonaList();paintRef()
+      }
+    }
+    if(refDel){
+      refDel.onclick=()=>{
+        if(!q.refImg)return
+        showNiceConfirm('删除这张生图参考图？',()=>{
+          const old=q.refImg
+          q.refImg=''
+          savePersonaList();paintRef();dropRefImage(old)
+        })
+      }
+    }
+    const strEl=body.querySelector('#_prefstr'),strV=body.querySelector('#_prefstrv')
+    if(strEl){
+      strEl.oninput=()=>{
+        strV.textContent=strEl.value+'%'
+        q.refStrength=(+strEl.value)/100
+      }
+      strEl.onchange=()=>savePersonaList()
+    }
+    const useEl=body.querySelector('#_prefuse')
+    if(useEl){
+      useEl.onchange=()=>{
+        q.refUse=!!useEl.checked
+        savePersonaList()
+      }
+    }
     body.querySelector('#_pavatarurl').oninput=()=>{
       const url=body.querySelector('#_pavatarurl').value.trim()
       const preview=body.querySelector('#_pavatar_preview')
@@ -18736,21 +19241,14 @@ pages.memories=()=>{
   
   const renderBond = () => {
     const curC = myChars.find(x=>x.id===curBondId);
-    if(!curC) return;
+    if(!curC){
+      body.innerHTML = `<div style="text-align:center;padding:80px 24px;color:var(--ink-l);font-size:12px;line-height:2.2;opacity:.75">还没有可以记录羁绊的角色<br>先去「邂逅」认识一个人吧</div>`;
+      return;
+    }
     
     // === 独创的羁绊值算法 ===
     const msgs = getMsgs(curC.id);
-    const curMems = memories.filter(m => {
-      // 优先按 charId 精确匹配
-      if(m.charId) return m.charId === curC.id
-      // 老数据没 charId 时，用 title 匹配，但排除有其他同名前后缀的情况
-      if(m.title && m.title.includes(curC.name)){
-        // 检查是否有别的角色名比这个更精确匹配（避免"苏白"污染"苏白白"）
-        const otherMatch = myChars.find(x=>x.id!==curC.id && x.name!==curC.name && x.name.includes(curC.name) && m.title.includes(x.name))
-        return !otherMatch
-      }
-      return false
-    });
+    const curMems = memsForChar(curC.id);
     // 羁绊值 = 聊天记录加成 + 专属回忆加成（每条消息5点，每段回忆80点）
     const bondValue = msgs.length * 5 + curMems.length * 80;
     
@@ -18886,9 +19384,11 @@ pages.memories=()=>{
     
     body.querySelectorAll('._memdel').forEach(el => {
        el.onclick = () => {
-          if(!confirm('确定删除这段回忆吗？')) return;
-          memories = memories.filter(x => x.id !== el.dataset.id);
-          saveMem(); renderBond();
+          const mid = el.dataset.id;
+          showNiceConfirm('确定删除这段回忆吗？', () => {
+            memories = memories.filter(x => x.id !== mid);
+            saveMem(); renderBond();
+          });
        }
     });
     // 绑定点击卡片弹出全文阅读
@@ -18983,7 +19483,7 @@ ${recentMsgs}
 
        // 公共上下文
        const _qMsgs = getMsgs(curC.id);
-       const _qMems = memories.filter(m => m.charId === curC.id).slice(-8);
+       const _qMems = memsForChar(curC.id).slice(0,8);
        const _qRecent = _qMsgs.slice(-15).map(m=>(m.from==='u'?P().name:curC.name)+'：'+(m.text||'').slice(0,50)).join('\n');
        const _qMemTxt = _qMems.map(m=>m.text||m.title||'').filter(Boolean).map(t=>t.slice(0,60)).join('；');
        const _qHistKey = 'soulQA_hist_' + curC.id;
@@ -19548,6 +20048,15 @@ pages.gallery=()=>{
     </div>
     `:''}
 
+    <div class="card">
+      <div class="card-t">参考图 <span style="font-size:9px;color:var(--ink-l);font-weight:400">让生成的人物保持同一张脸</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap" id="_grefbox">
+        <div class="_grefopt" data-m="none" style="padding:6px 12px;border-radius:12px;border:1px solid transparent;background:rgba(200,200,200,.14);font-size:11px;cursor:pointer">不用</div>
+        <div class="_grefopt" data-m="char" style="padding:6px 12px;border-radius:12px;border:1px solid transparent;background:rgba(245,213,222,.35);font-size:11px;cursor:pointer;${C().refImg?'':'opacity:.45'}">角色${C().name?' · '+escHtml(C().name):''}${C().refImg?'':'（未上传）'}</div>
+        <div class="_grefopt" data-m="persona" style="padding:6px 12px;border-radius:12px;border:1px solid transparent;background:rgba(196,186,212,.18);font-size:11px;cursor:pointer;${P().refImg?'':'opacity:.45'}">我${P().name?' · '+escHtml(P().name):''}${P().refImg?'':'（未上传）'}</div>
+      </div>
+    </div>
+
     <div class="btn-main" id="_ggo" style="padding:14px;font-size:14px">✦ 生成图片</div>
 
     <div style="font-size:11px;color:var(--rose-d);font-weight:500;letter-spacing:2px;padding:18px 4px 10px">生成记录</div>
@@ -19637,6 +20146,30 @@ pages.gallery=()=>{
   }
 
   p.appendChild(body);app.appendChild(p)
+
+  // 参考图三选一
+  const _hasCharRef=!!charRef()
+  const _hasPersonaRef=!!personaRef()
+  let grefMode=_hasCharRef?'char':(_hasPersonaRef?'persona':'none')
+  const paintGRef=()=>{
+    body.querySelectorAll('._grefopt').forEach(el=>{
+      const on=el.dataset.m===grefMode
+      el.style.border=on?'1.5px solid var(--rose)':'1px solid transparent'
+      el.style.background=on?'rgba(232,160,180,.35)':(el.dataset.m==='persona'?'rgba(196,186,212,.18)':'rgba(200,200,200,.14)')
+      el.style.fontWeight=on?'500':'400'
+    })
+  }
+  body.querySelectorAll('._grefopt').forEach(el=>{
+    el.onclick=()=>{
+      const m=el.dataset.m
+      if(m==='char'&&!_hasCharRef){alert('当前角色还没有参考图，去「编辑角色」里上传一张');return}
+      if(m==='persona'&&!_hasPersonaRef){alert('马甲还没有参考图，去「我的马甲」里上传一张');return}
+      grefMode=m
+      paintGRef()
+    }
+  })
+  paintGRef()
+
   // 异步加载IndexedDB里的图片
   body.querySelectorAll('img[data-imgid]').forEach(async img=>{
     const id=img.dataset.imgid
@@ -19662,7 +20195,8 @@ body.querySelector('#_ggo').onclick=async()=>{
   }
 
   const btn=body.querySelector('#_ggo');btn.textContent='生成中...';btn.style.opacity='.5'
-  const url=await genImage(prompt);btn.textContent='生成图片';btn.style.opacity='1'
+  const refId=grefMode==='char'?charRef():grefMode==='persona'?personaRef():''
+  const url=await genImage(prompt,{ref:refId,strength:grefMode==='char'?C().refStrength:P().refStrength});btn.textContent='生成图片';btn.style.opacity='1'
 
   if(!url){return}
   const imgId=await saveImage(url)
@@ -19774,7 +20308,7 @@ ${userHint?'用户要求：'+userHint:'自由发挥'}
   })
   body.querySelectorAll('._gdel').forEach(el=>{el.onclick=()=>{if(!confirm('删除这张图片？'))return;imgs.splice(+el.dataset.i,1);store.set('generatedImages',imgs);render('gallery')}})
   body.querySelectorAll('._gmem').forEach(el=>{
-    el.onclick=()=>{const item=imgs[+el.dataset.i];memories.unshift({id:uid(),title:'生图记忆',text:item.prompt||'',time:item.time||new Date().toLocaleString(),image:item.url||''});saveMem();alert('已保存到记忆')}
+    el.onclick=()=>{const item=imgs[+el.dataset.i];const _gc=charList.find(x=>x.id===activeCharId)||{};memories.unshift({id:uid(),charId:activeCharId||'',title:(_gc.name?_gc.name+' · 生图记忆':'生图记忆'),text:item.prompt||'',time:item.time||new Date().toLocaleString(),image:item.url||''});saveMem();alert('已保存到记忆')}
   })
 
   // 放大查看
@@ -20009,11 +20543,13 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
 例如用户说「打开美化」→「这就带你去~ [跳转:beauty]」
 
 ══════ 动手能力：工具调用 ══════
-你可以直接改小手机里的数据（角色人设、世界书），不用让用户自己点。
-需要动手时，在回复里单独占一行输出：
+你可以直接改小手机里的数据（角色人设、世界书、预设/文风），不用让用户自己点。
+如果系统给了你原生工具（function calling），直接调用工具，不要输出任何 JSON 文本。
+只能用文本时（没有原生工具），才在回复里单独占一行输出：
 [工具|{"name":"工具名","args":{...}}]
 一次最多 3 行。系统会执行并把结果回给你，你再用人话告诉用户结果，不要复述 JSON。
 用户没说清的字段不要改；不确定就先 list_* / get_* 查一下，查不到就老实说没有，绝对不要编。
+用户让你建东西（角色、世界书、预设）时，直接把内容写全然后建，不要反问一堆，也不要只说"你去点某某页面"。
 
 工具清单：
 - list_chars {} → 列出所有角色（名字、关系、好感）
@@ -20025,11 +20561,19 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
 - create_worldbook {"title":"…","content":"…","triggers":"关键词1,关键词2","attachTo":"角色名"} → 新建世界书，triggers 留空表示常驻注入，attachTo 可顺便挂到角色身上
 - update_worldbook {"title":"…","newTitle":"…","content":"…","triggers":"…","enabled":true} → 改世界书
 - attach_worldbook {"title":"…","char":"角色名"} / detach_worldbook {"title":"…","char":"角色名"} → 挂载或卸下
+- list_presets {} → 列出所有预设/文风
+- get_preset {"title":"…"} → 读某个预设正文
+- create_preset {"title":"…","content":"…","position":"system","attachTo":"角色名"} → 新建预设（文风/输出契约），position 传 system 或 jailbreak，attachTo 可顺便绑给角色
+- update_preset {"title":"…","newTitle":"…","content":"…","position":"…","enabled":true} → 改预设
+- attach_preset {"title":"…","char":"角色名"} / detach_preset {"title":"…","char":"角色名"} → 给角色绑定/解绑预设
+- list_personas {} → 列出所有马甲（用户身份）
+- create_persona {"name":"…","identity":"…","personality":"…","secret":"…"} → 新建马甲
 
 例：用户说「给苏白加个青梅竹马设定」→
 [工具|{"name":"get_char","args":{"name":"苏白"}}]
 （拿到结果后再 update_char 补上，或者 create_worldbook 建一本专属世界书挂上去）
 用户只丢一句人设让你捏人 → 直接 create_char，别反问一堆。
+用户说「给我建个病娇文风预设」→ 直接 create_preset，正文自己写完整。
 
 ══════ 回答规则 ══════
 - 简洁可爱，3-6句话以内
@@ -20062,6 +20606,24 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
     else c.worldBookIds=c.worldBookIds.filter(x=>x!==b.id)
     saveCharList()
     return {text:`已${on?'给':'从'}${c.name}${on?'挂上':'卸下'}《${b.title}》`,chip:`已${on?'挂载':'卸下'}《${b.title}》`}
+  }
+  function _asFindPreset(title){
+    const key=(''+(title||'')).trim()
+    if(!key) return null
+    return styleBooks.find(b=>b.title===key)||styleBooks.find(b=>(b.title||'').includes(key))||null
+  }
+  function _asPresetLink(a,on){
+    a=a||{}
+    const b=_asFindPreset(a.title),c=_asFindChar(a.char)
+    if(!b) return {err:`没有找到预设「${a.title||''}」`}
+    if(!c) return {err:`没有找到角色「${a.char||''}」`}
+    c.styleBookIds=c.styleBookIds||[]
+    const has=c.styleBookIds.includes(b.id)
+    if(on===has) return {text:`${c.name}${on?'本来就绑着':'本来就没绑'}预设《${b.title}》`}
+    if(on)c.styleBookIds.push(b.id)
+    else c.styleBookIds=c.styleBookIds.filter(x=>x!==b.id)
+    saveCharList()
+    return {text:`已${on?'给':'从'}${c.name}${on?'绑定':'解绑'}预设《${b.title}》`,chip:`已${on?'绑定':'解绑'}预设《${b.title}》`}
   }
   const _asTools={
     list_chars(){
@@ -20148,31 +20710,208 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
       return {text:`已更新《${b.title}》：${changed.join('、')}`,chip:`已更新世界书《${b.title}》`}
     },
     attach_worldbook(a){return _asWBLink(a,true)},
-    detach_worldbook(a){return _asWBLink(a,false)}
+    detach_worldbook(a){return _asWBLink(a,false)},
+    list_presets(){
+      if(!styleBooks.length)return {text:'（还没有预设）'}
+      return {text:styleBooks.map(b=>{const owners=charList.filter(c=>!c.isDeleted&&(c.styleBookIds||[]).includes(b.id)).map(c=>c.name);return `- 《${b.title||'无标题'}》｜${b.type==='card'?'互动卡片':'文风'}｜${b.position==='jailbreak'?'越狱层':'系统层'}｜${b.enabled===false?'已停用':'启用中'}｜绑定：${owners.join('、')||'无'}`}).join('\n')}
+    },
+    get_preset(a){
+      const b=_asFindPreset(a&&a.title)
+      if(!b)return {err:`没有找到预设「${a&&a.title||''}」，先用 list_presets 看看`}
+      return {text:`《${b.title}》\n类型：${b.type==='card'?'互动卡片':'文风'}\n位置：${b.position||'system'}\n状态：${b.enabled===false?'停用':'启用'}\n正文：\n${b.content||''}`}
+    },
+    create_preset(a){
+      a=a||{}
+      const title=(''+(a.title||'')).trim(),content=(''+(a.content||'')).trim()
+      if(!title||!content)return {err:'create_preset 需要 title 和 content'}
+      if(_asFindPreset(title))return {err:`已经有同名预设「${title}」`}
+      const pos=a.position==='jailbreak'?'jailbreak':'system'
+      const sb={id:uid(),title,content,position:pos,type:'style',pov:'',wordCount:'',forbid:'',enabled:true}
+      styleBooks.push(sb)
+      const owner=_asFindChar(a.attachTo)
+      if(owner){owner.styleBookIds=owner.styleBookIds||[];if(!owner.styleBookIds.includes(sb.id))owner.styleBookIds.push(sb.id);saveCharList()}
+      saveStyleBooks()
+      return {text:`已创建预设《${title}》（${pos==='jailbreak'?'越狱层':'系统层'}）${owner?`，已绑定给 ${owner.name}`:'，去预设页可以绑定给角色'}`,chip:`已创建预设《${title}》`+(owner?`，绑给${owner.name}`:'')}
+    },
+    update_preset(a){
+      a=a||{}
+      const b=_asFindPreset(a.title)
+      if(!b)return {err:`没有找到预设「${a.title||''}」，先用 list_presets 看看`}
+      const changed=[]
+      if(typeof a.newTitle==='string'&&a.newTitle.trim()&&a.newTitle.trim()!==b.title){b.title=a.newTitle.trim();changed.push('标题')}
+      if(typeof a.content==='string'&&a.content.trim()&&a.content.trim()!==b.content){b.content=a.content.trim();changed.push('正文')}
+      if(a.position==='system'||a.position==='jailbreak'){if(b.position!==a.position){b.position=a.position;changed.push('位置')}}
+      if(typeof a.enabled==='boolean'&&a.enabled!==(b.enabled!==false)){b.enabled=a.enabled;changed.push(a.enabled?'启用':'停用')}
+      if(!changed.length)return {err:'预设没有变化，内容都一样'}
+      saveStyleBooks()
+      return {text:`已更新预设《${b.title}》：${changed.join('、')}`,chip:`已更新预设《${b.title}》`}
+    },
+    attach_preset(a){return _asPresetLink(a,true)},
+    detach_preset(a){return _asPresetLink(a,false)},
+    list_personas(){
+      const rows=(typeof personaList!=='undefined'?personaList:[]).filter(p=>!p.isDeleted)
+      if(!rows.length)return {text:'（还没有马甲）'}
+      return {text:rows.map(p=>`- ${p.name||'未命名'}｜身份：${p.identity||'无'}｜人格：${(p.personality||'').slice(0,40)||'无'}`).join('\n')}
+    },
+    create_persona(a){
+      a=a||{}
+      const name=(''+(a.name||'')).trim()
+      if(!name)return {err:'create_persona 需要 name'}
+      if(typeof personaList==='undefined')return {err:'马甲系统未就绪'}
+      if(personaList.some(p=>p.name===name))return {err:`已经有同名马甲「${name}」`}
+      personaList.push({id:uid(),name,identity:(''+(a.identity||'')).trim(),personality:(''+(a.personality||'')).trim(),secret:(''+(a.secret||'')).trim(),avatar:'',wechatId:genWcId()})
+      if(typeof savePersonaList==='function')savePersonaList()
+      else store.set('personaList',personaList)
+      return {text:`已创建马甲「${name}」，在「马甲」页面可以切换使用`,chip:`已创建马甲「${name}」`}
+    }
   }
   function _asRunTool(name,args){
     try{
       const fn=_asTools[name]
       if(!fn)return {ok:false,msg:'没有这个工具：'+name}
-      const r=fn(args||{})||{}
+      let a=args
+      if(typeof a==='string'){try{a=JSON.parse(a||'{}')}catch(e){a={}}}
+      const r=fn(a||{})||{}
       if(r.err)return {ok:false,msg:r.err}
       return {ok:true,msg:r.text||'',chip:r.chip||''}
     }catch(e){return {ok:false,msg:String(e&&e.message||e)}}
   }
-  function _asParseTools(text){
-    const calls=[],keep=[]
-    const raw=''+(text||'')
-    raw.split('\n').forEach(line=>{
-      const hit=line.match(/^\s*[\[【]\s*工具\s*[|｜]\s*(\{[\s\S]*\})\s*[\]】]\s*$/)
-      if(!hit){keep.push(line);return}
-      try{
-        const o=JSON.parse(hit[1])
-        if(o&&o.name)calls.push({name:String(o.name),args:o.args||{}})
-        else keep.push(line)
-      }catch(e){keep.push(line)}
-    })
-    return {clean:keep.join('\n').trim(),calls}
+  // 从 pos 处扫描一个完整 JSON 对象，返回结束下标（不含）；失败返回 -1
+  function _asScanJsonEnd(s,pos){
+    let depth=0,inStr=false,esc=false
+    for(let i=pos;i<s.length;i++){
+      const ch=s[i]
+      if(inStr){
+        if(esc){esc=false;continue}
+        if(ch==='\\'){esc=true;continue}
+        if(ch==='"')inStr=false
+        continue
+      }
+      if(ch==='"'){inStr=true;continue}
+      if(ch==='{')depth++
+      else if(ch==='}'){depth--;if(depth===0)return i+1}
+    }
+    return -1
   }
+  function _asParseTools(text){
+    const raw=''+(text||'')
+    const calls=[]
+    let out='',cursor=0
+    const MARK=/[[【]\s*(?:工具|tool)\s*[|｜:：]\s*/gi
+    const _skipTail=(from)=>{
+      let k=from
+      while(k<raw.length&&/[\s\]】]/.test(raw[k])&&k<from+3)k++
+      return k
+    }
+    let m
+    while((m=MARK.exec(raw))){
+      let brace=m.index+m[0].length
+      if(raw[brace]!=='{'){
+        brace=raw.indexOf('{',brace)
+        if(brace<0||brace-m.index>60) continue
+      }
+      const end=_asScanJsonEnd(raw,brace)
+      if(end<0) continue
+      const o=_asParseToolObj(raw.slice(brace,end))
+      if(o){
+        calls.push(o)
+        out+=raw.slice(cursor,m.index)
+        cursor=_skipTail(end)
+      }
+      MARK.lastIndex=Math.max(end,cursor)
+    }
+    out+=raw.slice(cursor)
+    // 兜底：代码块里的 {"name":...,"args":{...}}
+    if(!calls.length){
+      const fence=raw.match(/```(?:json)?\s*[\s\S]*?```/gi)
+      if(fence){
+        fence.forEach(f=>{
+          const inner=f.replace(/```(?:json)?/gi,'').replace(/```/g,'')
+          const o=_asParseToolObj(inner.trim())
+          if(o){calls.push(o);out=out.replace(f,'')}
+        })
+      }
+    }
+    let clean=out
+      .replace(/```(?:json)?\s*```/gi,'')
+      .replace(/[\[【]\s*(?:工具|tool)\s*[|｜:：]\s*[\]】]/gi,'')
+      .replace(/\n{3,}/g,'\n\n')
+      .trim()
+    return {clean,calls}
+  }
+  function _asParseToolObj(jsonStr){
+    if(!jsonStr)return null
+    const s=String(jsonStr).trim().replace(/[\[【]/,'').replace(/[\]】]$/,'')
+    // 模型常把长文本里的换行直接写进 JSON 字符串，先转义成 \n 再解析
+    const repair=(src)=>{
+      let r='',inStr=false,esc=false
+      for(let i=0;i<src.length;i++){
+        const ch=src[i]
+        if(inStr){
+          if(esc){r+=ch;esc=false;continue}
+          if(ch==='\\'){r+=ch;esc=true;continue}
+          if(ch==='"'){r+=ch;inStr=false;continue}
+          if(ch==='\n'){r+='\\n';continue}
+          if(ch==='\r'){r+='\\r';continue}
+          if(ch==='\t'){r+='\\t';continue}
+          r+=ch;continue
+        }
+        if(ch==='"')inStr=true
+        r+=ch
+      }
+      return r
+    }
+    let o=null
+    try{o=JSON.parse(s)}catch(e){}
+    if(!o){try{o=JSON.parse(repair(s))}catch(e){}}
+    if(!o){try{o=JSON.parse(repair(s).replace(/,\s*([}\]])/g,'$1'))}catch(e){}}
+    if(o&&o.name)return {name:String(o.name),args:o.args||o.arguments||o.params||{}}
+    return null
+  }
+
+  // ===== 原生工具定义（OpenAI function calling 格式）=====
+  const _asToolDefs=(()=>{
+    const f=(name,description,props,required)=>({type:'function',function:{name,description,parameters:{type:'object',properties:props||{},...(required&&required.length?{required}:{})}}})
+    const S=(description)=>({type:'string',description})
+    const B=(description)=>({type:'boolean',description})
+    return [
+      f('list_chars','列出所有角色（名字、关系、好感、状态）',{}),
+      f('get_char','读取某个角色的完整设定',{name:S('角色名字')},['name']),
+      f('update_char','修改角色设定，只传要改的字段',{
+        name:S('要改的角色名'),newName:S('新名字，改名字时才传'),
+        personality:S('性格人设'),relation:S('关系'),mood:S('当前心情'),status:S('当前状态'),
+        quote:S('口头禅'),affection:{type:'number',description:'好感度 0-100'}
+      },['name']),
+      f('create_char','新建角色',{
+        name:S('角色名'),personality:S('性格人设'),relation:S('和用户的关系'),
+        mood:S('初始心情'),status:S('当前状态'),quote:S('口头禅'),
+        greeting:S('加好友后对方说的第一句话'),worldbook:S('TA的专属世界书正文，可留空'),
+        affection:{type:'number',description:'初始好感 0-100'}
+      },['name']),
+      f('list_worldbooks','列出所有世界书',{}),
+      f('get_worldbook','读取某本世界书正文',{title:S('世界书标题')},['title']),
+      f('create_worldbook','新建世界书（背景设定词条）',{
+        title:S('标题'),content:S('正文，可以很长，用换行分段'),
+        triggers:S('逗号分隔的触发关键词，留空表示常驻注入'),
+        attachTo:S('顺便挂载到的角色名，可留空')
+      },['title','content']),
+      f('update_worldbook','修改世界书',{title:S('原标题'),newTitle:S('新标题'),content:S('新正文'),triggers:S('新触发词'),enabled:B('是否启用')},['title']),
+      f('attach_worldbook','把世界书挂到角色身上',{title:S('世界书标题'),char:S('角色名')},['title','char']),
+      f('detach_worldbook','从角色身上卸下世界书',{title:S('世界书标题'),char:S('角色名')},['title','char']),
+      f('list_presets','列出所有预设/文风',{}),
+      f('get_preset','读取某个预设正文',{title:S('预设标题')},['title']),
+      f('create_preset','新建预设（文风/输出契约，管怎么写、输出什么格式）',{
+        title:S('标题'),content:S('预设正文，可以很长'),
+        position:{type:'string',enum:['system','jailbreak'],description:'system 普通文风层，jailbreak 越狱强约束层'},
+        attachTo:S('顺便绑定到的角色名，可留空')
+      },['title','content']),
+      f('update_preset','修改预设',{title:S('原标题'),newTitle:S('新标题'),content:S('新正文'),position:{type:'string',enum:['system','jailbreak']},enabled:B('是否启用')},['title']),
+      f('attach_preset','给角色绑定预设',{title:S('预设标题'),char:S('角色名')},['title','char']),
+      f('detach_preset','给角色解绑预设',{title:S('预设标题'),char:S('角色名')},['title','char']),
+      f('list_personas','列出所有马甲（用户身份）',{}),
+      f('create_persona','新建马甲（用户自己的身份卡）',{name:S('马甲名'),identity:S('身份'),personality:S('人格'),secret:S('秘密/隐藏设定')},['name'])
+    ]
+  })()
 
   async function _asSend(text){
     if(!text.trim())return
@@ -20205,25 +20944,48 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
     ml.scrollTop=ml.scrollHeight
 
     try{
-      let hist=asMsgs.slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text}))
-      let finalText='',chips=[],rounds=0
-      while(rounds<3){
-        rounds++
-        const r=await callLLM({system:_asSysPrompt,messages:hist,maxTokens:2000,temperature:0.7})
-        if(!r.ok){finalText='呜…出错了啦 '+r.text;break}
-        const parsed=_asParseTools(r.text)
-        if(!parsed.calls.length){finalText=parsed.clean;break}
+      let msgs=asMsgs.slice(-20).map(m=>({role:m.from==='u'?'user':'assistant',content:m.text}))
+      let finalText='',chips=[],nativeOK=true,nudged=false
+      const _looksAction=t=>/(建|创建|新建|生成|加个|加一个|写个|写一个|做个|做一个|改一下|改成|设置|绑定|挂上|卸下|删掉|导入|捏)/.test(''+(t||''))
+      for(let round=0;round<4;round++){
+        const r=await callLLM({system:_asSysPrompt,messages:msgs,maxTokens:2000,temperature:0.7,tools:nativeOK?_asToolDefs:null,toolChoice:'auto'})
+        if(!r.ok){
+          // 有些中转站不支持 tools，自动退回文本协议
+          if(nativeOK){
+            nativeOK=false
+            round--
+            continue
+          }
+          finalText='呜…出错了啦 '+r.text
+          break
+        }
+        const nativeCalls=(nativeOK&&Array.isArray(r.toolCalls))?r.toolCalls:[]
+        const parsed=_asParseTools(r.text||'')
+        const calls=nativeCalls.length?nativeCalls:parsed.calls
+        const clean=nativeCalls.length?(''+(r.text||'')).trim():parsed.clean
+        if(!calls.length){
+          if(!nudged&&!nativeCalls.length&&_looksAction(text)){
+            nudged=true
+            msgs.push({role:'assistant',content:r.text||''})
+            msgs.push({role:'user',content:'【系统提示】用户是想让你直接创建/修改小手机里的角色、世界书、预设。请立刻动手：调用工具，或按 [工具|{"name":"工具名","args":{...}}] 格式单独输出一行，不要只让用户自己去点页面。如果这条不适用，就忽略它正常回答。'})
+            continue
+          }
+          finalText=clean;break
+        }
         const notes=[]
-        parsed.calls.slice(0,3).forEach(call=>{
+        calls.slice(0,3).forEach(call=>{
           const res=_asRunTool(call.name,call.args)
           notes.push((res.ok?'成功：':'失败：')+call.name+' → '+res.msg)
           if(res.ok&&res.chip)chips.push(res.chip)
         })
-        if(rounds>=3){finalText=parsed.clean||('弄好了：'+chips.join('；'));break}
-        hist=hist.concat([
-          {role:'assistant',content:r.text},
-          {role:'user',content:'【工具执行结果】\n'+notes.join('\n')+'\n已经执行完了，用一两句话自然地把结果告诉用户，不要再输出工具标签。'}
-        ])
+        if(nativeCalls.length){
+          msgs.push({role:'assistant',content:clean||'',tool_calls:nativeCalls.map(c=>({id:c.id,type:'function',function:{name:c.name,arguments:JSON.stringify(c.args||{})}}))})
+          nativeCalls.forEach((c,i)=>{msgs.push({role:'tool',tool_call_id:c.id,content:notes[i]||'已完成'})})
+        }else{
+          msgs.push({role:'assistant',content:r.text})
+          msgs.push({role:'user',content:'【工具执行结果】\n'+notes.join('\n')+'\n已经执行完了，用一两句话自然地把结果告诉用户，不要再输出工具标签。'})
+        }
+        if(round>=3)finalText=clean||('弄好了：'+chips.join('；'))
       }
       if(!finalText)finalText=chips.length?('弄好了：'+chips.join('；')):'……嗯，弄好了'
       asMsgs.push({from:'a',text:finalText,tools:chips})
@@ -20249,10 +21011,11 @@ Q: 数据怎么备份？ → 设置 → 数据管理 → 导出全部数据
   // 事件绑定
   document.getElementById('_asback')?.addEventListener('click',()=>goBack('home'))
   document.getElementById('_asclear')?.addEventListener('click',()=>{
-    if(confirm('要清空和花枝的聊天记录吗？')){
+    showNiceConfirm('要清空和花枝的聊天记录吗？',()=>{
       store.set('_assistantMsgs',[])
       render('assistant')
-    }
+      showToast('已清空和花枝的聊天记录')
+    })
   })
 
   const inp=document.getElementById('_asinp')
@@ -23564,20 +24327,24 @@ else{p.style.background=n?'linear-gradient(180deg,#2a2035,#3a2845)':'linear-grad
     }
     
     if(e.target.closest('._gcdel')){
-      if(!confirm('确定删除这条记录吗？'))return
-      const arr = getGroupMsgs(gid)
-      const deleted = arr[idx]
-      arr.splice(idx, 1)
-      saveGroupMsgs(gid, arr)
-      if(deleted && deleted.text && deleted.from !== 'u' && deleted.from !== 'system'){
-        const mem = getCharMemory(deleted.from)
-        const delText = deleted.text.slice(0, 30)
-        mem.keyEvents = mem.keyEvents.filter(ev => !ev.text.includes(delText))
-        mem.lastUpdate = Date.now()
-        saveGlobalMemory()
-      }
-      cleanupGroup()
-      render('groupchat')
+      showNiceConfirm('确定删除这条记录吗？',()=>{
+        const arr = getGroupMsgs(gid)
+        const deleted = arr[idx]
+        arr.splice(idx, 1)
+        saveGroupMsgs(gid, arr)
+        if(deleted && deleted.text && deleted.from !== 'u' && deleted.from !== 'system'){
+          try{
+            const mem = getCharMemory(deleted.from)
+            const delText = deleted.text.slice(0, 30)
+            mem.keyEvents = mem.keyEvents.filter(ev => !ev.text.includes(delText))
+            mem.lastUpdate = Date.now()
+            saveGlobalMemory()
+          }catch(err){ console.warn('清理群记忆失败',err) }
+        }
+        cleanupGroup()
+        render('groupchat')
+        showToast('已删除 1 条记录')
+      })
       return
     }
     
@@ -24045,7 +24812,7 @@ function renderGroupMsg(m,members,n,mode){
               
               const oldNeg=imgApi.negativePrompt
               if(promptResult&&promptResult.negative) imgApi.negativePrompt=promptResult.negative
-              const url=await genImage(finalPrompt)
+              const url=await genImage(finalPrompt,{refs:[charRef(charObj&&charObj.id)],strength:(charObj||{}).refStrength})
               imgApi.negativePrompt=oldNeg
               
               if(url){
@@ -24735,8 +25502,9 @@ mb.querySelector('#_gmvoice').onclick=()=>{
     }
     
     mb.querySelector('#_gmclear').onclick=()=>{
-      if(!confirm('清空这个群的聊天记录？\n\n注意：这只清屏幕上看到的消息，角色已经形成的记忆不会清除。'))return
-      saveGroupMsgs(g.id,[]);close();render('groupchat')
+      showNiceConfirm('清空这个群的聊天记录？注意：这只清屏幕上看到的消息，角色已经形成的记忆不会清除。',()=>{
+        saveGroupMsgs(g.id,[]);close();render('groupchat');showToast('已清空群聊记录')
+      })
     }
     // 禁言/解禁
         // 触发私聊发脾气逻辑
@@ -25903,7 +26671,7 @@ function openImgApiEditor(editId){
               </div>
             `
             mb3.querySelector('#_testdl').onclick=()=>{downloadImage(url,'test_'+new Date().toLocaleString().replace(/[\/\s:]/g,'_')+'.png')}
-            mb3.querySelector('#_testsave').onclick=()=>{memories.unshift({id:uid(),title:'测试生图',text:'测试提示词生成的图片',time:new Date().toLocaleString(),image:url});saveMem();alert('已保存到记忆')}
+            mb3.querySelector('#_testsave').onclick=()=>{const _gc2=charList.find(x=>x.id===activeCharId)||{};memories.unshift({id:uid(),charId:activeCharId||'',title:(_gc2.name?_gc2.name+' · 测试生图':'测试生图'),text:'测试提示词生成的图片',time:new Date().toLocaleString(),image:url});saveMem();alert('已保存到记忆')}
             mb3.querySelector('#_testclose').onclick=close3
           })
         }
@@ -31777,7 +32545,7 @@ app.appendChild(p);
           downloadImage(imgSrc, 'moments_'+charName+'_'+new Date().toLocaleString().replace(/[\/\s:]/g,'_')+'.png')
         }
         mb.querySelector('#_msavemem').onclick = () => {
-          memories.unshift({id:uid(),title:`${charName}的朋友圈`,text:m?.text||'',time:m?.time||new Date().toLocaleString(),image:imgSrc})
+          memories.unshift({id:uid(),charId:(m&&m.charId&&m.charId!=='u')?m.charId:(activeCharId||''),title:`${charName}的朋友圈`,text:m?.text||'',time:m?.time||new Date().toLocaleString(),image:imgSrc})
           saveMem();alert('已保存到记忆')
         }
         mb.querySelector('#_mclose').onclick = close
