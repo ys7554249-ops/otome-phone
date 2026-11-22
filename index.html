@@ -3468,6 +3468,95 @@ function getMsgs(cid){
   return Array.isArray(raw)?raw:[];
 }
 
+const _chatRequestsInFlight=new Set()
+const _chatRegenerationsInFlight=new Set()
+const _chatRequestOwners=new Map()
+let _chatRequestTokenCounter=0
+function _beginChatRequest(charId,{regeneration=false,timeoutMs=180000,onTimeout,onRelease}={}){
+  if(!charId||_chatRequestOwners.has(charId))return null
+  const controller=new AbortController()
+  const request={active:true,timer:null,finish:null,signal:controller.signal}
+  _chatRequestOwners.set(charId,request)
+  _chatRequestsInFlight.add(charId)
+  if(regeneration)_chatRegenerationsInFlight.add(charId)
+  const finalize=()=>{
+    clearTimeout(request.timer)
+    if(_chatRequestOwners.get(charId)===request){
+      _chatRequestOwners.delete(charId)
+      _chatRequestsInFlight.delete(charId)
+      if(regeneration)_chatRegenerationsInFlight.delete(charId)
+    }
+    try{if(onRelease)onRelease()}catch(error){console.error('[chat request release]',error)}
+  }
+  request.finish=()=>{
+    if(!request.active)return false
+    request.active=false
+    finalize()
+    return true
+  }
+  if(timeoutMs>0){
+    request.timer=setTimeout(()=>{
+      if(!request.active)return
+      request.active=false
+      controller.abort()
+      try{if(onTimeout)onTimeout()}catch(error){console.error('[chat request timeout]',error)}
+      finally{finalize()}
+    },timeoutMs)
+  }
+  return request
+}
+function _snapshotPendingUserMessages(messages){
+  const tokens=[]
+  ;(messages||[]).forEach(message=>{
+    if(message.from==='u'&&!message.replied){
+      const token=`chat-request-${++_chatRequestTokenCounter}`
+      message._replyRequestToken=token
+      tokens.push({token,text:message.text,time:message.time,ts:message.ts,image:message.image})
+    }
+  })
+  return tokens
+}
+function _finishPendingUserMessages(messages,tokens,markReplied){
+  const tokenMap=new Map((tokens||[]).map(item=>[item.token,item]))
+  messages.forEach(message=>{
+    const snapshot=tokenMap.get(message._replyRequestToken)
+    if(message.from==='u'&&snapshot){
+      const unchanged=message.text===snapshot.text&&message.time===snapshot.time&&message.ts===snapshot.ts&&message.image===snapshot.image
+      if(unchanged){
+        if(markReplied&&!message.replied)message.replied=true
+        else if(!markReplied)message.replied=false
+      }
+      delete message._replyRequestToken
+    }
+  })
+}
+function _restoreChatRegeneration(charId,messages,memory,eventSnapshot){
+  saveMsgs(charId,messages)
+  memory.keyEvents=eventSnapshot.slice()
+  saveGlobalMemory()
+}
+function _rollbackChatReply(charId,messageSnapshot,pendingTokens){
+  const identity=message=>JSON.stringify([message.from,message.ts,message.time,message.text,message.image])
+  const remaining=new Map()
+  messageSnapshot.forEach(message=>{
+    if(message.from==='u'){
+      const key=identity(message)
+      remaining.set(key,(remaining.get(key)||0)+1)
+    }
+  })
+  const restored=messageSnapshot.map(message=>({...message}))
+  getMsgs(charId).forEach(message=>{
+    if(message.from!=='u')return
+    const key=identity(message)
+    const count=remaining.get(key)||0
+    if(count)remaining.set(key,count-1)
+    else restored.push({...message})
+  })
+  _finishPendingUserMessages(restored,pendingTokens,false)
+  saveMsgs(charId,restored)
+  return restored
+}
+
 function saveMsgs(cid,arr){
   store.set(_msgKey(cid),arr.slice(-500));
 }
@@ -3538,12 +3627,33 @@ function _reportCache(usage, inTk){
       usage.prompt_cache_hit_tokens ||
       usage.cache_read_input_tokens || 0
     ) || 0
-    const total = Number(inTk || usage.prompt_tokens || usage.input_tokens || 0) || 0
+    const hasClaudeCacheCounts=usage.cache_read_input_tokens!=null||usage.cache_creation_input_tokens!=null
+    const total = hasClaudeCacheCounts
+      ? (Number(usage.input_tokens)||0)+(Number(usage.cache_read_input_tokens)||0)+(Number(usage.cache_creation_input_tokens)||0)
+      : Number(inTk || usage.prompt_tokens || usage.input_tokens || 0) || 0
     const rec = { hit, total, rate: total ? Math.round(hit / total * 100) : 0, ts: Date.now() }
     window._cacheLog.push(rec)
     if(window._cacheLog.length > 50) window._cacheLog.shift()
     console.log(`[cache] 命中 ${hit}/${total} tokens (${rec.rate}%)`, usage)
   }catch(e){}
+}
+function _apiTemperature(value){
+  const temperature=parseFloat(value)
+  return Number.isFinite(temperature)?temperature:1.0
+}
+function _toClaudeMessages(messages){
+  return (messages||[]).map(message=>({
+    ...message,
+    ...(Array.isArray(message.content)?{content:message.content.map(block=>{
+      if(block&&block.type==='image_url'&&block.image_url?.url){
+        const url=block.image_url.url
+        const match=url.match(/^data:(.*?);base64,(.*)/)
+        if(match)return{type:'image',source:{type:'base64',media_type:match[1],data:match[2]}}
+        if(/^https?:\/\//.test(url))return{type:'image',source:{type:'url',url}}
+      }
+      return block
+    })}: {})
+  }))
 }
 window.cacheStats = function(){
   const l = window._cacheLog || []
@@ -3608,6 +3718,11 @@ async function callLLM(opt){
   // ===== 超时保护：默认不限时，传入 opt.timeout 时生效 =====
   const TIMEOUT_MS = opt.timeout || 0
   const controller = new AbortController()
+  const abortFromCaller=()=>controller.abort()
+  if(opt.signal){
+    if(opt.signal.aborted)controller.abort()
+    else opt.signal.addEventListener('abort',abortFromCaller,{once:true})
+  }
   let timeoutId = null
   if(TIMEOUT_MS > 0){
     timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
@@ -3629,31 +3744,19 @@ async function callLLM(opt){
       'anthropic-beta':'prompt-caching-2024-07-31',
       'anthropic-dangerous-direct-browser-access':'true'
     }
-    // 转换 OpenAI image_url 格式 -> Claude image 格式
-    for(const m of (opt.messages||[])){
-      if(Array.isArray(m.content)){
-        m.content=m.content.map(c=>{
-          if(c.type==='image_url'&&c.image_url?.url){
-            const u=c.image_url.url
-            const mt=u.match(/^data:(.*?);base64,(.*)/)
-            if(mt)return{type:'image',source:{type:'base64',media_type:mt[1],data:mt[2]}}
-            if(/^https?:\/\//.test(u))return{type:'image',source:{type:'url',url:u}}
-          }
-          return c
-        })
-      }
-    }
+    // 转换副本，保留调用方消息以供重试或切换服务商时复用
+    const claudeMessages=_toClaudeMessages(opt.messages)
     const sysArr = opt.system
       ? [{ type:'text', text: opt.system, cache_control:{ type:'ephemeral' } }]
       : []
     body=JSON.stringify({
   model:a.model,
   max_tokens:opt.maxTokens||300,
-  temperature:a.temperature||1.0,
+  temperature:_apiTemperature(a.temperature),
   stream:_stream,
   system: sysArr,
   messages: (() => {
-    const msgs = opt.messages || [];
+    const msgs = claudeMessages;
     if (msgs.length < 2) return msgs;
     return msgs.map((m, i) => {
       if (i === msgs.length - 1) {
@@ -3683,7 +3786,7 @@ async function callLLM(opt){
     body=JSON.stringify({
   model:a.model,
   max_tokens:opt.maxTokens||300,
-  temperature:a.temperature||1.0,
+  temperature:_apiTemperature(a.temperature),
   stream:_stream,
   messages: msgs,
   ...(_tools.length?{tools:_tools,tool_choice:opt.toolChoice||'auto'}:{})
@@ -3894,6 +3997,8 @@ ${reason}）`
     window._lastAIErr=msg.replace(/\n/g,' ').slice(0,400)
 
     return {ok:false,err:msg,text:msg}
+  }finally{
+    if(opt.signal)opt.signal.removeEventListener('abort',abortFromCaller)
   }
 }
 
@@ -6478,7 +6583,7 @@ pages.addfriend = () => {
 
     <div style="width:100%; position:relative; max-width:400px">
       <input id="_afsearch" type="text" placeholder="输入微聊号或名字..." style="width:100%; padding:16px 20px; padding-right:50px; border-radius:24px; background:${n?'rgba(0,0,0,.3)':'rgba(255,255,255,.7)'}; backdrop-filter:blur(12px); border:1px solid ${n?'rgba(200,180,220,.1)':'rgba(232,160,180,.2)'}; outline:none; font-size:15px; color:${n?'#fff':'var(--ink)'}; box-shadow:0 4px 16px rgba(0,0,0,0.03); transition:all 0.3s">
-      
+
       <div id="_doSearchBtn" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); width:36px; height:36px; border-radius:50%; background:var(--rose); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 12px rgba(255,100,150,0.4)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
       </div>
@@ -9337,7 +9442,7 @@ let _selected=new Set()
 // ==========================================
 // 🔮 智能心声与动态状态引擎 (赋予AI拉黑权限版)
 // ==========================================
-window.getSmartChatReply = async (userTexts, c, onChunk) => {
+window.getSmartChatReply = async (userTexts, c, onChunk, requestOptions={}) => {
     const api = getApi();
     if(!api || !api.key){
       const _em='（未配置API：请到「设置 → API」里填写 Base URL、API Key 和模型名）'
@@ -9526,10 +9631,10 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
       // 线下模式+卡片触发：两次调用，第一次正常写剧情，第二次单独生成卡片
             const storyForcedTag = '\n\n（【系统强制指令】当前是线下小说剧情模式。本次回复只需要输出小说剧情正文和状态栏（严格按照世界书中定义的状态栏格式），绝对禁止输出任何HTML代码、<div>、<style>标签。互动卡片将由另一次独立调用生成，你不需要管。）';
 
-      r = await callLLM({ system: sys + storyForcedTag, messages: hist, maxTokens: 8192, onChunk });
+      r = await callLLM({ system: sys + storyForcedTag, messages: hist, maxTokens: 8192, onChunk, signal:requestOptions.signal });
       if(!r.ok) return { text: r.text || '（API 调用失败：未知错误）', thoughts: '', err: r.err||r.text };
       // 第二次调用：只生成卡片HTML
-      const cardR = await callLLM({ system: cardPrompt + '\n\n（角色背景仅作填充参考）\n' + sys, messages: hist, maxTokens: 4000 });
+      const cardR = await callLLM({ system: cardPrompt + '\n\n（角色背景仅作填充参考）\n' + sys, messages: hist, maxTokens: 4000, signal:requestOptions.signal });
       if(cardR.ok){
         cardHtml = (cardR.text||'').trim().replace(/^```html\s*/gi,'').replace(/```\s*$/g,'').trim();
         if(!/^\s*</.test(cardHtml)) cardHtml = ''; // 不是HTML就丢弃
@@ -9538,7 +9643,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
       // 统一单次调用（HTML预设已包含在 sysPrompt 中，渲染层会自动拆分剧情和HTML卡片）
       const maxTokens = _cardHit ? 8192 : (c.offlineMode ? 16384 : 8192);
       const finalSys = _cardHit ? (cardPrompt + '\n\n（角色背景仅作填充参考）\n' + sys) : (sys + cardPrompt);
-      r = await callLLM({ system: finalSys, messages: hist, maxTokens, onChunk });
+      r = await callLLM({ system: finalSys, messages: hist, maxTokens, onChunk, signal:requestOptions.signal });
       if(!r.ok) return { text: r.text || '（API 调用失败：未知错误）', thoughts: '', err: r.err||r.text };
     }
 
@@ -14095,25 +14200,42 @@ ${ctxMsgs}
     // 重说按钮 (结构已重构，绝不乱触发)
     const regenBtn = e.target.closest('._regen')
     if(regenBtn){
-      if(sending) return;
+      const targetCharId=c.id
+      if(sending||_chatRequestsInFlight.has(targetCharId)) return;
       const idx = parseInt(regenBtn.dataset.idx);
-      const arr = getMsgs();
-      
+      if(!Number.isInteger(idx)||idx<0)return
+      const arr = getMsgs(targetCharId);
+      if(idx>=arr.length||arr[idx]?.from!=='c')return
       let roundStart = idx, roundEnd = idx;
       while(roundStart > 0 && arr[roundStart-1].from !== 'u') roundStart--;
       while(roundEnd < arr.length-1 && arr[roundEnd+1].from !== 'u') roundEnd++;
-      
       const userTexts = [];
       for(let i=roundStart-1; i>=0; i--){
         if(arr[i].from==='u') userTexts.unshift(arr[i].text);
         else break;
       }
       if(!userTexts.length) return;
-      
       // 重说前先快照：生成失败时必须能原样恢复，不能把这一轮对话和记忆吃掉
-      const _rgSnapMsgs = arr.slice();
+      const _rgSnapMsgs = arr.map(message=>({...message}));
       const _rgMemRef = getCharMemory(c.id);
       const _rgSnapEvents = _rgMemRef.keyEvents.slice();
+      let _regenTp=null
+      const _restoreRegen=()=>_restoreChatRegeneration(targetCharId,_rgSnapMsgs,_rgMemRef,_rgSnapEvents)
+      const request=_beginChatRequest(targetCharId,{
+        regeneration:true,
+        onTimeout:()=>{
+          try{_restoreRegen()}catch(error){console.error('[regenerate timeout rollback]',error)}
+          try{if(_regenTp)_regenTp.remove()}catch(error){}
+          if(activeCharId===targetCharId){render('chat');alert('重说请求超时，原对话已恢复，请重试')}
+        },
+        onRelease:()=>{
+          sending=false
+          try{if(_regenTp)_regenTp.remove()}catch(error){}
+        }
+      })
+      if(!request)return
+      sending=true
+      try{
 
       // 清除记忆中的旧对话残骸（用用户消息摘要精确匹配，因为重说前后用户消息不变）
       const _rgDelBrief = userTexts.map(t => formatMemorySnippet(t, 50)).filter(Boolean).join('；');
@@ -14137,30 +14259,25 @@ ${ctxMsgs}
       saveGlobalMemory();
       
       arr.splice(roundStart, roundEnd - roundStart + 1);
-      saveMsgs(activeCharId, arr);
+      saveMsgs(targetCharId, arr);
       
-      sending = true;
-      // 看门狗：重说流程任何未捕获异常都不能让输入区永久锁死
-      clearTimeout(window._sendWatchdog)
-      window._sendWatchdog=setTimeout(()=>{try{if(sending){sending=false;const _tp=document.getElementById('_typing');if(_tp)_tp.remove();}}catch(e){}},180000)
-      let _regenTp=null
-      try{
       render('chat');
       await new Promise(r=>setTimeout(r, 200));
+      if(!request.active)return
       
       const _mlRegen=document.getElementById('_msglist')
       const _typingRegen=ce('div');_typingRegen.id='_typing'
       _regenTp=_typingRegen
       _typingRegen.style.cssText='display:flex;align-items:flex-end;gap:8px;animation:fadeIn .3s'
       _typingRegen.innerHTML=`<div style="flex-shrink:0">${avatarEl(c.avatar,32)}</div><div style="padding:10px 14px;border-radius:18px 18px 18px 4px;background:${isN()?'rgba(255,255,255,.06)':'rgba(255,255,255,.66)'};font-size:13px;color:var(--ink-l)"><span style="animation:typing 1.2s infinite">·</span><span style="animation:typing 1.2s .2s infinite">·</span><span style="animation:typing 1.2s .4s infinite">·</span></div>`
-      if(_mlRegen){_mlRegen.appendChild(_typingRegen);_mlRegen.scrollTop=_mlRegen.scrollHeight}
+      if(_mlRegen&&activeCharId===targetCharId){_mlRegen.appendChild(_typingRegen);_mlRegen.scrollTop=_mlRegen.scrollHeight}
       const typing=_typingRegen;
       const _stBubble=typing.lastElementChild
       const _stStream=store.get('streamDisplay',true)
       const _cleanStream=t=>{if(!t)return t;let s=t;const hasCard=/<(?:UpdateVariable|Analysis|JSONPatch)/i.test(s);s=s.replace(/<(?:UpdateVariable|Analysis|JSONPatch|status|ztl|EVE_DATA|thinking|artifact)[\s\S]*$/gi,'').replace(/\[心声[:：][\s\S]*$/gi,'').replace(/\[(?:状态|心情|好感|备注|记忆)[:：][^\]]*\]/gi,'').replace(/^[\s\S]*<\/(?:UpdateVariable|Analysis|JSONPatch|status|ztl)>\s*/gi,'').replace(/<(?:UpdateVariable|Analysis|JSONPatch)>[\s\S]*?<\/(?:UpdateVariable|Analysis|JSONPatch)>/gi,'').replace(/\[心声[:：][^\]]*\]/gi,'').trim();if(!s&&hasCard)s='✨ 正在生成小卡片…';return s}
       let _sUS1=false,_sUS1_raf=false
       const aiRes=await window.getSmartChatReply(userTexts, c, _stStream?(partial)=>{
-        if(_stBubble&&partial&&_stBubble.isConnected){
+        if(_stBubble&&partial&&activeCharId===targetCharId&&_stBubble.isConnected){
           const _cp=partial;if(!_cp)return
           const _sLines=(!c.offlineMode&&_cp.includes('\n'))?_cp.split('\n').map(l=>l.trim()).filter(l=>l):null
           if(_sLines&&_sLines.length>1){
@@ -14176,18 +14293,18 @@ ${ctxMsgs}
             if(!_sUS1&&!_sUS1_raf){_sUS1_raf=true;requestAnimationFrame(()=>{_sUS1_raf=false;if(_mlNow)_mlNow.scrollTop=_mlNow.scrollHeight})}
           }
         }
-      }:null);
+      }:null,{signal:request.signal});
+      if(!request.active)return
       let reply=aiRes.text;
       const thoughts=aiRes.thoughts;
       if(aiRes && aiRes.err){
         typing.remove();
         window._lastAIErr=aiRes.err;
         console.error('[重说失败]',aiRes.err);
-        alert('重说失败，API 没有正常返回\n\n'+String(aiRes.err).replace(/^（|）$/g,'').slice(0,900));
         throw new Error('REGEN_API_FAIL');
       }
       typing.remove();
-      const newArr=getMsgs();
+      const newArr=getMsgs(targetCharId);
       const timeStr=ftime(now());
       // 互动卡片检测：如果整段回复是 HTML（<style>/<div> 开头），当作单条消息，不按换行拆
       const _isHtmlCard = /(?:<style[\s>]|<div\s+(?:style|class)\s*=|<!DOCTYPE|<html[\s>])/i.test(reply||'');
@@ -14213,7 +14330,7 @@ ${ctxMsgs}
           _isCard:true
         })
       }
-      saveMsgs(activeCharId,newArr);
+      saveMsgs(targetCharId,newArr);
 
       // 【修复】重说生成后，将新对话同步写入关键事件
       const _rgUBrief = userTexts.map(t => formatMemorySnippet(t, c.offlineMode?120:50)).filter(Boolean).join('；');
@@ -14223,23 +14340,17 @@ ${ctxMsgs}
         addMemoryEvent(c.id, _rgSummary.slice(0, c.offlineMode?800:250), 'chat');
       }
 
-      sending=false;
-      clearTimeout(window._sendWatchdog)
-      render('chat');
+      request.finish()
+      if(activeCharId===targetCharId)render('chat');
       }catch(err){
-        // 生成失败：把删掉的这一轮消息和记忆原样还回去
-        try{
-          saveMsgs(activeCharId,_rgSnapMsgs)
-          _rgMemRef.keyEvents=_rgSnapEvents
-          saveGlobalMemory()
-        }catch(e2){console.error('[regenerate] 回滚失败:',e2)}
-        try{if(_regenTp)_regenTp.remove();const _tp2=document.getElementById('_typing');if(_tp2)_tp2.remove()}catch(e){}
-        console.error('[regenerate]',err)
-        if(!(err&&err.message==='REGEN_API_FAIL')) alert('重说失败：'+((err&&err.message)||err))
-        render('chat')
+        if(request.active){
+          try{_restoreRegen()}catch(e2){console.error('[regenerate] 回滚失败:',e2)}
+          try{if(activeCharId===targetCharId){const _tp2=document.getElementById('_typing');if(_tp2)_tp2.remove()}}catch(e){}
+          console.error('[regenerate]',err)
+          if(activeCharId===targetCharId){render('chat');alert(err&&err.message==='REGEN_API_FAIL'?'重说失败，原对话已恢复，请稍后重试':'重说失败：'+((err&&err.message)||err))}
+        }
       }finally{
-        sending=false
-        clearTimeout(window._sendWatchdog)
+        request.finish()
       }
     }
   });
@@ -14488,6 +14599,7 @@ let bubbleStyle = isOnlySticker
 
 
   const addMsg=()=>{
+    if(_chatRegenerationsInFlight.has(c.id)){showToast('正在重新生成回复，请完成后再发送');return}
     const text=inp.value.trim();if(!text)return
     const timeStr=ftime(now());inp.value='';inp.style.height='auto'
     const arr=getMsgs();
@@ -14640,21 +14752,33 @@ let bubbleStyle = isOnlySticker
     });
   };
 
-  const doReply=async()=>{
-if(sending)return
+const doReply=async()=>{
+const targetCharId=c.id
+if(sending||_chatRequestsInFlight.has(targetCharId))return
+const startingMessages=getMsgs(targetCharId)
+const pending=startingMessages.filter(m=>m.from==='u'&&!m.replied)
+const pendingTokens=_snapshotPendingUserMessages(pending)
+const messageSnapshot=startingMessages.map(message=>({...message}))
+if(pendingTokens.length)saveMsgs(targetCharId,startingMessages)
+let typing=null
+let replyCommitted=false
+const request=_beginChatRequest(targetCharId,{
+  onTimeout:()=>{
+    try{_rollbackChatReply(targetCharId,messageSnapshot,pendingTokens)}catch(error){console.error('[chat reply timeout rollback]',error)}
+    try{if(typing)typing.remove()}catch(error){}
+    if(activeCharId===targetCharId){render('chat');alert('回复请求超时，消息已保留，请重试')}
+  },
+  onRelease:()=>{
+    sending=false
+    try{if(typing)typing.remove()}catch(error){}
+  }
+})
+if(!request)return
 sending=true
-// 看门狗：AI 回复流程里的任何未捕获异常都不该让输入区永久锁死
-clearTimeout(window._sendWatchdog)
-window._sendWatchdog=setTimeout(()=>{try{if(sending){sending=false;const _tp=document.getElementById('_typing');if(_tp)_tp.remove();}}catch(e){}},180000)
-const typing=appendTyping()
-if(!typing.isConnected){const _rml=document.getElementById('_msglist');if(_rml)_rml.appendChild(typing)}
-const _stBubble2=typing.lastElementChild
 const _stStream2=store.get('streamDisplay',true)
-
-// 【核心修复1】：锁定开始回复时的目标角色ID，防止切页面导致串台
-const targetCharId = c.id 
-const arr=getMsgs(targetCharId)
-const pending=arr.filter(m=>m.from==='u'&&!m.replied)
+try{
+typing=appendTyping()
+const _stBubble2=typing.lastElementChild
 
 // 🌟 核心修改：如果你没发消息，AI会自己推进生活轨迹！
 let texts = [];
@@ -14673,7 +14797,7 @@ let aiRes, reply, thoughts;
 try {
   let _sUS2=false,_sUS2_raf=false
   aiRes=await window.getSmartChatReply(texts, c, _stStream2?(partial)=>{
-      if(_stBubble2&&partial){if(!_stBubble2.isConnected){const _ml0=document.getElementById('_msglist');if(_ml0&&!document.getElementById('_typing')){_ml0.appendChild(typing);}}if(_stBubble2.isConnected){
+      if(_stBubble2&&partial&&activeCharId===targetCharId&&_stBubble2.isConnected){
         const _cp2=partial;if(!_cp2)return
         const _sLines2=(!c.offlineMode&&_cp2.includes('\n'))?_cp2.split('\n').map(l=>l.trim()).filter(l=>l):null
         if(_sLines2&&_sLines2.length>1){
@@ -14689,34 +14813,38 @@ try {
           if(!_sUS2&&!_sUS2_raf){_sUS2_raf=true;requestAnimationFrame(()=>{_sUS2_raf=false;if(_ml2)_ml2.scrollTop=_ml2.scrollHeight})}
         }
       }
-      }
-    }:null)
+    }:null,{signal:request.signal})
+  if(!request.active)return
   reply=aiRes.text
   thoughts=aiRes.thoughts
   // API 真实报错：不能把错误文案当成角色消息存进聊天，也不能消耗用户消息
   if(aiRes && aiRes.err){
     if(typing.parentElement) typing.remove()
-    sending=false
-    clearTimeout(window._sendWatchdog)
+    const unsent=getMsgs(targetCharId)
+    _finishPendingUserMessages(unsent,pendingTokens,false)
+    saveMsgs(targetCharId,unsent)
     window._lastAIErr=aiRes.err
     console.error('[聊天发送失败]',aiRes.err)
     alert('发送失败，API 没有正常返回\n\n'+String(aiRes.err).replace(/^（|）$/g,'').slice(0,900))
     return
   }
 } catch (err) {
+  if(!request.active)return
   console.error(err);
   if(typing.parentElement) typing.remove();
-  sending = false;
+  _rollbackChatReply(targetCharId,messageSnapshot,pendingTokens)
   const errMsg = err.message || err.toString() || '未知错误';
   alert('发送失败：' + errMsg);
   console.error('完整错误信息：', err);
-  return; // 出错时安全退出，防止界面假死
+    return; // 出错时安全退出，防止界面假死
 }
+
+if(!request.active)return
 
 if(typing.parentElement) typing.remove()
     const newArr=getMsgs(targetCharId)
 
-    newArr.forEach(m=>{if(m.from==='u'&&!m.replied)m.replied=true})
+    _finishPendingUserMessages(newArr,pendingTokens,true)
     const timeStr=ftime(now())
     const isOffline=c.offlineMode||false
     let lines
@@ -15021,7 +15149,8 @@ if(!c.offlineMode && ttsApi.key && ttsApi.autoVoice && store.get('autoVoiceEnabl
         _isCard:true
       })
     }
-    saveMsgs(targetCharId, newArr)
+saveMsgs(targetCharId, newArr)
+replyCommitted=true
 
     // === 角色点歌：异步搜索并自动播放 ===
     const _djItems=newArr.filter(m=>m._needMusicSearch)
@@ -15089,8 +15218,7 @@ if(_recallItems.length){
   },2000+Math.random()*3000)
 }
 
-sending=false
-clearTimeout(window._sendWatchdog)
+request.finish()
 
 if(document.getElementById('_msglist') && activeCharId === targetCharId){
   // 新消息到达，允许滚到底部
@@ -15442,6 +15570,15 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
     }
     // 异步提炼长期记忆（不卡界面）
     autoSummarizeMemory(targetCharId);
+  }catch(err){
+    if(request.active&&!replyCommitted){
+      _rollbackChatReply(targetCharId,messageSnapshot,pendingTokens)
+      console.error('[doReply]',err)
+      if(activeCharId===targetCharId)alert('发送失败：'+((err&&err.message)||err))
+    }
+  }finally{
+    request.finish()
+  }
   }
 
 
@@ -15467,19 +15604,43 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
     const cName=escHtml(c.name)
 
     // 功能面板触发的回复都走这个
-    const funcReply=async(userText,aiPrompt)=>{
-      const timeStr=ftime(now())
+  const funcReply=async(userText,aiPrompt)=>{
       const targetCharId=c.id
+      if(sending||_chatRequestsInFlight.has(targetCharId))return
+      const timeStr=ftime(now())
       const arr=getMsgs(targetCharId)
-      arr.push({from:'u',text:userText,time:timeStr,ts:Date.now(),replied:false})
-      saveMsgs(targetCharId,arr);appendUserBubble(userText,timeStr)
-      if(sending)return;sending=true
+      const userMessage={from:'u',text:userText,time:timeStr,ts:Date.now(),replied:false}
+      arr.push(userMessage)
+      const pendingTokens=_snapshotPendingUserMessages([userMessage])
+      saveMsgs(targetCharId,arr)
+      if(activeCharId===targetCharId)appendUserBubble(userText,timeStr)
       let tp=null
+      const request=_beginChatRequest(targetCharId,{
+        onTimeout:()=>{
+          const current=getMsgs(targetCharId)
+          _finishPendingUserMessages(current,pendingTokens,false)
+          saveMsgs(targetCharId,current)
+          if(activeCharId===targetCharId)alert('回复请求超时，消息已保留，请重试')
+        },
+        onRelease:()=>{
+          sending=false
+          try{if(tp)tp.remove()}catch(e){}
+        }
+      })
+      if(!request){
+        _finishPendingUserMessages(arr,pendingTokens,false)
+        saveMsgs(targetCharId,arr)
+        return
+      }
+      sending=true
       try{
       tp=appendTyping()
-            const aiRes=await window.getSmartChatReply(aiPrompt, c)
+            const aiRes=await window.getSmartChatReply(aiPrompt, c, null, {signal:request.signal})
+      if(!request.active)return
       if(aiRes && aiRes.err){
         try{if(tp)tp.remove()}catch(e){}
+        _finishPendingUserMessages(getMsgs(targetCharId),pendingTokens,false)
+        saveMsgs(targetCharId,getMsgs(targetCharId))
         if(_aiShowErr(aiRes.err)) return
       }
       let reply=aiRes.text
@@ -15487,7 +15648,7 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
 
       tp.remove()
       const newArr=getMsgs(targetCharId)
-      newArr.forEach(m=>{if(m.from==='u'&&!m.replied)m.replied=true})
+      _finishPendingUserMessages(newArr,pendingTokens,true)
             reply=(reply||'')
               .replace(/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi,'')
               .replace(/<Analysis>\s*[-\s\w:,.;]*<\/Analysis>/gi,'')
@@ -15511,7 +15672,7 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
           thoughts:isLast ? thoughts : '',
           mode:c.offlineMode ? 'offline' : 'online'
         })
-        appendReplyBubble(line,ts,false,isLast ? thoughts : '')
+        if(activeCharId===targetCharId)appendReplyBubble(line,ts,false,isLast ? thoughts : '')
       })
 
       // 卡片必须作为独立消息保存，并明确标记为卡片。
@@ -15535,13 +15696,17 @@ callHistoryText.push(`${c.name}：${_r2Txt}`)
         addMemoryEvent(targetCharId, _fSummary.slice(0, c.offlineMode?800:250), 'chat');
       }
 
-      saveMsgs(targetCharId,newArr);updateDraft();render('chat')
+       saveMsgs(targetCharId,newArr)
+       if(activeCharId===targetCharId){updateDraft();render('chat')}
       }catch(err){
         try{if(tp)tp.remove()}catch(e){}
         console.error('[funcReply]',err)
-        alert('发送失败：'+((err&&err.message)||err))
+        const current=getMsgs(targetCharId)
+        _finishPendingUserMessages(current,pendingTokens,false)
+        saveMsgs(targetCharId,current)
+        if(activeCharId===targetCharId)alert('发送失败：'+((err&&err.message)||err))
       }finally{
-        sending=false
+        request.finish()
       }
     }
 
@@ -17092,7 +17257,8 @@ ${recentMsgs}
           }
                     mb.querySelector('#_imgsend').onclick=async()=>{
             if(!imgData){alert('先选一张图');return}
-            if(sending){alert('上一条还在生成，稍等一下');return}
+            if(sending||_chatRegenerationsInFlight.has(c.id)){alert('上一条还在生成，稍等一下');return}
+            const targetCharId=c.id
             const msg=mb.querySelector('#_imgmsg').value.trim()
             close()
             sending=true
@@ -17100,12 +17266,12 @@ ${recentMsgs}
             try{
               // 存图到IndexedDB，避免base64撑爆localStorage
               const imgId=await saveImage(imgData)
-              const timeStr=ftime(now()),arr=getMsgs()
+              const timeStr=ftime(now()),arr=getMsgs(targetCharId)
               arr.push({from:'u',text:`[图片]${msg?' '+msg:''}`,time:timeStr,replied:false,image:imgId})
-              saveMsgs(activeCharId,arr)
+              saveMsgs(targetCharId,arr)
 
-     // 只保存图片，不在这里请求AI
-render('chat')
+      // 只保存图片，不在这里请求AI
+if(activeCharId===targetCharId)render('chat')
            }catch(err){
   alert('发图失败：'+(err&&err.message||err))
 }finally{
@@ -27543,7 +27709,7 @@ function openChatApiEditor(editId){
       </div>
       <div class="card">
         <div class="card-t">温度 (Temperature)</div>
-        <input class="inp" id="_catemp" value="${cur.temperature||1.0}" type="number" step="0.1" min="0" max="2" placeholder="1.0">
+        <input class="inp" id="_catemp" value="${_apiTemperature(cur.temperature)}" type="number" step="0.1" min="0" max="2" placeholder="1.0">
         <div style="font-size:10px;color:var(--ink-l);margin-top:6px;line-height:1.7">
           控制回复的随机性和创造力<br>
           • 0.3～0.7：稳定、理性、不容易跑偏（推荐用于严肃角色）<br>
@@ -27607,7 +27773,7 @@ function openChatApiEditor(editId){
       renderModelTags()
     }
     mb.querySelector('#_casave').onclick=()=>{
-      const conf={id:cur.id,name:mb.querySelector('#_caname').value.trim()||'未命名',provider:providerEl.value,baseUrl:baseEl.value.trim(),key:keyEl.value.trim(),model:modelEl.value.trim(),temperature:parseFloat(mb.querySelector('#_catemp').value)||1.0}
+      const conf={id:cur.id,name:mb.querySelector('#_caname').value.trim()||'未命名',provider:providerEl.value,baseUrl:baseEl.value.trim(),key:keyEl.value.trim(),model:modelEl.value.trim(),temperature:_apiTemperature(mb.querySelector('#_catemp').value)}
       if(isEdit){const idx=apiList.findIndex(a=>a.id===conf.id);if(idx>=0)apiList[idx]=conf;else apiList.push(conf)}
       else apiList.push(conf)
       activeApiId=conf.id;saveApiList();close();render('settings')
