@@ -2958,6 +2958,12 @@ function _wbTriggersHit(b,hay){
   if(!trigs.length) return true
   return !!hay && trigs.some(t=>hay.includes(t))
 }
+function _worldBookPromptText(c,turnText){
+  const hay=(_recentUserText(c.id)+'\n'+(turnText||'')).toLowerCase()
+  const books=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled!==false&&b.type!=='card'&&_wbTriggersHit(b,hay))
+  if(!books.length) return ''
+  return '\n\n【世界观背景】'+books.map(b=>'\n'+_fillCharUser(b.content||'',c)).join('')
+}
 // 生效范围：导入的酒馆预设默认只在线下用，手写/AI 生成的默认全局
 function _styleScope(b){
   if(b&&b.scope==='all'||b&&b.scope==='offline') return b.scope
@@ -4121,8 +4127,8 @@ function liveCtx(charObj){
   }catch(e){ return '' }
 }
 
-function sysPrompt(stableOnly){
-const c=C(),p=P()
+function sysPrompt(stableOnly,c=C(),turnText=''){
+const p=P()
 const isOffline=c.offlineMode||false
   let s = '';
   let st = '';
@@ -4248,13 +4254,7 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 }
 
   // 世界书注入（事实）：无触发词常驻，有触发词命中才注入
-  const _wbHay=_recentUserText(c.id)
-  const cBooks=(c.worldBookIds||[]).map(id=>worldBooks.find(b=>b.id===id)).filter(b=>b&&b.enabled&&b.type!=='card'&&_wbTriggersHit(b,_wbHay))
-  let _wbTxt=''
-  if(cBooks.length){
-    _wbTxt+=`\n\n【世界观背景】`
-    cBooks.forEach(b=>{_wbTxt+=`\n${_fillCharUser(b.content||'',c)}`})
-  }
+  let _wbTxt=_worldBookPromptText(c,turnText)
 
   // 全局记忆注入
   const memText=getMemoryPromptText(c.id)
@@ -9507,7 +9507,7 @@ window.getSmartChatReply = async (userTexts, c, onChunk) => {
     } else {
       hist.push({ role: 'user', content: _uText });
     }
-    const sys = sysPrompt(true);
+    const sys = sysPrompt(true,c,userMsgStr||'');
     // 前缀缓存诊断：只要 system 变了，本轮整段历史都无法命中缓存
     try{
       const _hash = str => { let h=0; for(let i=0;i<str.length;i++) h=(h*31+str.charCodeAt(i))|0; return h }
