@@ -6206,6 +6206,15 @@ let _navSkipPush = false;
 
 // 返回：优先回到真实来路，没有则用兜底页
 function goBack(fallback){
+  if(_curPage==='dungeonplay'||_curPage==='dungeons'){
+    const parent=_curPage==='dungeonplay'?'dungeons':'home'
+    while(['dungeons','dungeonplay'].includes(_navStack.at(-1)))_navStack.pop()
+    if(_navStack.at(-1)===parent)_navStack.pop()
+    _navSkipPush=true
+    history.replaceState({page:parent},'', '#'+parent)
+    render(parent)
+    return
+  }
   while(_navStack.length){
     const prev=_navStack.pop()
     if(prev&&prev!==_curPage){_navSkipPush=true;render(prev);return}
@@ -6214,8 +6223,13 @@ function goBack(fallback){
 }
 window.addEventListener('popstate', e => {
   if(e.state && e.state.page) {
+    let page=e.state.page
+    if(_curPage==='dungeons'&&page==='dungeonplay'){
+      page='home'
+      history.replaceState({page},'', '#'+page)
+    }
     _isPopState = true;
-    render(e.state.page);
+    render(page);
   }
 });
 
@@ -6420,7 +6434,7 @@ function render(page){
   // 同页重渲染（例如收到一条消息后 render('chat')）只替换当前条目，
   // 否则历史里会堆出一长串相同页面，返回键要按很多次才有反应。
   if(!_isPopState) {
-    if(_curPage===page && history.state && history.state.page===page){
+    if((_curPage===page||_navSkipPush) && history.state?.page===page){
       history.replaceState({page: page}, '', '#' + page);
     }else{
       history.pushState({page: page}, '', '#' + page);
@@ -35196,7 +35210,7 @@ top.innerHTML=`<div id="_dgbk" style="padding:6px;cursor:pointer">${I.back(n?'#c
   // 异步加载图片
   sa.querySelectorAll('img[data-dgimg]').forEach(async img=>{const url=await loadImage(img.dataset.dgimg);if(url)img.src=url})
 
-  $('#_dgbk').onclick=()=>render('dungeons')
+  $('#_dgbk').onclick=()=>goBack('dungeons')
   if($('#_dgbegin'))$('#_dgbegin').onclick=()=>doDungeonAdvance(template,c,partner,'')
   // 【修复】已结束的副本重新进入时，主按钮只负责打开结算界面，禁止再次推进
   if(activeDungeon.status==='finished'){

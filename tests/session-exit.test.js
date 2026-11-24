@@ -144,6 +144,39 @@ test('ending after a Flight Chess roll freezes the board with no legal moves', (
   assert.equal(context.resolveFlightMove(ended, 0, 0).ok, false);
 });
 
+test('dungeon back goes to the list then home without reopening saved play', () => {
+  const { context, run } = environment();
+  let popstate;
+  const shown = [];
+  const entries = [];
+  Object.assign(context, {
+    addEventListener(type, callback) { if (type === 'popstate') popstate = callback; },
+    history: {
+      get state() { return entries.at(-1); },
+      pushState(state) { entries.push(state); },
+      replaceState(state) { entries[entries.length - 1] = state; },
+    },
+    document: { getElementById: () => null },
+    requestAnimationFrame() {}, _pgCleanup() {},
+  });
+  context.app.classList = { add() {}, remove() {} };
+  for (const page of ['home', 'dungeons', 'dungeonplay']) context.pages[page] = () => shown.push(page);
+  run(section('let _isPopState = false;', '// ===== 左滑返回上一级手势'));
+  run(section('function render(page){', '// ===== 首页 ====='));
+  context.render('home');
+  context.render('dungeons');
+  context.render('dungeonplay');
+  context.goBack();
+  context.goBack();
+  assert.deepEqual(shown, ['home', 'dungeons', 'dungeonplay', 'dungeons', 'home']);
+  assert.deepEqual(entries.map(state => state.page), ['home', 'dungeons', 'home']);
+
+  context.render('dungeons');
+  popstate({ state: { page: 'dungeonplay' } });
+  assert.equal(shown.at(-1), 'home');
+  assert.equal(context.history.state.page, 'home');
+});
+
 function dungeonEnv() {
   const requests = [], prompts = [], modals = [], stats = ['strength', 'intelligence', 'charm', 'luck'];
   const env = environment({
