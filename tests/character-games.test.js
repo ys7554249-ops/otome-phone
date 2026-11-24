@@ -43,6 +43,31 @@ function createRoom(context, gameType = 'gomoku', characterCount = 1) {
   return result.room;
 }
 
+test('game lobby displays the avatar and name without rendering raw character card data', () => {
+  const createButton = {};
+  const body = { style: {}, querySelector: () => createButton, querySelectorAll: () => [] };
+  const page = { style: {}, appendChild() {} };
+  const modalControl = { value: 'gomoku', addEventListener() {} };
+  const modal = { querySelector: () => modalControl, querySelectorAll: () => [] };
+  const context = createGameContext({
+    charList: [{ id: 'mina', name: 'Mina & Co.', avatar: 'mina-avatar', bindPersonaId: 'persona-1', personality: '<character>\n```yaml\nbackground_story: internal card notes\n```\n</character>' }],
+    pages: {}, isN: () => false, topBar() {}, app: { appendChild() {} },
+    ce: (_tag, className) => className === 'page' ? page : body,
+    escHtml: value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;'),
+    avatarEl: avatar => `<img src="${avatar}">`,
+    showModal: (_title, draw) => draw(modal, () => {})
+  });
+  const lobbyEnd = html.indexOf('\npages.gameroom=()=>{', end);
+  assert.ok(lobbyEnd > end);
+  vm.runInContext(html.slice(end, lobbyEnd), context);
+  context.pages.games();
+  createButton.onclick();
+  assert.match(modal.innerHTML, /class="_game_char" value="mina"/);
+  assert.match(modal.innerHTML, /<img src="mina-avatar">/);
+  assert.match(modal.innerHTML, /Mina &amp; Co\./);
+  assert.doesNotMatch(modal.innerHTML, /<character>|&lt;character|```yaml|internal card notes/);
+});
+
 test('room creation enforces supported player counts and persists bounded history', () => {
   const context = createGameContext({
     charList: [
