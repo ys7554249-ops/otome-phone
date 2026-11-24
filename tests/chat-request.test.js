@@ -141,7 +141,7 @@ test('ordinary reply and regeneration use cancellable owned request lifecycles',
   assert.match(doReply[0], /\{signal:request\.signal\}/);
   assert.match(doReply[0], /_rollbackChatReply\(targetCharId,messageSnapshot,pendingTokens\)/);
   assert.match(regeneration[0], /_beginChatRequest\(targetCharId,\{[\s\S]*?regeneration:true/);
-  assert.match(regeneration[0], /\{signal:request\.signal\}/);
+  assert.match(regeneration[0], /\{signal:request\.signal[,}]/);
   assert.match(regeneration[0], /_restoreRegen\(\)/);
 });
 

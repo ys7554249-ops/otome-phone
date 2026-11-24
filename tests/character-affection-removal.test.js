@@ -83,9 +83,10 @@ test('legacy status is discarded without becoming mood; custom cards keep their 
   const ctx = vm.createContext({
     window: {}, getApi: () => ({ key: 'test' }), store: { get: (_key, fallback) => fallback },
     getMsgs: () => [], worldBooks: [], styleBooks: [], embApi: {},
-    searchMemoryByKeyword: () => [], sysPrompt: () => '', liveCtx: () => '',
+    searchMemoryByKeyword: () => [], sysPrompt: () => '', liveCtx: () => '', setTimeout, clearTimeout,
   });
-  vm.runInContext(section('window.getSmartChatReply =', '// 全局单例：监听互动卡片'), ctx);
+  vm.runInContext(section('function _recentCheckup(', 'function liveCtx(')
+    + section('window.getSmartChatReply =', '// 全局单例：监听互动卡片'), ctx);
   const role = { id: 'c1', name: 'Lin', mood: '平静' };
   async function reply(text, onChunk) {
     ctx.callLLM = async opts => {

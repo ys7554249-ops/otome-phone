@@ -4361,7 +4361,40 @@ function _pullStatusBlock(raw){
   return { text: text.trim(), status: found.join('\n').trim() }
 }
 // ===== AI调用 =====
-// 每轮都会变的状态（心情/正在做/查岗情境）。放进 system 会让整段前缀缓存失效，
+function _recentCheckup(messages){
+  let users = true;
+  for(let i=messages.length-1;i>=0;i--){
+    const m=messages[i];
+    if(m.isSystem||m.isCard||m._isCard)continue;
+    if(m.from==='u'&&users)continue;
+    if(m.from!=='c')break;
+    users=false;
+    if(m.mode==='offline')break;
+    if(m._checkup)return {...(typeof m._checkup==='object' ? m._checkup : {}),opening:m.text};
+    // Old offline checkups were stored as plain bubbles. Require both parts of their opening.
+    if(/(?:[\d零一二两三四五六七八九十百千]+\s*个?小时|[\d一二两三四五六七八九十]+\s*天).{0,14}(?:没|不)回我(?:的)?消息.{0,28}(?:去问|给).{1,20}[“‘「『"']/.test(m.text||''))return {opening:m.text};
+  }
+  return null;
+}
+
+function _checkupReplyPrompt(checkup){
+  return `\n\n【承接当前对话】前一轮是你本人主动发消息查对方的岗，对方现在在回应你。先接住对方这次的话，结合你刚才提出的问题作答。对方用玩笑、反问或只发问号时，也要交代你刚才到底在问什么；等这件事接上了再自然转到其他话题。${checkup.opening ? '\n你当时说过：'+checkup.opening : ''}${checkup.evidence ? '\n你当时看到的是：'+checkup.evidence : ''}${checkup.fighting ? '\n你们当时正在闹矛盾，语气请贴合前一轮。' : ''}`;
+}
+
+function _regenerationUserTurn(messages,roundStart){
+  let start=roundStart;
+  const users=[];
+  for(let i=roundStart-1;i>=0;i--){
+    const m=messages[i];
+    if(m.isSystem)continue;
+    if(m.from!=='u')break;
+    start=i;
+    users.unshift(m);
+  }
+  return {start,users};
+}
+
+// 每轮都会变的状态（心情/正在做）。放进 system 会让整段前缀缓存失效，
 // 所以单独成函数，由调用方拼到最后一条 user 消息里。
 function liveCtx(charObj){
   try{
@@ -4369,9 +4402,6 @@ function liveCtx(charObj){
     const _n=new Date(), _p2=n=>String(n).padStart(2,'0')
     const _timeStr=`${_n.getFullYear()}年${_n.getMonth()+1}月${_n.getDate()}日 星期${'日一二三四五六'[_n.getDay()]} ${_p2(_n.getHours())}:${_p2(_n.getMinutes())}`
     let t=`\n[此刻的你·实时状态｜这是你当下的真实状态，内部参考，不要复述字段名]\n当前时间：${_timeStr}\n心情：${c.mood||'平静'}\n正在做：${c.status||'没什么特别的事'}\n你和对方的关系：${c.relation||'普通'}`
-    if(c._checkupCtx && (Date.now()-c._checkupCtx.ts<600000)){
-      t+=`\n⚠️【重要情境】你刚刚主动去查了对方的岗！你的情绪还没冷下来！\n${c._checkupCtx.evidence?'你发现了：'+c._checkupCtx.evidence:'你没发现什么可疑的。'}\n${c._checkupCtx.fighting?'你们最近在闹矛盾/吵架，你现在的查岗带着赌气和情绪！':''}\n你前面发的那些消息就是你查岗时说的话——对方现在回复了你，你必须延续刚才的情绪和态度来回应！\n不要突然变温柔、不要转移话题、不要装作什么都没发生。你刚才的醋意/质问/试探还在，对方的回答会直接影响你接下来的情绪走向。`
-    }
     return t
   }catch(e){ return '' }
 }
@@ -4854,8 +4884,7 @@ async function fetchModels(apiObj){
 
 const _avCache={id:null,b64:null}
 
-async function _personaAvatarB64(){
-  const currentChar=C()
+async function _personaAvatarB64(currentChar=C()){
 
   // 优先使用当前聊天角色绑定的马甲
   const p=personaList.find(x=>x.id===currentChar.bindPersonaId)||P()
@@ -9660,7 +9689,8 @@ window.getSmartChatReply = async (userTexts, c, onChunk, requestOptions={}) => {
     const maxHistoryCount = store.get('maxHistoryCount', 100);
     
     // 放行换头像等系统感知事件
-    const _allHistMsgs = getMsgs(c.id).filter(m=>m.isSystem ? ((m.text||'').includes('头像')||m._dateNotice) : (m.from==='c'||(m.from==='u'&&m.replied))).slice(-maxHistoryCount);
+    const chatMessages = requestOptions.history ?? getMsgs(c.id);
+    const _allHistMsgs = chatMessages.filter(m=>m.isSystem ? ((m.text||'').includes('头像')||m._dateNotice) : (m.from==='c'||(m.from==='u'&&m.replied))).slice(-maxHistoryCount);
     const _curMode = c.offlineMode ? 'offline' : 'online';
     const _lastMode = _allHistMsgs.findLast(m=>!m.isSystem&&!m.isCard&&!m._isCard)?.mode;
     const _switchingMode = _lastMode && _lastMode!==_curMode;
@@ -9685,6 +9715,8 @@ window.getSmartChatReply = async (userTexts, c, onChunk, requestOptions={}) => {
     });
 
     let userMsgStr = Array.isArray(userTexts) ? userTexts.join('\n') : userTexts;
+    const checkup = !c.offlineMode && userMsgStr && !userMsgStr.startsWith('（系统指令：')
+      ? _recentCheckup(chatMessages) : null;
     
     // 🌟 互动卡片检测：优先扫描，命中后独占本轮回复通道
     let cardPrompt=''
@@ -9741,16 +9773,19 @@ window.getSmartChatReply = async (userTexts, c, onChunk, requestOptions={}) => {
     if(_boundJb.length){
       _boundJb.forEach(b=>{const _t=_stylePromptText(b,c);if(_t)_jbText+='\n\n'+_t})
     }
-    // 🌟 注入当前马甲头像、角色当前头像与聊天大图（彻底赋予AI视觉，能看到双方头像！）
-    let _avB64 = null;
-    try { _avB64 = await _personaAvatarB64(); } catch(e){}
+    const memoryQuery=(userMsgStr||'').replace(/（系统指令[：:][^）]*）/g,'').trim()
+      || _allHistMsgs.filter(m=>!m.isSystem&&!m.isCard&&!m._isCard).slice(-3).map(m=>m.text||'').join(' ');
+    const _imgMsg = requestOptions.userMessages
+      ? requestOptions.userMessages.find(m=>m.image)
+      : chatMessages.find(m=>m.from==='u'&&!m.replied&&m.image);
+    if(requestOptions.signal?.aborted) return {text:'', thoughts:'', err:'请求已取消'};
+    const personaAvatar = Promise.resolve().then(()=>_personaAvatarB64(c));
 
     // 🌟 提取角色自己的当前头像，喂给大模型的眼睛
-    let _charAvUrl = null;
-    try {
+    const characterAvatar = (async()=>{
       if (c.avatar) {
         if (c.avatar.startsWith('data:image')) {
-          _charAvUrl = c.avatar;
+          return c.avatar;
         } else {
           let _blobUrl = c.avatar;
           if (c.avatar.startsWith('img_')) {
@@ -9765,19 +9800,14 @@ window.getSmartChatReply = async (userTexts, c, onChunk, requestOptions={}) => {
             _cv.width = Math.max(1, Math.round(_tmpImg.naturalWidth * _sc));
             _cv.height = Math.max(1, Math.round(_tmpImg.naturalHeight * _sc));
             _cv.getContext('2d').drawImage(_tmpImg, 0, 0, _cv.width, _cv.height);
-            _charAvUrl = _cv.toDataURL('image/jpeg', 0.85);
+            return _cv.toDataURL('image/jpeg', 0.85);
           }
         }
       }
-    } catch(e){}
+    })();
 
-    let _chatImgB64 = null;
-    let _hasImageMsg = false;
-    try {
-      const _pendingMsgs = getMsgs(c.id).filter(m => m.from==='u' && !m.replied);
-      const _imgMsg = _pendingMsgs.find(m => m.image);
+    const chatImage = (async()=>{
       if(_imgMsg && _imgMsg.image){
-        _hasImageMsg = true;
         const _u = await imgDB.load(_imgMsg.image);
         if(_u){
           const _img = new Image();
@@ -9787,26 +9817,41 @@ window.getSmartChatReply = async (userTexts, c, onChunk, requestOptions={}) => {
           _cv.width = Math.max(1, Math.round(_img.naturalWidth * _scale));
           _cv.height = Math.max(1, Math.round(_img.naturalHeight * _scale));
           _cv.getContext('2d').drawImage(_img, 0, 0, _cv.width, _cv.height);
-          _chatImgB64 = _cv.toDataURL('image/jpeg', 0.85);
+          return _cv.toDataURL('image/jpeg', 0.85);
         }
       }
-    } catch(e){}
+    })().catch(()=>null);
+    const semanticSearch = memoryQuery.length>5&&embApi.key
+      ? searchMemoryByVector(c.id,memoryQuery.slice(0,500),5) : [];
+    // Online replies keep whichever optional inputs are ready at the shared deadline.
+    const prepared = [];
+    const preparation = Promise.all([personaAvatar, characterAvatar, semanticSearch].map((task,index)=>
+      Promise.resolve(task).then(value=>{prepared[index]=value},()=>{})));
+    if(c.offlineMode) await preparation;
+    else {
+      let timer;
+      try { await Promise.race([preparation,new Promise(resolve=>{timer=setTimeout(resolve,1200)})]); }
+      finally { clearTimeout(timer); }
+    }
+    if(requestOptions.signal?.aborted) return {text:'', thoughts:'', err:'请求已取消'};
+    const [_avB64, _charAvUrl, semantic=[]] = prepared;
+    // A user attachment is part of the message, not optional context.
+    const _chatImgB64 = await chatImage;
+    if(requestOptions.signal?.aborted) return {text:'', thoughts:'', err:'请求已取消'};
+    if(_imgMsg&&!_chatImgB64) return {text:'', thoughts:'', err:'聊天图片读取失败，请重新发送图片'};
 
     // 如果用户发了图，给提示让 AI 继续按原手机卡片格式输出对话
     let _promptAdd = "";
-    if(_hasImageMsg){
+    if(_chatImgB64){
       _promptAdd = "\n（提示：用户在聊天中发来了一张图片。请继续完全按照你的手机卡片模板格式进行回复，所有对方消息必须完整包裹在你的卡片模板内部，切勿将格式代码泄露到卡片外部！）";
     }
 
     // 易变的实时状态放在最后一条 user 消息里：system 与历史保持逐字节稳定，
     // 服务商的前缀缓存（DeepSeek/OpenAI/Claude）才能命中整段历史。
-    const memoryQuery=(userMsgStr||'').replace(/（系统指令[：:][^）]*）/g,'').trim()
-      || _allHistMsgs.filter(m=>!m.isSystem&&!m.isCard&&!m._isCard).slice(-3).map(m=>m.text||'').join(' ');
-    const semantic=memoryQuery.length>5&&embApi.key ? await searchMemoryByVector(c.id,memoryQuery.slice(0,500),5) : [];
     const keywords=memoryQuery ? searchMemoryByKeyword(c.id,memoryQuery.slice(0,500),5) : [];
     const recalled=[...new Map([...semantic,...keywords].map(e=>[e.text,e])).values()].slice(0,5);
     const memoryContext=recalled.length ? '\n\n【与当前话题相关的过往记忆】\n'+recalled.map(e=>'· '+e.text).join('\n') : '';
-    const _uText = (userMsgStr || '（用户发送了一张图片）') + _promptAdd + forcedTag + _jbText + liveCtx(c) + memoryContext;
+    const _uText = (userMsgStr || '（用户发送了一张图片）') + _promptAdd + forcedTag + _jbText + liveCtx(c) + memoryContext + (checkup ? _checkupReplyPrompt(checkup) : '');
     if(_avB64 || _charAvUrl || _chatImgB64){
       const _parts = [];
       if(_charAvUrl){
@@ -14407,11 +14452,8 @@ ${ctxMsgs}
       let roundStart = idx, roundEnd = idx;
       while(roundStart > 0 && arr[roundStart-1].from !== 'u') roundStart--;
       while(roundEnd < arr.length-1 && arr[roundEnd+1].from !== 'u') roundEnd++;
-      const userTexts = [];
-      for(let i=roundStart-1; i>=0; i--){
-        if(arr[i].from==='u') userTexts.unshift(arr[i].text);
-        else break;
-      }
+      const {start:userStart,users:turnUsers}=_regenerationUserTurn(arr,roundStart);
+      const userTexts=turnUsers.map(m=>m.text || (m.image ? '（发送了图片）' : ''));
       if(!userTexts.length) return;
       // 重说前先快照：生成失败时必须能原样恢复，不能把这一轮对话和记忆吃掉
        const _rgSnapMsgs = structuredClone(arr);
@@ -14444,7 +14486,7 @@ ${ctxMsgs}
       sending=true
       try{
 
-       removeChatMessages(c,arr,arr.slice(roundStart,roundEnd+1));
+       removeChatMessages(c,arr,arr.slice(roundStart,roundEnd+1).filter(m=>!m.isSystem));
       
       render('chat');
       await new Promise(r=>setTimeout(r, 200));
@@ -14477,7 +14519,7 @@ ${ctxMsgs}
             if(!_sUS1&&!_sUS1_raf){_sUS1_raf=true;requestAnimationFrame(()=>{_sUS1_raf=false;if(_mlNow)_mlNow.scrollTop=_mlNow.scrollHeight})}
           }
         }
-      }:null,{signal:request.signal});
+      }:null,{signal:request.signal,history:_rgSnapMsgs.slice(0,userStart),userMessages:turnUsers});
       if(!request.active)return
       let reply=aiRes.text;
       const thoughts=aiRes.thoughts;
@@ -14506,7 +14548,7 @@ ${ctxMsgs}
 });
 
       
-      rememberChatTurn(c,newArr.slice(roundStart-userTexts.length,roundStart),newArr.slice(firstReplyIndex));
+      rememberChatTurn(c,turnUsers,newArr.slice(firstReplyIndex));
       if(aiRes.cardHtml){
         newArr.push({
           from:'c',
@@ -31115,17 +31157,11 @@ ${evidence?'【查岗发现】'+evidence:'【查岗发现】没发现跟别人�
 
   const arr=getMsgs(charId)
   const ts=ftime(now())
+  const checkup={evidence:evidence||'',fighting:_isFighting};
   res.messages.forEach(msg=>{
     const _t=_stripSelfPrefix(msg,c)
-    if(_t)arr.push({from:'c',text:_t,time:ts,read:false,_checkup:true})
+    if(_t)arr.push({from:'c',text:_t,time:ts,read:false,mode:'online',_checkup:checkup})
   })
-  // 保存查岗上下文，让后续回复能延续情绪
-  c._checkupCtx={
-    ts:Date.now(),
-    evidence:evidence||'',
-    fighting:_isFighting,
-    mood:res.mood||''
-  }
   if(res.mood){c.mood=res.mood}
   saveCharList()
   saveMsgs(charId,arr)
@@ -31934,8 +31970,10 @@ function startAutoCheckup(){
             if(res && res.messages && res.messages.length){
               const arr = getMsgs(snooper.id)
               const ts = ftime(now())
+              const checkup={evidence:`对方发给${illicitTarget.name}的消息：“${illicitMsg.slice(0,60)}”`}
               res.messages.forEach(msg=>{
-                arr.push({from:'c', text:msg, time:ts, read:false})
+                const text=_stripSelfPrefix(msg,snooper)
+                if(text)arr.push({from:'c',text,time:ts,read:false,mode:'online',_checkup:checkup})
               })
               saveMsgs(snooper.id, arr)
               showBgNotification(snooper, res.messages[0])

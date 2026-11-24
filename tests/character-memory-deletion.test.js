@@ -12,6 +12,7 @@ function between(start, end) {
   return html.slice(from, to);
 }
 const code = between('let globalMemory=', 'function refreshPlaceUnlocks(')
+  + between('function _recentCheckup(', 'function liveCtx(')
   + between('window.getSmartChatReply =', '// 全局单例：监听互动卡片');
 
 function harness(extra = {}) {
@@ -29,6 +30,7 @@ function harness(extra = {}) {
     saveCharList() {},
     uid: () => `id-${++id}`,
     embApi: {},
+    setTimeout, clearTimeout,
     dataDB: { get: async key => db.get(key), set: async (key, value) => db.set(key, value) },
     getMemApi: () => ({ key: 'test', model: 'memory' }),
     getApi: () => ({ key: 'test', model: 'chat' }),
@@ -191,4 +193,93 @@ test('continuity still carries the latest surviving offline dialogue into online
   await ctx.window.getSmartChatReply(['到时见'], c);
   assert.match(sent[0].content, /线下见面时.*在书店约好周五见/);
   assert.match(sent.at(-1).content, /承接最后一段线下剧情/);
+});
+
+test('online chat sends after the shared deadline even with stalled avatar and vector lookup', async () => {
+  let expire, sent, avatarRole, searched;
+  const stalled = new Promise(() => {});
+  const { ctx, c } = harness({
+    setTimeout(fn, ms) { assert.equal(ms, 1200); expire = fn; return 1; },
+    clearTimeout() {},
+    _personaAvatarB64(role) { avatarRole = role; return stalled; },
+    callLLM: async options => { sent = options; return { ok: true, text: '周五见。' }; }
+  });
+  c.offlineMode = false;
+  c.avatar = 'data:image/jpeg;base64,example';
+  ctx.addMemoryEvent(c.id, '旧书店约好周五见面', 'chat', 'online');
+  ctx.embApi.key = 'test';
+  ctx.searchMemoryByVector = () => { searched = true; return stalled; };
+  const reply = ctx.window.getSmartChatReply(['还记得旧书店吗？'], c);
+  await Promise.resolve();
+  assert.equal(avatarRole, c);
+  assert.equal(searched, true);
+  assert.equal(sent, undefined);
+  expire();
+  assert.equal((await reply).text, '周五见。');
+  const parts = sent.messages.at(-1).content;
+  assert.equal(parts.find(part => part.type === 'image_url').image_url.url, c.avatar);
+  assert.match(parts.at(-1).text, /旧书店约好周五见面/);
+});
+
+test('online chat keeps a user attachment required when optional context times out', async () => {
+  let expire, failImage, sent = false;
+  const { ctx, c, messages } = harness({
+    setTimeout(fn) { expire = fn; return 1; },
+    clearTimeout() {},
+    _personaAvatarB64: () => new Promise(() => {}),
+    imgDB: { load: () => new Promise((_resolve, reject) => { failImage = reject; }) },
+    callLLM: async () => { sent = true; return { ok: true, text: '收到。' }; }
+  });
+  c.offlineMode = false;
+  messages.set(c.id, [{ from: 'u', image: 'img_test' }]);
+  const reply = ctx.window.getSmartChatReply(['（发送了图片）'], c);
+  failImage(new Error('read error'));
+  expire();
+  assert.match((await reply).err, /聊天图片读取失败/);
+  assert.equal(sent, false);
+});
+
+test('regeneration reconnects a saved legacy checkup across gift notices without using later messages', async () => {
+  let sent;
+  const { ctx, c, messages } = harness({
+    callLLM: async options => { sent = options.messages; return { ok: true, text: '我问的是方亦楷。' }; },
+  });
+  c.offlineMode = false;
+  const opening = '整整一百二十四个小时不回我消息，原来是忙着去问方亦楷‘笨蛋在干嘛？’啊。';
+  const list = [
+    { from: 'c', text: opening },
+    { from: 'c', text: '别装看不见，现在立刻给我解释清楚。' },
+    { from: 'u', text: '解释什么？解释白城是大笨蛋嘛？', replied: true },
+    { from: 'system', text: '送出了手织围巾', isSystem: true },
+    { from: 'u', text: '？', replied: true },
+    { from: 'system', text: '收下了手织围巾', isSystem: true },
+    { from: 'c', text: '反正奶茶只有一杯' },
+    { from: 'u', text: '后来聊了别的', replied: true },
+  ];
+  messages.set(c.id, list);
+  const turn = ctx._regenerationUserTurn(list, 5);
+  assert.equal(turn.start, 2);
+  const texts = Array.from(turn.users, m => m.text);
+  assert.deepEqual(texts, [list[2].text, list[4].text]);
+  await ctx.window.getSmartChatReply(texts, c, null, { history: list.slice(0, turn.start), userMessages: turn.users });
+  assert.ok(sent.some(m => m.role === 'assistant' && m.content === opening));
+  assert.match(sent.at(-1).content, /你本人主动发消息查对方的岗/);
+  assert.match(sent.at(-1).content, /方亦楷/);
+  assert.doesNotMatch(JSON.stringify(sent), /后来聊了别的|奶茶只有一杯/);
+});
+
+test('new checkup context is used for the next direct reply and stops after that exchange', async () => {
+  let last;
+  const { ctx, c, messages } = harness({ callLLM: async ({ messages }) => {
+    last = messages.at(-1).content;
+    return { ok: true, text: '问你在干嘛。' };
+  } });
+  c.offlineMode = false;
+  const list = [{ from: 'c', text: '刚才在跟谁聊天？', _checkup: { evidence: '给另一个角色发的消息' } }];
+  messages.set(c.id, list);
+  await ctx.window.getSmartChatReply('？', c);
+  assert.match(last, /给另一个角色发的消息/);
+  list.push({ from: 'u', text: '？', replied: true }, { from: 'c', text: '问你在干嘛。' });
+  await ctx.window.getSmartChatReply('今天去哪？', c);
+  assert.doesNotMatch(last, /承接当前对话|给另一个角色发的消息/);
 });
