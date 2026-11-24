@@ -790,7 +790,7 @@ const GLOBAL_KEYS = new Set([
   'fontLibrary','beautyLibrary',
   'machine_code','tavern_activated',
   'maxHistoryCount','autoImageEnabled','autoVoiceEnabled','autoBgMsgEnabled',
-  '_saves_meta','_currentSlot','_lastProtocol'
+  '_saves_meta','_currentSlot','_lastProtocol','modelUsageByDay'
 ]);
 
 // 当前存档 id（在 initAll 里从 DB 读）
@@ -3402,14 +3402,16 @@ async function getEmbedding(text){
   if(!embApi.key||!text) return null
   const base=(embApi.baseUrl||'https://api.openai.com/v1').replace(/\/$/,'')
   const url=base.endsWith('/v1')?base+'/embeddings':base+'/v1/embeddings'
+  const model=embApi.model||'text-embedding-3-small'
   try{
     const r=await fetch(url,{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+embApi.key},
       signal:AbortSignal.timeout(4000),
-      body:JSON.stringify({model:embApi.model||'text-embedding-3-small',input:text.slice(0,500)})
+      body:JSON.stringify({model,input:text.slice(0,500)})
     })
     const j=await r.json()
+    if(r.ok&&!j.error)_recordModelUsage(j.usage,model,'embedding')
     return j.data?.[0]?.embedding||null
   }catch(e){console.error('[emb]',e);return null}
 }
@@ -3755,6 +3757,69 @@ function avatarEl(src,size,icon){
   return`<div style="width:${size}px;height:${size}px;border-radius:50%;border:2px solid ${ic};background:${n?'radial-gradient(circle,#4a3a5a,#3a2845)':'radial-gradient(circle,#fff,#f5e8ee)'};display:flex;align-items:center;justify-content:center;margin:0 auto">${icon||I.rose(ic,size>60?36:20)}</div>`
 }
 // ===== 通用LLM调用（消灭所有重复代码） =====
+function _usageDay(date){
+  const pad=value=>String(value).padStart(2,'0')
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`
+}
+function _usageTotals(){
+  return {requests:0,reported:0,input:0,output:0,total:0,inputMissing:0,outputMissing:0,cacheReported:0,cacheInput:0,cacheHit:0}
+}
+function _recordModelUsage(usage,model,kind='chat',date=new Date()){
+  try{
+    const count=value=>Number.isSafeInteger(value)&&value>=0 ? value : null
+    const cacheRead=count(usage?.cache_read_input_tokens)
+    const cacheWrite=count(usage?.cache_creation_input_tokens)
+    const deepSeekHit=count(usage?.prompt_cache_hit_tokens)
+    const deepSeekMiss=count(usage?.prompt_cache_miss_tokens)
+    const hit=count(usage?.prompt_tokens_details?.cached_tokens)??deepSeekHit??cacheRead
+    const reportedTotal=count(usage?.total_tokens)
+    const claudeInput=count(usage?.input_tokens)
+    let input=count(usage?.prompt_tokens)??(claudeInput===null?null:claudeInput+(cacheRead??0)+(cacheWrite??0))
+      ??(deepSeekHit!==null&&deepSeekMiss!==null?count(deepSeekHit+deepSeekMiss):null)
+      ??(kind==='embedding'?reportedTotal:null)
+    let output=kind==='embedding'?0:(count(usage?.completion_tokens)??count(usage?.output_tokens))
+    if(reportedTotal!==null){
+      if(input===null&&output!==null)input=count(reportedTotal-output)
+      else if(output===null&&input!==null)output=count(reportedTotal-input)
+    }
+    const hasCache=input!==null&&input>0&&hit!==null&&hit<=input
+    const key=JSON.stringify([_usageDay(date),kind,model||'未标明模型'])
+    const data=store.get('modelUsageByDay',{})
+    const row={..._usageTotals(),...data[key]}
+    row.requests++
+    if(input!==null||reportedTotal!==null||(kind!=='embedding'&&output!==null)){
+      row.reported++
+      if(input===null)row.inputMissing++
+      if(output===null)row.outputMissing++
+    }
+    row.input+=input??0
+    row.output+=output??0
+    row.total+=reportedTotal??((input??0)+(output??0))
+    if(hasCache){row.cacheReported++;row.cacheInput+=input;row.cacheHit+=hit}
+    store.set('modelUsageByDay',{...data,[key]:row})
+  }catch(error){console.warn('[model usage]',error)}
+}
+function _modelUsageSummary(data,days,date=new Date()){
+  const today=_usageDay(date)
+  const start=days ? _usageDay(new Date(date.getFullYear(),date.getMonth(),date.getDate()-days+1)) : ''
+  const totals=_usageTotals(), models=new Map()
+  for(const [key,row] of Object.entries(data)){
+    let parts
+    try{parts=JSON.parse(key)}catch{continue}
+    if(!Array.isArray(parts)||!row)continue
+    const [day,kind,model]=parts
+    if(days&&(day<start||day>today))continue
+    const modelKey=JSON.stringify([kind,model])
+    const stats=models.get(modelKey)||{kind,model,..._usageTotals()}
+    for(const metric of Object.keys(totals)){
+      totals[metric]+=row[metric]||0
+      stats[metric]+=row[metric]||0
+    }
+    models.set(modelKey,stats)
+  }
+  return {totals,models:[...models.values()].sort((a,b)=>b.total-a.total||b.requests-a.requests)}
+}
+
 // ===== 前缀缓存命中统计 =====
 // DeepSeek: usage.prompt_cache_hit_tokens
 // OpenAI:   usage.prompt_tokens_details.cached_tokens
@@ -3936,6 +4001,8 @@ async function callLLM(opt){
   }
 
 
+  const usageModel=a.model
+  let responseUsage=null, countResponse=false
   try{
     // OpenAI 兼容端点的流式响应默认不返回 usage，导致看不到缓存命中。
     // 加上 stream_options 请求 usage；个别代理不认这个字段时自动退回原请求。
@@ -3965,7 +4032,8 @@ async function callLLM(opt){
       return {ok:false,err:msg,text:msg}
     }
 
-    // ===== 流式SSE解析：仅克劳德走流式，其他模型保持原样 =====
+    countResponse=true
+    // ===== 流式 SSE 解析 =====
     const _isStream=_stream&&/event-stream|octet-stream/i.test(r.headers.get('content-type')||'')
     let fullText=''
     let _streamErr=''
@@ -4006,6 +4074,7 @@ async function callLLM(opt){
         fullText=d.content.filter(b=>b&&b.type==='text').map(b=>b.text||'').join('')
       }
       const _usage=d.usage||null
+      responseUsage=_usage
       const _inTk=_usage?((_usage.prompt_tokens||_usage.input_tokens)||0):0
       const _outTk=_usage?((_usage.completion_tokens||_usage.output_tokens)||0):0
       _reportCache(_usage,_inTk)
@@ -4018,6 +4087,7 @@ async function callLLM(opt){
       }
       return {ok:true,text:fullText,toolCalls:_toolCalls,inTokens:_inTk,outTokens:_outTk}
     }
+    let usageTailTimer
     try{
       const reader=r.body.getReader()
       const decoder=new TextDecoder()
@@ -4043,13 +4113,9 @@ async function callLLM(opt){
             ended=true
             return
           }
-          if(j.usage && !_streamUsage){ _streamUsage=j.usage }
+          if(j.usage && Object.keys(j.usage).length)_streamUsage={..._streamUsage,...j.usage}
           if(j.type==='message_start'&&j.message&&j.message.usage){
-            const u=j.message.usage
-            _streamUsage={input_tokens:u.input_tokens||0,output_tokens:u.output_tokens||0,cache_read_input_tokens:u.cache_read_input_tokens||0,cache_creation_input_tokens:u.cache_creation_input_tokens||0}
-          }
-          if(j.type==='message_delta'&&j.usage&&_streamUsage){
-            if(j.usage.output_tokens)_streamUsage.output_tokens=j.usage.output_tokens
+            _streamUsage={..._streamUsage,...j.message.usage}
           }
           if(j.type==='message_stop'){
             ended=true
@@ -4067,7 +4133,8 @@ async function callLLM(opt){
 
           if(!isClaude && j.choices?.some(ch=>ch.finish_reason)){
             _finishReason=j.choices.find(ch=>ch.finish_reason)?.finish_reason||''
-            ended=true
+            // Some proxies leave the connection open after finish_reason.
+            usageTailTimer??=setTimeout(()=>reader.cancel().catch(()=>{}),1500)
           }
           if(isClaude && j.delta&&j.delta.stop_reason){ _finishReason=j.delta.stop_reason; ended=true }
         }catch(e){}
@@ -4096,6 +4163,9 @@ async function callLLM(opt){
       console.warn('[callLLM] 流式读取中断，已收集部分文本:',fullText.length,'字符',streamErr)
       if(fullText.length>20) return {ok:true,text:fullText}
       throw streamErr
+    }finally{
+      clearTimeout(usageTailTimer)
+      responseUsage=_streamUsage
     }
 
     if(_streamErr){
@@ -4139,6 +4209,7 @@ ${reason}）`
 
     return {ok:false,err:msg,text:msg}
   }finally{
+    if(countResponse)_recordModelUsage(responseUsage,usageModel)
     if(opt.signal)opt.signal.removeEventListener('abort',abortFromCaller)
   }
 }
@@ -6227,6 +6298,55 @@ function roomBtn(icon,label,fn){
   d.onclick=fn;return d
 }
 const pages={}
+function _usageIcon(color,size){
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4v16h16M8 15v-3m5 3V9m5 6V5"/></svg>`
+}
+pages.modelusage=()=>{
+  const p=ce('div','page'), body=ce('div'), n=isN()
+  Object.assign(p.style,{display:'flex',flexDirection:'column'})
+  Object.assign(body.style,{overflowY:'auto',flex:'1',padding:'16px 18px max(24px,env(safe-area-inset-bottom))',color:n?'#f0e0f0':'var(--ink)'})
+  p.appendChild(topBar('用量统计','home'))
+  p.appendChild(body)
+  app.appendChild(p)
+  const sub=n?'#b8a8c8':'var(--ink-l)'
+  const accent=n?'#dec0e5':'var(--rose-d)'
+  const border=n?'rgba(200,180,220,.16)':'rgba(232,160,180,.25)'
+  const fmt=value=>value.toLocaleString('zh-CN')
+  const splitCount=(row,side)=>{
+    const missing=row[side+'Missing']
+    return row.reported>missing?fmt(row[side])+(missing?'（部分）':''):'—'
+  }
+  const rate=row=>row.cacheInput?(100*row.cacheHit/row.cacheInput).toLocaleString('zh-CN',{maximumFractionDigits:1})+'%':(row.cacheReported?'无有效输入':'未返回')
+  const paint=days=>{
+    const {totals,models}=_modelUsageSummary(store.get('modelUsageByDay',{}),days)
+    const metric=(label,value)=>`<div style="min-width:0"><div style="font-size:11px;color:${sub}">${label}</div><div style="margin-top:5px;font-size:17px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere">${value}</div></div>`
+    body.innerHTML=`
+      <div role="group" aria-label="统计时间" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border:1px solid ${border};border-radius:13px">
+        ${[[1,'今天'],[7,'近 7 天'],[0,'累计']].map(([value,label])=>`<button type="button" data-days="${value}" aria-pressed="${days===value}" style="border:0;border-radius:9px;padding:8px 4px;min-height:36px;cursor:pointer;font:inherit;font-size:12px;background:${days===value?(n?'#4a3552':'#f5dce5'):'transparent'};color:${days===value?accent:sub}">${label}</button>`).join('')}
+      </div>
+      <section style="padding:19px 0 16px;border-bottom:1px solid ${border}">
+        <div style="font-size:12px;color:${sub}">已统计 Token</div>
+        <div style="margin:4px 0 13px;font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere">${totals.reported?fmt(totals.total):'—'}</div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">${metric('输入',splitCount(totals,'input'))}${metric('输出',splitCount(totals,'output'))}${metric('响应次数',fmt(totals.requests))}</div>
+        <div style="margin-top:10px;font-size:11px;color:${sub}">返回 Token 用量：${fmt(totals.reported)} / ${fmt(totals.requests)} 次</div>
+        <div style="margin-top:5px;font-size:11px;color:${sub}">按接口返回的用量统计；缺失的明细以「—」或「部分」标注。仅统计当前浏览器记录，费用以服务商账单为准。</div>
+      </section>
+      <section style="padding:16px 0;border-bottom:1px solid ${border}">
+        ${metric('输入缓存命中率',rate(totals))}
+        ${totals.cacheInput?`<progress aria-label="缓存命中率" value="${totals.cacheHit}" max="${totals.cacheInput}" style="width:100%;height:8px;margin:8px 0;accent-color:${accent}"></progress>`:''}
+        <div style="margin-top:5px;font-size:11px;color:${sub}">缓存命中 ${fmt(totals.cacheHit)} / ${fmt(totals.cacheInput)} 输入 Token · 返回缓存数据 ${fmt(totals.cacheReported)} / ${fmt(totals.requests)} 次</div>
+      </section>
+      <section style="padding:16px 0 10px">
+        <h2 style="margin:0 0 7px;font-size:14px">按模型</h2>
+        ${models.length?models.map(row=>`<div style="padding:10px 0;border-bottom:1px solid ${border}">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-size:13px"><strong style="min-width:0;overflow-wrap:anywhere">${escHtml(row.model)}${row.kind==='embedding'?' · 向量':''}</strong><span style="flex-shrink:0">${row.reported?fmt(row.total)+' Token':'未返回用量'}</span></div>
+          <div style="margin-top:4px;font-size:11px;color:${sub}">输入 ${splitCount(row,'input')} · 输出 ${splitCount(row,'output')} · ${fmt(row.requests)} 次响应 · 缓存 ${rate(row)}</div>
+        </div>`).join(''):`<div style="color:${sub};font-size:12px;padding:10px 0">这段时间暂无模型用量</div>`}
+      </section>`
+    body.querySelectorAll('[data-days]').forEach(button=>{button.onclick=()=>{paint(Number(button.dataset.days));body.querySelector('[aria-pressed="true"]')?.focus()}})
+  }
+  paint(0)
+}
 // 新增：接管手机物理返回键 / 左滑返回手势
 let _isPopState = false;
 let _navStack = [];
@@ -7343,6 +7463,7 @@ _s3body.appendChild(_s3apps)
 const _s3grid=_s3apps.querySelector('#_s3grid')
 _s3grid.appendChild(roomBtn(`<svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="${n?'#c8a8d0':'var(--rose)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h20a4 4 0 014 4v30H11a4 4 0 01-4-4V7z"/><path d="M31 13h10v28H31"/><path d="M24 21c-1.7-2.7-5.6-2.2-6.2.7-.5 2.5 2.4 4.8 6.2 7.3 3.8-2.5 6.7-4.8 6.2-7.3-.6-2.9-4.5-3.4-6.2-.7z" stroke-width="1.6"/></svg>`,'同人',()=>render('fanfic')))
 _s3grid.appendChild(roomBtn(`<svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="${n?'#c8a8d0':'var(--rose)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="36" height="36" rx="10"/><circle cx="17" cy="17" r="2" fill="currentColor"/><circle cx="31" cy="17" r="2" fill="currentColor"/><circle cx="17" cy="31" r="2" fill="currentColor"/><circle cx="31" cy="31" r="2" fill="currentColor"/><path d="M17 17l14 14M31 17L17 31" opacity=".35"/></svg>`,'游戏',()=>render('games')))
+_s3grid.appendChild(roomBtn(_usageIcon(_c3accent,26),'用量统计',()=>render('modelusage')))
 
 // 组装
   slider.appendChild(screen1)
@@ -16308,7 +16429,7 @@ const _el=historyBox.lastElementChild;if(_el){const sp=_el.querySelector('span')
                                   messages: [{ role: 'user', content: [ { type: 'image', source: { type: 'base64', media_type: mediaType, data: pureB64 } }, { type: 'text', text: visionPrompt } ] }]
                               })
                           });
-                          if(r.ok) { const d = await r.json(); reply = d.content?.[0]?.text; }
+                          if(r.ok) { const d = await r.json(); _recordModelUsage(d.usage,api.model); reply = d.content?.[0]?.text; }
                       } else {
                           const r = await fetch(base + '/chat/completions', {
                               method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key },
@@ -16317,7 +16438,7 @@ const _el=historyBox.lastElementChild;if(_el){const sp=_el.querySelector('span')
                                   messages: [ { role: 'system', content: sysPrompt() }, { role: 'user', content: [ { type: 'image_url', image_url: { url: b64Data } }, { type: 'text', text: visionPrompt } ] }]
                               })
                           });
-                          if(r.ok) { const d = await r.json(); reply = d.choices?.[0]?.message?.content; }
+                          if(r.ok) { const d = await r.json(); _recordModelUsage(d.usage,api.model); reply = d.choices?.[0]?.message?.content; }
                       }
                       
                       if(!reply) reply = await callAI(`视频中我给你看了一个东西，你看完后回复我（50字内）。`);
@@ -22747,8 +22868,9 @@ pages.beauty=()=>{
   })
 
   // === 应用图标自定义 ===
-  const _appLabels=['微信','主题','直播','副本','邂逅','世界书','约会','生图','马甲','地图','羁绊','论坛','预设','设置','钱包','助手','养成','查岗','音乐'];
+  const _appLabels=['微信','主题','直播','副本','邂逅','世界书','约会','生图','马甲','地图','羁绊','论坛','预设','设置','钱包','助手','养成','查岗','音乐','用量统计'];
   const _appDefaultSvg={
+    '用量统计':_usageIcon('#aaa',20),
     '微信':I.chat('#aaa',20),'主题':I.rose('#aaa',20),'直播':I.mic('#aaa',20),'副本':I.swords('#aaa',20),
     '邂逅':I.contacts('#aaa',20),'世界书':I.book('#aaa',20),'约会':I.calendar('#aaa',20),
     '生图':I.img('#aaa',20),'马甲':I.mirror('#aaa',20),'地图':I.map('#aaa',20),
@@ -34577,7 +34699,7 @@ ${m.image ? '[你发了一张图片]' : ''}
                         ]}]
                       })
                     });
-                    if(r.ok) { const d = await r.json(); reply = d.content?.[0]?.text || ''; }
+                    if(r.ok) { const d = await r.json(); _recordModelUsage(d.usage,api.model); reply = d.content?.[0]?.text || ''; }
                   } else {
                     const r = await fetch(base + '/chat/completions', {
                       method: 'POST',
@@ -34593,7 +34715,7 @@ ${m.image ? '[你发了一张图片]' : ''}
                         ]
                       })
                     });
-                    if(r.ok) { const d = await r.json(); reply = d.choices?.[0]?.message?.content || ''; }
+                    if(r.ok) { const d = await r.json(); _recordModelUsage(d.usage,api.model); reply = d.choices?.[0]?.message?.content || ''; }
                   }
                   if(!reply) reply = await askAI(`你是${c.name}。${c.personality||''}。只输出简短评论回复，不要用emoji`, textPrompt, 200);
                 } else {

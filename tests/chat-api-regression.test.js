@@ -23,6 +23,7 @@ function extractFunction(name) {
 }
 
 const source = [
+  html.slice(html.indexOf('function _usageDay('), html.indexOf('// ===== 前缀缓存命中统计 =====')),
   extractFunction('_reportCache'),
   extractFunction('_apiTemperature'),
   extractFunction('_toClaudeMessages'),
@@ -33,13 +34,15 @@ const source = [
 ].join('\n');
 
 function makeContext(extra = {}) {
+  const saved = new Map();
   const context = {
     AbortController,
     clearTimeout,
     console: { log() {}, table() {}, warn() {}, error() {} },
     fetch: async () => { throw new Error('fetch stub was not configured'); },
     setTimeout,
-    store: { get: (_key, fallback) => fallback },
+    TextDecoder,
+    store: { get: (key, fallback) => saved.get(key) ?? fallback, set: (key, value) => saved.set(key, jsonClone(value)) },
     window: {},
     ...extra
   };
@@ -51,6 +54,67 @@ function makeContext(extra = {}) {
 function jsonClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
+
+test('usage totals distinguish an explicit miss, missing metadata and Claude cache writes', () => {
+  const context = makeContext();
+  const day = new Date(2026, 10, 24);
+  context._recordModelUsage({ prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 0 } }, 'openai', 'chat', day);
+  context._recordModelUsage({ prompt_tokens: 50, completion_tokens: 6, prompt_cache_hit_tokens: 20 }, 'deepseek', 'chat', day);
+  context._recordModelUsage({ input_tokens: 10, cache_read_input_tokens: 25, cache_creation_input_tokens: 15, output_tokens: 7 }, 'claude', 'chat', day);
+  context._recordModelUsage({ prompt_tokens: 90, completion_tokens: 2 }, 'no-cache-data', 'chat', day);
+  context._recordModelUsage(null, 'no-usage-data', 'chat', day);
+  context._recordModelUsage({ total_tokens: 30 }, 'embedding', 'embedding', new Date(2026, 10, 18));
+  context._recordModelUsage({ total_tokens: 40 }, 'embedding', 'embedding', new Date(2026, 10, 17));
+  const data = context.store.get('modelUsageByDay');
+  const today = jsonClone(context._modelUsageSummary(data, 1, day));
+  assert.deepEqual(today.totals, { requests: 5, reported: 4, input: 290, output: 20, total: 310, inputMissing: 0, outputMissing: 0, cacheReported: 3, cacheInput: 200, cacheHit: 45 });
+  assert.equal(today.models.find(m => m.model === 'openai').cacheReported, 1);
+  assert.equal(today.models.find(m => m.model === 'no-usage-data').reported, 0);
+  assert.equal(context._modelUsageSummary(data, 7, day).totals.total, 340);
+  assert.equal(context._modelUsageSummary(data, 0, day).totals.total, 380);
+});
+
+test('usage preserves partial splits and derives missing counts from compatible totals', () => {
+  const context = makeContext();
+  context._recordModelUsage({ total_tokens: 100 }, 'total-only');
+  context._recordModelUsage({ prompt_tokens: 40, total_tokens: 47 }, 'input-and-total');
+  context._recordModelUsage({ output_tokens: 9, total_tokens: 79 }, 'output-and-total');
+  context._recordModelUsage({ prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 30, completion_tokens: 5 }, 'cache-split');
+  context._recordModelUsage({ prompt_tokens: 12, total_tokens: 10 }, 'inconsistent');
+  context._recordModelUsage({ prompt_tokens: 0, completion_tokens: 1, prompt_cache_hit_tokens: 0 }, 'empty-input');
+  const { totals, models } = context._modelUsageSummary(context.store.get('modelUsageByDay'), 0);
+  const byName = Object.fromEntries(models.map(row => [row.model, row]));
+  assert.equal(totals.inputMissing, 1);
+  assert.equal(totals.outputMissing, 2);
+  assert.equal(byName['total-only'].total, 100);
+  assert.equal(byName['input-and-total'].output, 7);
+  assert.equal(byName['output-and-total'].input, 70);
+  assert.equal(byName['inconsistent'].outputMissing, 1);
+  assert.equal(totals.cacheReported, 1);
+  assert.equal(totals.cacheInput, 30);
+  assert.equal(totals.cacheHit, 0);
+});
+
+test('streaming usage arriving after finish_reason is counted once', async () => {
+  const encoder = new TextEncoder();
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":null}\n\n',
+    'data: {"choices":[],"usage":{"prompt_tokens":80,"completion_tokens":5,"total_tokens":85,"prompt_tokens_details":{"cached_tokens":40}}}\n\n',
+    'data: [DONE]\n\n',
+  ];
+  const context = makeContext({ fetch: async () => new Response(new ReadableStream({ start(controller) {
+    chunks.forEach(chunk => controller.enqueue(encoder.encode(chunk)));
+    controller.close();
+  } }), { headers: { 'Content-Type': 'text/event-stream' } }) });
+  const reply = await context.callLLM({ api: { provider: 'openai', baseUrl: 'https://api.example/v1', key: 'test-key', model: 'test-model' }, messages: [], stream: true });
+  assert.equal(reply.text, 'hello');
+  assert.equal(reply.inTokens, 80);
+  const { totals } = context._modelUsageSummary(context.store.get('modelUsageByDay'), 0);
+  assert.equal(totals.requests, 1);
+  assert.equal(totals.total, 85);
+  assert.equal(totals.cacheHit, 40);
+});
 
 function apiResponse(provider) {
   const body = provider === 'claude'
