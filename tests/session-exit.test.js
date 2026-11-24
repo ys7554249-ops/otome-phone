@@ -120,6 +120,52 @@ test('support milestones send care and rival messages with separate cooldowns', 
   assert.equal(context.liveSupportTier({ guardType: 3, guardExpire: start }, start), 0);
 });
 
+test('live fan group private replies open from the notice and remain in the inbox outside the streamer pool', () => {
+  const badge = { hidden: true };
+  const modals = [];
+  const friend = { id: 'fan', name: '马星星', isHidden: true };
+  const { context, data, node, run } = environment({
+    _curPage: 'groupchat', now: () => new Date(), ftime: () => '12:00',
+    isLLMError: text => text === '[API error]', avatarEl: () => '', _chatPreview: String,
+    getMsgs() { return []; }, saveMsgs(id, messages) { data.set('chat_' + id, messages); },
+    showModal(title, build) {
+      const body = node();
+      modals.push({ title, body });
+      build(body, () => { body.isConnected = false; });
+    }
+  });
+  context.app.querySelectorAll = () => [badge];
+  run(section('function isLiveRoomEnded(', '\nfunction checkCharAutoLive('));
+  run(section('function appendLivePM(', 'window.openLiveGroupList ='));
+  const group = { id: 'club', isLiveGroup: true };
+  data.set('activeGroupId', 'club');
+  context.deliverGroupPrivateReaction(group, friend, '[API error]');
+  assert.equal(modals.length, 0);
+  context.deliverGroupPrivateReaction(group, friend, 'Can we talk?');
+  assert.equal(data.get('live_pms').fan[0].kind, 'fan-group');
+  assert.equal(data.has('chat_fan'), false);
+  assert.equal(badge.hidden, false);
+  modals.at(-1).body.querySelector('#_viewFanPM').onclick();
+  assert.equal(modals.at(-1).title, '与 马星星 的私信');
+  assert.match(modals.at(-1).body.innerHTML, /Can we talk\?/);
+  assert.doesNotMatch(modals.at(-1).body.innerHTML, /_lpm_visit/);
+  assert.equal(badge.hidden, true);
+
+  context._curPage = 'live';
+  context.deliverGroupPrivateReaction(group, friend, 'Still there?');
+  assert.equal(modals.length, 2);
+  data.get('live_pms').legacy = [{ from: 'anchor', text: 'Previously hidden' }];
+  context.openLiveInbox();
+  assert.match(modals.at(-1).body.innerHTML, /马星星/);
+  assert.match(modals.at(-1).body.innerHTML, /Previously hidden/);
+  context.openLivePM('legacy');
+  assert.match(modals.at(-1).body.innerHTML, /Previously hidden/);
+  assert.doesNotMatch(modals.at(-1).body.innerHTML, /_lpm_send/);
+  context.deliverGroupPrivateReaction({ id: 'ordinary' }, friend, 'Ordinary chat');
+  assert.equal(data.get('chat_fan')[0].text, 'Ordinary chat');
+  assert.equal(data.get('live_pms').fan.length, 2);
+});
+
 test('an empty fan group can appoint an AI admin; leaving preserves history and discards pending invites', async () => {
   const pending = deferred(), requests = [], controls = new Map();
   const group = { id: 'fan', name: 'Fan club', isLiveGroup: true, charIds: [], adminIds: [] };
