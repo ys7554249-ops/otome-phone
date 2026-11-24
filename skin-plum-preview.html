@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN" data-skin="plum">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>梅子奶霜 · 皮肤预览</title>
+<link rel="stylesheet" href="./skin-plum.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.65 system-ui, sans-serif; }
+  #app { min-height: 100svh; background: var(--plum-ground); color: var(--plum-ink); }
+  .layout { width: min(100%, 880px); margin: auto; padding: 32px 16px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 400px); align-items: center; gap: 36px; }
+  h1 { margin: 4px 0 10px; font: 500 clamp(36px, 6vw, 64px)/1.2 Georgia, 'Songti SC', 'Noto Serif CJK SC', serif; }
+  .edition, small, .clock { color: var(--plum-muted); }
+  .edition { letter-spacing: .2em; font-size: 11px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+  .actions > * { padding: 7px 14px; font: inherit; text-decoration: none; cursor: pointer; }
+  .card { padding: 12px 14px; }
+  .phone { border: 1px solid var(--plum-edge); border-radius: 30px; padding: 4px 0 0; box-shadow: var(--plum-shadow); min-width: 0; }
+  .app-statusbar, .app-topbar, #_inputbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
+  .app-statusbar { justify-content: space-between; font-size: 12px; }
+  .avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; background: var(--plum-soft); color: var(--plum-accent); font-family: Georgia, serif; }
+  .contact { display: grid; line-height: 1.4; }
+  .chat { min-height: 246px; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 10px 24px 18px; }
+  .clock { font-size: 11px; text-align: center; }
+  ._bubble { max-width: 88%; padding: 8px 13px; align-self: flex-start; }
+  ._bubble-self { align-self: flex-end; }
+  .app-chat-quote { padding: 2px 7px; margin-bottom: 4px; font-size: 11px; }
+  #_ci { flex: 1; padding: 8px 10px; font-size: 13px; }
+  #_creply { padding: 7px 12px; font-size: 13px; }
+  @media (max-width: 640px) {
+    .layout { max-width: 440px; grid-template-columns: 1fr; gap: 16px; padding-block: 18px; }
+    .intro p { margin: 6px 0; }
+    .intro .card { display: none; }
+    .actions { margin: 12px 0 0; }
+  }
+</style>
+</head>
+<body>
+<main id="app">
+  <div class="layout">
+    <section class="intro" aria-labelledby="skin-title">
+      <div class="edition">OTOME PHONE / SKIN 01</div>
+      <h1 id="skin-title">梅子奶霜</h1>
+      <p>奶白底色，梅紫气泡。顶栏和输入区留一点空隙，卡片留一角收边。</p>
+      <div class="actions">
+        <a class="btn-main" href="./index.html?skin=plum">在 App 里试用</a>
+        <button class="btn-sub" id="night-toggle" type="button" aria-pressed="false">夜间模式</button>
+      </div>
+      <div class="card"><small>独立样例 · 打开即可看气泡，原有美化设置会保留。</small></div>
+    </section>
+    <section class="phone plum-chat-page" aria-label="聊天皮肤样例">
+      <div class="app-statusbar"><span>周六 · 晚间</span><span>20:48</span></div>
+      <header class="app-topbar">
+        <div class="avatar" aria-hidden="true">林</div>
+        <div class="contact"><strong>林屿</strong><small>在线 · 聊天样例</small></div>
+      </header>
+      <div class="chat">
+        <div class="clock">今天 20:48</div>
+        <div class="_bubble _bubble-other">刚下完雨，楼下那盏路灯亮了。</div>
+        <div class="_bubble _bubble-self">那你慢点走，我等你回来。</div>
+        <div class="_bubble _bubble-other">
+          <div class="app-chat-quote">你：那你慢点走，我等你回来。</div>
+          好。路过那家店的话，给你带一块梅子蛋糕。
+        </div>
+      </div>
+      <div id="_inputbar" aria-hidden="true"><span id="_ci">说点什么…</span><span id="_creply">发送</span></div>
+    </section>
+  </div>
+</main>
+<script>
+  const nightToggle = document.getElementById('night-toggle')
+  nightToggle.onclick = () => {
+    const night = document.getElementById('app').classList.toggle('night')
+    nightToggle.setAttribute('aria-pressed', String(night))
+  }
+</script>
+</body>
+</html>

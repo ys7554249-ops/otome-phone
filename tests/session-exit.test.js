@@ -58,9 +58,15 @@ test('live back preserves the room; ending hides only that room and drops pendin
   const css = { disabled: true };
   context.document = { getElementById: id => id === '_customCSS' ? css : context.$('#' + id) };
   env.run(section('function isLiveRoomEnded(', '\nfunction checkCharAutoLive('));
+  env.run(section('const liveGuardDays=', 'const badgeColors='));
+  env.run(section('function appendLivePM(', 'window.openLiveInbox ='));
   env.run(section('pages.liveroom=()=>{', '\n// ── 下单购买带货商品'));
   data.set('charLiveNow', { charId: 'b' });
   context.pages.liveroom();
+  const headerStack = context.$('#_lrheaderstack');
+  assert.match(headerStack.children[0].innerHTML, /id="_lrend"/);
+  assert.equal(headerStack.children[1].id, '_lrlevelbar');
+  assert.doesNotMatch(headerStack.children[1].style.cssText, /position:absolute|top:/);
   const delayed = [...timers.values()].find(timer => timer.ms === 20000);
   assert.ok(delayed);
   delayed.fn();
@@ -83,6 +89,79 @@ test('live back preserves the room; ending hides only that room and drops pendin
   assert.equal(data.get('charLiveNow').charId, 'b');
   context.pages.liveroom();
   assert.equal(renders.at(-1), 'live');
+});
+
+test('support milestones send care and rival messages with separate cooldowns', () => {
+  const { context, data, run } = environment({ now: () => new Date(), ftime: () => '12:00' });
+  run(section('function isLiveRoomEnded(', '\nfunction checkCharAutoLive('));
+  run(section('const liveGuardDays=', 'const badgeColors='));
+  run(section('function appendLivePM(', 'window.openLiveInbox ='));
+  const host = { id: 'host', name: 'Host', type: 'npc' };
+  const rival = { id: 'rival', name: 'Rival' };
+  const pool = [host, rival];
+  const day = 86400000, start = Date.now();
+  const trigger = (fan, elapsed = 0) => context.triggerLiveSupport(host, fan, pool, start + elapsed);
+  trigger({ totalGift: 519, level: 2 });
+  assert.equal(data.has('live_pms'), false);
+  assert.equal(trigger({ level: 3 }), true);
+  assert.equal(trigger({ level: 3 }, 1), false);
+  assert.equal(data.get('live_pms').host.length, 1);
+  assert.equal(trigger({ level: 5, anonymous: true }, 2), true);
+  assert.equal(data.get('live_pms').rival, undefined);
+  assert.equal(trigger({ level: 5 }, 3), true);
+  assert.equal(data.get('live_pms').rival[0].kind, 'poach');
+  assert.equal(trigger({ level: 5 }, day + 4), true);
+  assert.equal(data.get('live_pms').rival.length, 1);
+  trigger({ totalGift: 5200 }, day + 5);
+  assert.match(data.get('live_pms').host.at(-1).text, /微聊/);
+  trigger({ level: 5 }, 7 * day + 4);
+  assert.equal(data.get('live_pms').rival.length, 2);
+  assert.equal(context.liveSupportTier({ guardType: 3, guardExpire: start + 1 }, start), 2);
+  assert.equal(context.liveSupportTier({ guardType: 3, guardExpire: start }, start), 0);
+});
+
+test('an empty fan group can appoint an AI admin; leaving preserves history and discards pending invites', async () => {
+  const pending = deferred(), requests = [], controls = new Map();
+  const group = { id: 'fan', name: 'Fan club', isLiveGroup: true, charIds: [], adminIds: [] };
+  let messages = [], modal;
+  const env = environment({
+    groups: [group], charList: [], worldBooks: [], styleBooks: [], alert: assert.fail,
+    I: { mirror: () => '' }, avatarEl: () => '', genWcId: () => '', saveCharList() {},
+    saveGroups() {}, getGroupMsgs: () => messages, saveGroupMsgs: (_, value) => { messages = value; },
+    updateCharRel() {}, now: () => new Date(), ftime: () => '12:00',
+    askAIJson: async (_, prompt) => {
+      requests.push(prompt);
+      return requests.length === 1 ? { name: 'New admin', firstMsg: 'Hello' } : pending.promise;
+    },
+    showModal(_, build) {
+      controls.clear();
+      const body = modal = { isConnected: true, innerHTML: '', querySelectorAll: () => [],
+        querySelector(key) { return controls.get(key) || controls.set(key, { style: {} }).get(key); } };
+      build(body, () => { body.isConnected = false; });
+    }
+  });
+  env.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
+  env.run(section('window.openLiveGroupList =', 'pages.live=()=>'));
+  env.context.openGroupMenu(group);
+  await controls.get('#_gcpullnpc').onclick();
+  assert.match(requests[0], /生成一位新管理员/);
+  assert.equal(group.charIds.length, 1);
+  assert.equal(group.adminIds[0], group.charIds[0]);
+  assert.equal(messages.at(-1).text, 'Hello');
+
+  env.context.openGroupMenu(group);
+  const invite = controls.get('#_gcpullnpc').onclick();
+  assert.match(requests[1], /New admin/);
+  controls.get('#_gmleave').onclick();
+  assert.equal(group.liveGroupLeft, true);
+  assert.equal(env.renders.at(-1), 'live');
+  assert.equal(env.data.get('activeGroupId'), '');
+  pending.resolve({ name: 'Late guest' });
+  await invite;
+  assert.equal(group.charIds.length, 1);
+  assert.equal(messages.length, 2);
+  env.context.openLiveGroupList();
+  assert.doesNotMatch(modal.innerHTML, /Fan club/);
 });
 
 test('leaving a live session stops its voice and preserves unrelated queued audio', () => {

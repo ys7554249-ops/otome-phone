@@ -215,6 +215,18 @@ body.night-mode .cs-sheet input[type=date]{color-scheme:dark}
 .cs-photo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .cs-view{display:block;width:100%;max-height:62vh;object-fit:contain;border-radius:12px;background:var(--cs-paper)}
 </style>
+<script>
+{
+  const params = new URLSearchParams(location.search)
+  if (params.get('skin') === 'plum' && !params.has('safe') && !params.has('safemode')) {
+    document.documentElement.dataset.skin = 'plum'
+    const sheet = document.createElement('link')
+    sheet.rel = 'stylesheet'
+    sheet.href = './skin-plum.css'
+    document.head.appendChild(sheet)
+  }
+}
+</script>
 </head>
 <body>
 <div id="app"></div>
@@ -7262,7 +7274,7 @@ const screen2=ce('div')
  Object.assign(screen2.style,{width:'33.3333%',height:'100%',display:'flex',flexDirection:'column',flexShrink:'0',overflow:'hidden'})
 
 // 第二屏顶部
-const s2top=ce('div')
+ const s2top=ce('div','app-statusbar')
 Object.assign(s2top.style,{padding:'8px 20px',paddingTop:'max(8px,env(safe-area-inset-top))',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:'0'})
 const _notifCount = getNotificationCount()
 s2top.innerHTML=`
@@ -7273,7 +7285,7 @@ s2top.innerHTML=`
         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
         <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
       </svg>
-      ${_notifCount>0?`<div style="position:absolute;top:-2px;right:-2px;min-width:14px;height:14px;padding:0 3px;background:#ff4444;border-radius:7px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:bold;border:1.5px solid ${n?'#2a2035':'#fef8f4'}">${_notifCount>99?'99+':_notifCount}</div>`:''}
+      <div id="_notifbadge" style="position:absolute;top:-2px;right:-2px;min-width:14px;height:14px;padding:0 3px;background:#ff4444;border-radius:7px;font-size:9px;color:#fff;display:${_notifCount?'flex':'none'};align-items:center;justify-content:center;font-weight:bold;border:1.5px solid ${n?'#2a2035':'#fef8f4'}">${_notifCount>99?'99+':_notifCount}</div>
     </div>
     <div style="font-size:11px;color:${n?'#b8a8b8':'var(--ink-l)'}">${ftime(now())}</div>
   </div>
@@ -7867,9 +7879,17 @@ function saveShipAddr(d){store.set('shipAddr',d)}
 const fanLvExp=[0,50,150,400,800,1500,3000,6000,12000,25000,50000,100000]
 const userLvExp=[0,100,300,800,2000,5000,12000,30000,80000,200000]
 const userLvTitles=['','小萌新','常客','铁粉','真爱粉','超级粉','至尊粉','传说','神话','不朽']
-const guardNames=['','粉丝守护','铁粉守护','挚爱守护']
-const guardPriceCoins=[0,300,980,2980]
-const guardColors=['','#9ec6ff','#ff9ec6','#ffd700']
+const liveGuardDays=30, liveDayMs=86400000
+const liveSpecialGifts=[
+  {id:'badge',name:'粉丝灯牌',price:10,emoji:'✦',tier:0,exp:10},
+  {id:'emperor',name:'帝皇守护',price:2980,emoji:'♛',tier:3,exp:350}
+]
+function hasLiveGuard(fan,ts=Date.now()){return fan.guardType===3&&fan.guardExpire>ts}
+function activateLiveBadge(fan,streamer){
+  if(fan.level>0)return
+  fan.level=1;fan.exp=fan.exp||0;fan.badgeName=streamer.name.slice(0,2)
+  fan.joinTime=new Date().toLocaleString()
+}
 const badgeColors=['#888','#9ec6ff','#7ecbff','#5eb8ff','#ff9ec6','#ff6b9d','#c850c0','#a040a8','#ffd700','#ff8c00','#ff4500','#ff0000','#e8115b']
 function calcLevel(exp,t){for(let i=t.length-1;i>=0;i--)if(exp>=t[i])return i;return 0}
 function getLvPriv(lv){return{canAnon:lv>=5,colorDm:lv>=3,dmSize:lv>=7?'large':lv>=4?'medium':'normal',dmGlow:lv>=8,enterNotice:lv>=6,dmSlow:lv>=9}}
@@ -8098,6 +8118,51 @@ function checkCharAutoLive(){
   // ── NPC直播间记忆系统 ──
   function getLiveMemory(sid){ return store.get('liveMem_'+sid,{visits:0,totalGift:0,lastVisit:'',giftHistory:[],chatHistory:[],remembered:false}) }
   function saveLiveMemory(sid,data){ store.set('liveMem_'+sid,data) }
+function appendLivePM(sid,message){
+  const threads=store.get('live_pms',{})
+  ;(threads[sid] ||= []).push({...message,time:ftime(now()),ts:Date.now()})
+  store.set('live_pms',threads)
+  return threads[sid].length
+}
+function liveSupportTier(fan,ts=Date.now()){
+  if(hasLiveGuard(fan,ts)||fan.totalGift>=2000||fan.level>=5)return 2
+  return fan.totalGift>=520||fan.level>=3?1:0
+}
+function triggerLiveSupport(host,fan,pool,ts=Date.now()){
+  const tier=liveSupportTier(fan,ts)
+  if(!tier)return
+  const drama=store.get('liveSupportDrama',{care:{},poach:{}})
+  const care=drama.care[host.id]
+  let changed=false
+  const oldThread=store.get('live_pms',{})[host.id]||[]
+  const inviteWechat=host.type==='npc'&&fan.totalGift>=5200&&!care?.wechat&&!charList.some(c=>c.id===host.id)
+    &&oldThread.every(m=>m.kind==='care'||m.kind==='poach')
+  if(!care||tier>care.tier||ts-care.ts>=liveDayMs||inviteWechat){
+    const messages=care?[
+      '你今天来了啊。刚才还在想，怎么没看到你的弹幕。',
+      '看到你来我就安心了。下次来记得说句话，我想知道你在。'
+    ]:[
+      '下播前想单独跟你说声谢谢。你来得勤，我已经开始下意识找你的弹幕了。',
+      '你每次来我都记得。下次空手来坐坐也行，我照样给你留位置。'
+    ]
+    appendLivePM(host.id,{from:'anchor',kind:'care',text:inviteWechat?'你的支持我都记着。方便留个微聊号吗？下播也想和你说说话。':messages[Math.floor(Math.random()*messages.length)]})
+    drama.care[host.id]={tier,ts,wechat:!!(care?.wechat||inviteWechat)};changed=true
+  }
+  // 匿名支持只触发原主播私信，不触发跨房邀请。
+  if(tier===2&&!fan.anonymous&&(drama.lastPoach==null||ts-drama.lastPoach>=liveDayMs)){
+    const rivals=pool.filter(r=>r.id!==host.id&&!isLiveRoomEnded(r.id)&&(drama.poach[r.id]==null||ts-drama.poach[r.id]>=7*liveDayMs))
+    const rival=rivals[Math.floor(Math.random()*rivals.length)]
+    if(rival){
+      const text=/高冷|嘴硬|毒舌/.test(rival.personality||'')
+        ? `听说你常去${host.name}那边。也来我这儿听一场？位置给你留了。`
+        : `我在${host.name}那边见过你。今晚也来我这儿串个门吧？你来就好，我给你留了前排。`
+      appendLivePM(rival.id,{from:'anchor',kind:'poach',text})
+      drama.poach[rival.id]=ts;drama.lastPoach=ts;changed=true
+    }
+  }
+  if(changed)store.set('liveSupportDrama',drama)
+  return changed
+}
 // ═══════════════════════════════
 // 直播内建私信与粉丝群系统
 // ═══════════════════════════════
@@ -8107,15 +8172,17 @@ window.openLiveInbox = () => {
     let html = '';
     const pool = store.get('streamerPool', {list:[]}).list;
     
-    Object.keys(lpms).forEach(sid => {
+    Object.keys(lpms).filter(sid=>lpms[sid]?.length).sort((a,b)=>(lpms[b].at(-1).ts||0)-(lpms[a].at(-1).ts||0)).forEach(sid => {
        const s = pool.find(x => x.id === sid);
        if(!s) return;
-       const lastMsg = lpms[sid][lpms[sid].length - 1];
+        const lastMsg = lpms[sid][lpms[sid].length - 1];
+        const unread=lastMsg.from==='anchor'&&lpms[sid].length>(store.get('live_pms_read',{})[sid]||0)
+        const label=lastMsg.kind==='poach'?'串门邀请':lastMsg.kind==='care'?'主播专属私信':''
        html += `
          <div class="list-item" data-sid="${escHtml(sid)}" style="cursor:pointer">
            ${avatarEl(s.avatar, 40)}
            <div style="flex:1;min-width:0">
-             <div style="font-size:14px;color:var(--ink);font-weight:500">${escHtml(s.name)}</div>
+              <div style="font-size:14px;color:var(--ink);font-weight:500">${escHtml(s.name)} ${unread?'<span style="color:var(--rose-d)">●</span>':''} ${label?`<small style="color:var(--rose-d)">${label}</small>`:''}</div>
              <div style="font-size:11px;color:var(--ink-l);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(_chatPreview(lastMsg.text,30))}</div>
            </div>
          </div>
@@ -8154,6 +8221,7 @@ window.openLivePM = (sid) => {
     };
     
     mb.innerHTML = `
+      ${!isLiveRoomEnded(s.id)?'<button type="button" class="btn-sub" id="_lpm_visit" style="margin:0 0 8px">去主播直播间</button>':''}
       <div id="_lpm_list" style="flex:1;overflow-y:auto;padding:12px;background:rgba(0,0,0,.03);border-radius:12px">
         ${renderMsgs()}
       </div>
@@ -8164,22 +8232,28 @@ window.openLivePM = (sid) => {
     `;
     
     const listEl = mb.querySelector('#_lpm_list'); listEl.scrollTop = listEl.scrollHeight;
+    const visit=mb.querySelector('#_lpm_visit')
+    if(visit)visit.onclick=()=>{
+      if(isLiveRoomEnded(sid)){alert('主播已下播');return}
+      store.set('liveRoomStreamerId',sid);close();render('liveroom')
+    }
     
     mb.querySelector('#_lpm_send').onclick = async () => {
       const text = mb.querySelector('#_lpm_inp').value.trim();
       if(!text) return;
-      mb.querySelector('#_lpm_inp').value = '';
       
-      let lpms = store.get('live_pms', {});
-      if(!lpms[sid]) lpms[sid] = [];
-      lpms[sid].push({from:'u', text:text, time:ftime(now())});
+      const send=mb.querySelector('#_lpm_send')
+      if(send.dataset.sending)return
+      mb.querySelector('#_lpm_inp').value = '';
+      send.dataset.sending='1'
+      appendLivePM(sid,{from:'u',text})
+      listEl.innerHTML=renderMsgs();listEl.scrollTop=listEl.scrollHeight
       
       // 核心：如果玩家发送了微聊号（6位以上数字），触发加好友逻辑！
       const myWc = String(P().wechatId || '');
       const looksLikeWc = /\d{6,}/.test(text) || (myWc.length >= 5 && text.includes(myWc));
       if(looksLikeWc && !charList.find(x=>x.id===sid)) {
-         lpms[sid].push({from:'anchor', text:'收到！我去加你啦，记得通过一下哦~', time:ftime(now())});
-         store.set('live_pms', lpms);
+         appendLivePM(sid,{from:'anchor',text:'收到！我去加你啦，记得通过一下哦~'});
          
          // 放入微聊好友申请池 (isDeleted=true 隐身，直到通过)
           const nc = {id: sid, wechatId: genWcId(), name: s.name, personality: s.personality, relation: '直播间榜一大佬', mood: '开心', status: '刚才在直播', quote: '谢谢大佬的礼物...', avatar: s.avatar, worldBookIds:[], bindPersonaId: activePersonaId, isDeleted: true};
@@ -8188,20 +8262,24 @@ window.openLivePM = (sid) => {
          if(!reqs.includes(sid)) { reqs.push(sid); store.set('pendingFriendReqs', reqs); }
          alert('对方已去添加你的微聊，请前往微聊的【新的朋友】中查看。');
       } else {
-         const reply = await callAI(`我是${s.name}，直播界的主播。榜一大佬私信我说："${text}"。简短回复一句，感谢支持或者闲聊，不要emoji。`);
-         lpms[sid].push({from:'anchor', text:reply||'谢谢支持！', time:ftime(now())});
-         store.set('live_pms', lpms);
-      }
-      listEl.innerHTML = renderMsgs(); listEl.scrollTop = listEl.scrollHeight;
+         const recent=(store.get('live_pms',{})[sid]||[]).slice(-6)
+         const invitation=recent.some(m=>m.kind==='poach')
+         let reply
+         try{if(getApi()?.key)reply=await askAI(`你是主播${s.name}。性格：${s.personality||''}。根据私信上下文自然回复一句，不要催对方消费。`,recent.map(m=>`${m.from==='u'?'观众':'主播'}：${m.text}`).join('\n'),100)}catch(e){}
+         appendLivePM(sid,{from:'anchor',text:reply&&!isLLMError(reply)?reply:invitation?'有空来坐坐就好，我给你留位置。':'看到你的消息啦，下次来直播间聊。'});
+       }
+       delete send.dataset.sending
+       if(!mb.isConnected)return
+       listEl.innerHTML = renderMsgs(); listEl.scrollTop = listEl.scrollHeight;
       // 弹窗打开状态下收到主播回复，同步已读
-      const _rm2 = store.get('live_pms_read', {}); _rm2[sid] = (lpms[sid] || []).length; store.set('live_pms_read', _rm2);
+       const _rm2 = store.get('live_pms_read', {}); _rm2[sid] = (store.get('live_pms',{})[sid] || []).length; store.set('live_pms_read', _rm2);
     };
   });
 };
 
 window.openLiveGroupList = () => {
   showModal('我的直播粉丝群', (mb, close) => {
-    const liveGroups = groups.filter(g => g.isLiveGroup);
+    const liveGroups = groups.filter(g => g.isLiveGroup && !g.liveGroupLeft);
     if(!liveGroups.length) return mb.innerHTML = '<div style="text-align:center;padding:40px 0;font-size:12px;color:var(--ink-l)">还没有加入任何粉丝群</div>';
     
     mb.innerHTML = liveGroups.map(g => {
@@ -8589,8 +8667,11 @@ if(!roomCache.goodsList) roomCache.goodsList = [];
   p.style.cssText='background:#0a0812;color:#fff;overflow:hidden;touch-action:pan-y'
 
   // 顶栏
+  const headerStack=ce('div')
+  headerStack.id='_lrheaderstack'
+  headerStack.style.cssText='position:absolute;top:0;left:0;right:0;z-index:10;background:linear-gradient(180deg,rgba(0,0,0,.8),transparent)'
   const header=ce('div')
-  header.style.cssText='display:flex;align-items:center;padding:6px 12px;padding-top:max(6px,env(safe-area-inset-top));background:linear-gradient(180deg,rgba(0,0,0,.8),transparent);position:absolute;top:0;left:0;right:0;z-index:10'
+  header.style.cssText='display:flex;align-items:center;padding:6px 12px;padding-top:max(6px,env(safe-area-inset-top))'
   header.innerHTML=`
     <button type="button" id="_lrback" aria-label="返回直播广场" style="padding:6px;cursor:pointer;background:none;border:0">${I.back('#fff')}</button>
         <div id="_anchorinfo" style="display:flex;align-items:center;gap:6px;flex:1;margin:0 6px;cursor:pointer;overflow:hidden">
@@ -8618,22 +8699,28 @@ if(!roomCache.goodsList) roomCache.goodsList = [];
       </div>
     
   `
-  p.appendChild(header)
+  headerStack.appendChild(header)
 
   // 等级信息条
   const myBar=ce('div')
-  myBar.style.cssText='position:absolute;top:50px;left:0;right:0;padding:3px 14px;z-index:9;display:flex;align-items:center;gap:6px'
-  const ulv=userLevel.level||1
-  myBar.innerHTML=`
-    <span style="padding:1px 5px;border-radius:4px;background:linear-gradient(135deg,#6a90c0,#5080b0);font-size:8px;color:#fff;font-weight:600">LV${ulv}</span>
-    <span style="font-size:8px;color:rgba(255,255,255,.3)">${userLvTitles[ulv]||''}</span>
+  myBar.id='_lrlevelbar'
+  myBar.style.cssText='padding:3px 14px;display:flex;align-items:center;gap:6px'
+  function refreshLiveBar(){
+    const level=userLevel.level||1
+    myBar.innerHTML=`
+    <span style="padding:1px 5px;border-radius:4px;background:linear-gradient(135deg,#6a90c0,#5080b0);font-size:8px;color:#fff;font-weight:600">LV${level}</span>
+    <span style="font-size:8px;color:rgba(255,255,255,.3)">${userLvTitles[level]||''}</span>
     ${fanData.level>0?`<span style="padding:1px 5px;border-radius:4px;background:${badgeColors[Math.min(fanData.level,12)]};font-size:7px;color:#fff;font-weight:600">${escHtml(fanData.badgeName||s.name.slice(0,2))} ${fanData.level}</span>`:''}
+    ${hasLiveGuard(fanData)?'<span style="padding:1px 5px;border-radius:4px;background:#473517;color:#ffd778;font-size:8px;white-space:nowrap">帝皇守护</span>':''}
     <div style="flex:1"></div>
     <div style="display:flex;align-items:center;gap:3px;padding:2px 6px;border-radius:6px;background:rgba(255,200,50,.1)">
       ${lI.coin('#ffd700',10)}<span style="font-size:9px;color:#ffd700">${getLiveCoins()}</span>
     </div>
   `
-  p.appendChild(myBar)
+  }
+  refreshLiveBar()
+  headerStack.appendChild(myBar)
+  p.appendChild(headerStack)
 
   // 立绘区+飘屏弹幕容器
   const stage=ce('div');stage.id='_lrstage'
@@ -8717,7 +8804,8 @@ if(!roomCache.goodsList) roomCache.goodsList = [];
       const priv=getLvPriv(userLevel.level||1)
       const myColor=priv.colorDm?'#9ec6ff':'rgba(200,220,255,.75)'
       const myName=fanData.anonymous?'匿名用户':(P().name||'你')
-      item.innerHTML=`<span style="color:${myColor};font-size:10px;font-weight:600">${escHtml(myName)}</span><span style="color:rgba(200,220,255,.75);font-size:10px">：${escHtml(content)}</span>`
+      const guard=!fanData.anonymous&&hasLiveGuard(fanData)?'<span style="color:#ffd778;font-size:9px">帝皇守护 </span>':''
+      item.innerHTML=`${guard}<span style="color:${myColor};font-size:10px;font-weight:600">${escHtml(myName)}</span><span style="color:rgba(200,220,255,.75);font-size:10px">：${escHtml(content)}</span>`
         }else if(type==='anchor'){
       item.style.cssText+='padding:5px 8px;margin:3px 0;border-radius:8px;background:rgba(255,255,255,.05);border-left:2px solid rgba(255,100,150,.5)'
       item.innerHTML=`<div style="font-size:9px;color:rgba(255,100,150,.6);margin-bottom:1px">${escHtml(s.name)}</div><div style="font-size:12px;color:rgba(255,255,255,.9);line-height:1.6">${escHtml(content)}</div>`
@@ -8883,9 +8971,10 @@ function showGiftFx(gift,sender,combo){
     if(fanData.level===0)return
     fanData.exp+=amt
     const newLv=calcLevel(fanData.exp,fanLvExp)
-    if(newLv>fanData.level){fanData.level=newLv;pushComment(`灯牌升到 ${newLv} 级！`,'system')}
-    fanData.level=Math.max(fanData.level,newLv)
+    const upgraded=newLv>fanData.level
+    if(upgraded){fanData.level=newLv;pushComment(`灯牌升到 ${newLv} 级！`,'system');refreshLiveBar()}
     saveLiveFanData(s.id,fanData)
+    return upgraded
   }
   function addUserExp(amt){
     userLevel.exp+=amt;userLevel.totalSpent+=amt
@@ -9164,9 +9253,22 @@ isDanmaku=true表示飘屏弹幕，false表示评论区。大约60%是弹幕40%�
 
     pushComment('欢迎来到直播间','system')
   pushComment(`${s.name} 正在直播`,'system')
+  const supportTier=liveSupportTier(fanData)
+  triggerLiveSupport(s,fanData,pool)
+  if(supportTier&&!fanData.anonymous){
+    const name=P().name||'你'
+    pushComment(supportTier===2?`${name}来了？前排的位置还给你留着。`:`${name}来了，我记得你的弹幕。`,'anchor')
+  }else if(!fanData.anonymous){
+    const invite=(store.get('live_pms',{})[s.id]||[]).findLast(m=>m.kind==='poach')
+    if(invite&&Date.now()-invite.ts<liveDayMs&&invite.ts>(liveMem.lastInviteWelcome||0)){
+      pushComment('你真来串门了。来，坐前排。','anchor')
+      liveMem.lastInviteWelcome=invite.ts
+      saveLiveMemory(s.id,liveMem)
+    }
+  }
 
   // ── 主播认出回访观众 ──
-  if(isReturningViewer && getApi()?.key){
+  if(isReturningViewer && !supportTier && !fanData.anonymous && getApi()?.key){
     setTimeout(async()=>{
       if(!active)return
       const memInfo=liveMem
@@ -9347,7 +9449,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
     if(liveMem.chatHistory.length>20)liveMem.chatHistory=liveMem.chatHistory.slice(-20)
     saveLiveMemory(s.id,liveMem)
 
-    if(fanData.level>0){fanData.danmakuCount++;addFanExp(2);saveLiveFanData(s.id,fanData)}
+    if(fanData.level>0){fanData.danmakuCount++;if(addFanExp(2))triggerLiveSupport(s,fanData,pool)}
     addUserExp(1)
     if(c) recordLiveInteraction(`发了弹幕："${text}"`);
 
@@ -9364,7 +9466,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
     liveMem.chatHistory.push(text.slice(0,30))
     if(liveMem.chatHistory.length>20)liveMem.chatHistory=liveMem.chatHistory.slice(-20)
     saveLiveMemory(s.id,liveMem)
-    if(fanData.level>0){fanData.danmakuCount++;addFanExp(1);saveLiveFanData(s.id,fanData)}
+    if(fanData.level>0){fanData.danmakuCount++;if(addFanExp(1))triggerLiveSupport(s,fanData,pool)}
     if(c) recordLiveInteraction(`发了评论："${text}"`);
 
   }
@@ -9422,8 +9524,12 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
   // ── 玩家送礼逻辑（包含人气增长和榜一大佬加好友） ──
   $('#_lrgiftbtn').onclick=()=>{
     showModal('送礼物',(mb,close)=>{
+      const guardActive=hasLiveGuard(fanData)
       mb.innerHTML=`
         <div style="text-align:center;padding:6px 0 10px"><div style="font-size:13px;color:var(--ink);font-weight:500">给${escHtml(s.name)}送礼物</div><div style="font-size:10px;color:var(--ink-l);margin-top:3px">直播币余额：${getLiveCoins()} ${lI.coin('var(--gold)',12)}</div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          ${liveSpecialGifts.map(g=>`<button type="button" class="btn-sub _lg" data-id="${g.id}" style="margin:0;padding:8px 4px;line-height:1.5"><strong>${g.emoji} ${g.name}</strong><br><small>${g.price} 币 · ${g.id==='badge'?(fanData.level?'增加灯牌经验':'点亮灯牌'):(guardActive?'续期':'开通')+liveGuardDays+'天'}</small></button>`).join('')}
+        </div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
           ${liveGifts.map(g=>`<div class="_lg" data-id="${g.id}" style="padding:10px 2px;border-radius:12px;background:rgba(255,255,255,.55);border:1px solid ${g.tier>=3?'rgba(255,200,50,.3)':g.tier>=2?'rgba(200,100,255,.2)':'rgba(232,160,180,.12)'};text-align:center;cursor:pointer"><div style="font-size:22px">${g.emoji}</div><div style="font-size:9px;color:var(--ink);font-weight:500;margin-top:3px">${g.name}</div><div style="font-size:9px;color:${g.tier>=2?'#c850c0':'var(--rose-d)'}">${g.price}币</div></div>`).join('')}
         </div>
@@ -9434,8 +9540,17 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
       mb.querySelector('#_lrrecharge2').onclick=()=>{close();openCoinRecharge()}
       mb.querySelectorAll('._lg').forEach(el=>{
         el.onclick=()=>{
-          const gift=liveGifts.find(g=>g.id===el.dataset.id);if(!gift)return
+          if(!active||!mb.isConnected)return
+          const gift=[...liveSpecialGifts,...liveGifts].find(g=>g.id===el.dataset.id);if(!gift)return
+          const emperor=gift.id==='emperor'
+          const renewing=emperor&&hasLiveGuard(fanData)
+          if(emperor&&getLiveCoins()>=gift.price&&!confirm(`花费 ${gift.price} 直播币${renewing?'续期':'开通'} ${liveGuardDays} 天帝皇守护？`))return
           if(!spendCoins(gift.price)){alert('直播币不足，去充值');return}
+          if(gift.id==='badge'||emperor)activateLiveBadge(fanData,s)
+          if(emperor){
+            fanData.guardType=3
+            fanData.guardExpire=Math.max(Date.now(),Number(fanData.guardExpire)||0)+liveGuardDays*liveDayMs
+          }
           
           const myName = fanData.anonymous ? '匿名用户' : (P().name||'你');
           giftLog.push({sender:myName,gift,ts:Date.now()});
@@ -9453,7 +9568,7 @@ ${hasGiftedBefore?'要表示记得ta送过礼物。':''}
 // 🔮 修罗场/查房系统：被其他角色的粉丝抓包！
 // ==========================================
 // 当送出的礼物价值 >= 50币，或者有30%的概率触发修罗场
-if (gift.price >= 50 || Math.random() < 0.3) {
+ if (!fanData.anonymous && (gift.price >= 50 || Math.random() < 0.3)) {
    // 寻找当前不在直播且认识该主播的角色。
    const jealousCandidates = charList.filter(c => c.id !== s.id && !c.isDeleted && (
       (c.relation||'').includes(s.name) || 
@@ -9507,16 +9622,6 @@ if (gift.price >= 50 || Math.random() < 0.3) {
           }
           // ==========================================
 
-                    // 金钱的力量：如果累计送礼超过5200，且对方是NPC，主动在【直播私信】里找你要微聊号！
-          if(s.type === 'npc' && fanData.totalGift >= 5200 && !charList.find(x=>x.id===s.id)){
-             let lpms = store.get('live_pms', {});
-             if(!lpms[s.id]) {
-                 lpms[s.id] = [{from:'anchor', text:`谢谢大佬的礼物！破费了\n那个...方便加个微聊吗？你的微聊号是多少呀？`, time:ftime(now())}];
-                 store.set('live_pms', lpms);
-                 setTimeout(()=>alert(`【直播私信】${s.name} 给你发来了一条私信！请在直播广场右上角查看。`), 800);
-             }
-          }
-
           // ... (维持NPC记忆逻辑) ...
           liveMem=getLiveMemory(s.id)
           liveMem.totalGift=(liveMem.totalGift||0)+gift.price
@@ -9524,14 +9629,18 @@ if (gift.price >= 50 || Math.random() < 0.3) {
           liveMem.giftHistory.push({name:gift.name,price:gift.price,time:new Date().toLocaleString()})
           saveLiveMemory(s.id,liveMem)
 
-          addFanExp(gift.exp);addUserExp(gift.exp)
-          pushComment('','gift',{sender:myName,gift,combo:1})
+           addFanExp(gift.exp);addUserExp(gift.exp)
+           refreshLiveBar()
+           const gotPM=triggerLiveSupport(s,fanData,pool)
+           pushComment('','gift',{sender:myName,gift,combo:1})
+           if(emperor)pushComment(`${escHtml(myName)}${renewing?'续期了':'开通了'}帝皇守护`,'system')
+           if(gotPM)pushComment('收到新的直播私信，可在直播广场右下角查看','system')
           showGiftFx(gift,myName,1)
           close()
           
           if(gift.tier>=1&&getApi()?.key){
             setTimeout(async()=>{
-              const thx=await askAI(`你是${s.name}，直播中。${P().name||'观众'}送了${gift.name}(${gift.price}币)。${gift.tier>=3?'超激动震惊':gift.tier>=2?'很开心':'开心'}。一句短话感谢，不超15字，不要emoji。`,'感谢',80)
+               const thx=await askAI(`你是${s.name}，直播中。${myName}送了${gift.name}(${gift.price}币)。${gift.tier>=3?'超激动震惊':gift.tier>=2?'很开心':'开心'}。一句短话感谢，不超15字，不要emoji。`,'感谢',80)
               if(thx&&!isLLMError(thx))pushComment(thx,'anchor')
             },1500)
           }
@@ -9543,6 +9652,8 @@ if (gift.price >= 50 || Math.random() < 0.3) {
   // ── 放开虚拟主播的粉丝团限制，支持NPC建立粉丝群 ──
   $('#_lrfanbtn').onclick=()=>{
     showModal('粉丝信息',(mb,close)=>{
+      const fanGroupName=s.name+'的粉丝群'
+      const fanGroup=groups.find(g=>g.isLiveGroup&&(g.liveHostId ? g.liveHostId===s.id : g.name===fanGroupName))
       const fl=fanData.level
       const priv=getLvPriv(userLevel.level||1)
       mb.innerHTML=`
@@ -9566,14 +9677,14 @@ if (gift.price >= 50 || Math.random() < 0.3) {
         `:`<div class="card" style="text-align:center;padding:20px"><div style="font-size:12px;color:var(--ink-l);margin-bottom:12px">还没加入粉丝团</div><div class="btn-main" id="_joinfan">加入粉丝团（10直播币）</div></div>`}
         <div class="card">
           <div class="card-t">粉丝群</div>
-          <div class="btn-sub" id="_fanchat" style="margin:0">进入${escHtml(s.name)}的粉丝群</div>
+          <div class="btn-sub" id="_fanchat" style="margin:0">${fanGroup?.liveGroupLeft?'重新加入':'进入'}${escHtml(fanGroupName)}</div>
         </div>
+        ${hasLiveGuard(fanData)?`<div class="card"><div class="card-t">帝皇守护</div><div style="font-size:12px;color:var(--ink-l)">有效至 ${new Date(fanData.guardExpire).toLocaleDateString()}</div></div>`:''}
       `
       if(mb.querySelector('#_joinfan')){
         mb.querySelector('#_joinfan').onclick=()=>{
           if(!spendCoins(10)){alert('直播币不足');return}
-fanData.level=1;fanData.exp=0;fanData.badgeName=s.name.slice(0,2)
-fanData.joinTime=new Date().toLocaleString()
+ activateLiveBadge(fanData,s);refreshLiveBar()
 saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
         }
       }
@@ -9589,7 +9700,7 @@ saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
               const nc = {id: s.id, name: s.name, personality: s.personality, relation: '虚拟主播', mood: '在线', status: '', quote: '', avatar: s.avatar, worldBookIds:[], bindPersonaId: activePersonaId};
              charList.push(nc); saveCharList();
           }
-          let fg=groups.find(g=>g.name===s.name+'的粉丝群')
+           let fg=fanGroup
           if(!fg){
             // ===== 自动生成3-6个粉丝NPC塞进群里 =====
             const fanCount = 3 + Math.floor(Math.random()*4)
@@ -9614,7 +9725,7 @@ saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
             saveCharList()
 
                         // 【隔离修复】加上 isLiveGroup: true，让它只出现在直播APP的粉丝群里，不污染微聊
-            fg={id:uid(),name:s.name+'的粉丝群',scene:`群主是${s.name}，这里是他的直播粉丝聊天群。`,charIds:fanIds, adminIds:[hostId], mode:'chat',createTime:new Date().toLocaleString(), isLiveGroup: true}
+            fg={id:uid(),name:fanGroupName,scene:`群主是${s.name}，这里是他的直播粉丝聊天群。`,charIds:fanIds, adminIds:[hostId], mode:'chat',createTime:new Date().toLocaleString(), isLiveGroup:true, liveHostId:s.id}
             groups.push(fg);saveGroups()
 
 
@@ -9622,6 +9733,10 @@ saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
             let msgsArr = getGroupMsgs(fg.id) || [];
             msgsArr.push({from: 'system', text: `[系统提示] 主播 ${s.name} 邀请你加入了粉丝群`, time: ftime(now()), type: 'game', html: `<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px 0;background:rgba(0,0,0,0.03);border-radius:8px">主播 ${s.name} 邀请你加入了群聊</div>`});
             saveGroupMsgs(fg.id, msgsArr);
+          }else if(fg.liveGroupLeft || !fg.liveHostId){
+            fg.liveGroupLeft=false
+            fg.liveHostId=s.id
+            saveGroups()
           }
           store.set('activeGroupId',fg.id)
           render('groupchat')
@@ -10406,8 +10521,9 @@ const _msgIsOffline=m=>!!(m&&m.from!=='u')&&_msgModeOf(m)==='offline'
   }
   _allMsgs.forEach(m=>{if(m.from==='c'&&!m.read){m.read=true;_readChanged=true}})
   if(_readChanged)saveMsgs(activeCharId,_allMsgs)
-  const p=ce('div','page')
+  const p=ce('div','page plum-chat-page')
   const chatWall=store.get('chatWall','')
+  if(chatWall)p.classList.add('has-chat-wall')
 if(chatWall){
   p.style.setProperty('background', `url('${chatWall}') center/cover no-repeat`, 'important');
   p.style.setProperty('background-color', '#fef8f4', 'important');
@@ -12534,7 +12650,7 @@ if(_htmlCardHit){
         }
         {
           // 普通消息
-          const quoteHtml = m.quote ? `<div style="padding:4px 8px; margin-bottom:6px; background:rgba(0,0,0,0.05); border-radius:6px; font-size:11px; opacity:0.8; border-left:3px solid var(--rose)">${escHtml(m.quote.name)}: ${escHtml(m.quote.text.slice(0,30))}</div>` : '';
+          const quoteHtml = m.quote ? `<div class="app-chat-quote" style="padding:4px 8px; margin-bottom:6px; background:rgba(0,0,0,0.05); border-radius:6px; font-size:11px; opacity:0.8; border-left:3px solid var(--rose)">${escHtml(m.quote.name)}: ${escHtml(m.quote.text.slice(0,30))}</div>` : '';
           
           // 判断这句话是不是纯表情包（含酒馆 <bqb> 标签）
           // 解析聊天卡片：支持 <msg> 格式、BLMX 格式
@@ -22762,6 +22878,10 @@ pages.beauty=()=>{
       <div style="font-size:10px;color:var(--ink-l);margin-top:8px;line-height:1.6">跟随时间：夜晚自动切换深色界面</div>
     </div>
     <div class="card">
+      <div class="card-t">皮肤试用</div>
+      <a class="btn-sub" href="./skin-plum-preview.html" style="display:block;text-decoration:none">预览梅子奶霜</a>
+    </div>
+    <div class="card">
       <div class="card-t">主题色</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <div class="_themeopt" data-v="none" style="padding:8px 14px;border-radius:14px;cursor:pointer;background:${curTheme==='none'?'rgba(245,213,222,.45)':'rgba(255,255,255,.55)'};font-size:12px;border:${curTheme==='none'?'1.5px solid var(--rose)':'1px solid transparent'}">无</div>
@@ -25782,6 +25902,7 @@ pages.groupchat=()=>{
   const gid=store.get('activeGroupId','')
   const g=groups.find(x=>x.id===gid)
   if(!g){render('groups');return}
+  if(g.isLiveGroup && g.liveGroupLeft){render('live');return}
 
   const n=isN()
   const members=g.charIds.map(id=>charList.find(c=>c.id===id)).filter(Boolean)
@@ -25872,10 +25993,12 @@ else{p.style.background=n?'linear-gradient(180deg,#2a2035,#3a2845)':'linear-grad
   let sending = false;
   let funcOpen = false;
 
+  let groupPageActive = true;
   const cleanupGroup = () => {
       isAutoChatting = false;
       if(autoChatTimer) clearTimeout(autoChatTimer);
   };
+  _setPageTeardown(()=>{groupPageActive=false;cleanupGroup()});
 
   const updateGCDraft = () => {
     if(g.isGodMode) return;
@@ -26112,8 +26235,9 @@ else{p.style.background=n?'linear-gradient(180deg,#2a2035,#3a2845)':'linear-grad
          }
      }
 
-     const replies = await callGroupAI(g, members, arr, pending);
-     if(tp&&tp.parentElement) tp.remove();
+      const replies = await callGroupAI(g, members, arr, pending);
+      if(tp&&tp.parentElement) tp.remove();
+      if(!groupPageActive) return;
      if(!replies){
        // 群聊 AI 没返回：保留未回复状态，停下连聊，把真实错误给用户
        isAutoChatting=false;
@@ -26824,7 +26948,7 @@ function openGroupMenu(g){
             </div>`
           }).join('')}
         </div>
-        <div class="btn-sub" id="_gcpullnpc" style="margin-top:10px;border-style:dashed;color:var(--rose-d)">+ 让AI随机拉NPC入群</div>
+        <button type="button" class="btn-sub" id="_gcpullnpc" style="display:block;width:100%;margin-top:10px;border-style:dashed;color:var(--rose-d)">${g.isLiveGroup&&!members.length?'+ 让AI生成粉丝群管理员':'+ 让AI随机拉NPC入群'}</button>
       </div>
 
       <div class="card">
@@ -26881,7 +27005,17 @@ function openGroupMenu(g){
       
       <div class="btn-main" id="_gmsave">保存</div>
       <div class="btn-sub" id="_gmclear" style="margin-top:8px">清空聊天记录</div>
+      ${g.isLiveGroup?'<button type="button" class="btn-sub" id="_gmleave" style="display:block;width:100%;margin-top:8px;color:#b9596c">退出粉丝群</button>':''}
     `
+    const leaveButton=mb.querySelector('#_gmleave')
+    if(leaveButton) leaveButton.onclick=()=>{
+      if(!confirm('确定退出粉丝群？聊天记录会保留，可从主播的粉丝信息页重新加入。'))return
+      g.liveGroupLeft=true
+      saveGroups()
+      store.set('activeGroupId','')
+      close()
+      render('live')
+    }
     
     let newMode=g.mode||'chat'
     mb.querySelectorAll('._gmmode').forEach(el=>{
@@ -27221,39 +27355,51 @@ mb.querySelectorAll('._gckick').forEach(el=>{
     });
 
     // AI拉NPC进群
-    mb.querySelector('#_gcpullnpc').onclick=async()=>{
+    const inviteBtn = mb.querySelector('#_gcpullnpc');
+    inviteBtn.onclick=async()=>{
+      if(inviteBtn.disabled || g.liveGroupLeft)return;
       const api=getApi(); if(!api||!api.key){alert('请先配置API');return;}
-      if(members.length===0){alert('群里没别人，没法拉人');return;}
-      
-      const btn = mb.querySelector('#_gcpullnpc');
-      btn.textContent = 'AI正在思考拉谁进群...';
-      btn.style.opacity = '.5';
-      
-      // 随机选一个群里的倒霉蛋，给他造个社会关系
-      const inviter = members[Math.floor(Math.random()*members.length)];
-      const prompt = `你是群聊里的「${inviter.name}」。你想拉一个跟你有关系的人进群（比如你的死党、前女友、神秘老板、笨蛋弟弟等）。
+      const liveMembers=members.filter(c=>g.charIds.includes(c.id)&&charList.includes(c));
+      if(!liveMembers.length&&!g.isLiveGroup){alert('群里没别人，没法拉人');return;}
+      const oldLabel=inviteBtn.textContent;
+      inviteBtn.disabled=true;
+      inviteBtn.textContent='AI正在思考拉谁进群...';
+      const admins=g.isLiveGroup?liveMembers.filter(c=>(g.adminIds||[]).includes(c.id)):[];
+      const candidates=admins.length?admins:liveMembers;
+      const inviter=candidates[Math.floor(Math.random()*candidates.length)];
+      const invitation=inviter
+        ? `你是群聊里的「${inviter.name}」。你想拉一个跟你有关系的人进群。`
+        : `为刚清空成员的粉丝群「${g.name}」生成一位新管理员，关系填“粉丝群管理员”。`;
+      const prompt = `${invitation}
 请创造这个NPC。只返回JSON，格式：
 {"name":"名字","relation":"跟你的关系","personality":"性格描述（50字内）","firstMsg":"他进群后说的第一句话"}
 禁止用emoji。`;
 
-      const res = await askAIJson('只返回JSON', prompt, 500);
-      if(!res || !res.name) {
-        btn.textContent = '+ 让AI随机拉NPC入群'; btn.style.opacity='1';
+      let res;
+      try{res=await askAIJson('只返回JSON', prompt, 500, api)}catch(e){}
+      inviteBtn.disabled=false;
+      inviteBtn.textContent=oldLabel;
+      if(!mb.isConnected || !groups.includes(g) || g.liveGroupLeft || (inviter&&!g.charIds.includes(inviter.id)))return;
+      if(typeof res?.name!=='string' || !res.name.trim()) {
         alert('拉人失败，再试一次吧'); return;
       }
-      
-      // 创建新角色（隐藏起来，不出现在私聊列表里）
-      const nc = {id:uid(), name:res.name, personality:`【NPC】${inviter.name}的${res.relation}。${res.personality}`, relation:res.relation, mood:'好奇', status:'刚进群', quote:res.firstMsg, avatar:'', worldBookIds:[], bindPersonaId: activePersonaId, isHidden:true, wechatId:genWcId()};
+      const relation=inviter?(typeof res.relation==='string'&&res.relation.trim()||'熟人'):'粉丝群管理员';
+      const firstMsg=typeof res.firstMsg==='string'?res.firstMsg:'';
+      const personality=typeof res.personality==='string'?res.personality:'';
+      const nc = {id:uid(), name:res.name.trim(), personality:`【NPC】${inviter?inviter.name+'的':''}${relation}。${personality}`, relation, mood:'好奇', status:'刚进群', quote:firstMsg, avatar:'', worldBookIds:[], bindPersonaId: activePersonaId, isHidden:true, wechatId:genWcId()};
       charList.push(nc); saveCharList();
-      updateCharRel(inviter.id, nc.id, { setFamiliarity: 70, event: `${inviter.name}拉了自己的${(res.relation||'熟人').slice(0,30)}进群` });
+      if(inviter)updateCharRel(inviter.id, nc.id, { setFamiliarity: 70, event: `${inviter.name}拉了自己的${relation.slice(0,30)}进群` });
       
       // 加入群聊
-      g.charIds.push(nc.id); saveGroups();
+      g.charIds.push(nc.id);
+      if(!inviter)g.adminIds=[nc.id];
+      saveGroups();
       
       // 发送进群消息
       const arr = getGroupMsgs(g.id);
-      arr.push({from:'system',text:`[系统提示] ${inviter.name} 邀请 ${nc.name} 加入了群聊`,time:ftime(now()),type:'game',html:`<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px 0;background:rgba(0,0,0,0.03);border-radius:8px">${inviter.name} 邀请 ${nc.name} 加入了群聊</div>`});
-      arr.push({from:nc.id, text:res.firstMsg, time:ftime(now())});
+      const notice=inviter?`${inviter.name} 邀请 ${nc.name} 加入了群聊`:`${nc.name} 加入了群聊并成为管理员`;
+      arr.push({from:'system',text:`[系统提示] ${notice}`,time:ftime(now()),type:'game',html:`<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px 0;background:rgba(0,0,0,0.03);border-radius:8px">${escHtml(notice)}</div>`});
+      if(firstMsg)arr.push({from:nc.id, text:firstMsg, time:ftime(now())});
       saveGroupMsgs(g.id, arr);
       
       close(); render('groupchat');
@@ -28990,22 +29136,11 @@ function collectNotifications(){
     }
   }
 
-  // 4. 副本进行中
-  if(typeof activeDungeon !== 'undefined' && activeDungeon){
-    list.push({
-      type:'dungeon',
-      text: '副本「'+(activeDungeon.title||activeDungeon.name||'剧本')+'」进行中',
-      name: '副本进行中',
-      count: 1,
-      time: ''
-    })
-  }
-
   return list
 }
 
-function getNotificationCount(){
-  return collectNotifications().reduce((s,n)=>s+(n.count||1),0)
+function getNotificationCount(list=collectNotifications()){
+  return list.reduce((s,n)=>s+(n.count||1),0)
 }
 
 function markNotificationRead(item){
@@ -29037,19 +29172,27 @@ function markAllNotificationsRead(){
 
 function openNotificationPanel(){
   try{ refreshAllCharRelations() }catch(e){}
-  const list = collectNotifications()
   const n = isN()
   showModal('通知中心', (mb, close) => {
-    const render = () => {
+    const syncBadge = count => {
+      const badge = $('#_notifbadge')
+      if(badge){
+        badge.textContent = count>99?'99+':count
+        badge.style.display = count?'flex':'none'
+      }
+    }
+    const draw = () => {
       const nowList = collectNotifications()
+      const count = getNotificationCount(nowList)
+      syncBadge(count)
       mb.innerHTML = `
         ${nowList.length ? `
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <div style="font-size:11px;color:var(--ink-l)">共 ${nowList.length} 条未读</div>
+            <div style="font-size:11px;color:var(--ink-l)">共 ${count} 条未读</div>
             <div id="_notif_clr" style="font-size:11px;color:var(--rose-d);cursor:pointer;padding:4px 10px;border-radius:12px;background:rgba(232,160,180,.15)">全部已读</div>
           </div>
           ${nowList.map((it,i)=>{
-            const icon = it.type==='chat'?'💬':it.type==='moment'?'📷':it.type==='momentlike'?'♡':it.type==='forum'?'📃':it.type==='dungeon'?'🎭':'✦'
+            const icon = it.type==='chat'?'💬':it.type==='moment'?'📷':it.type==='momentlike'?'♡':it.type==='forum'?'📃':'✦'
             return `
               <div class="_notif list-item" data-idx="${i}" style="cursor:pointer">
                 <div style="flex-shrink:0;position:relative">
@@ -29076,30 +29219,28 @@ function openNotificationPanel(){
         el.onclick = () => {
           const it = nowList[parseInt(el.dataset.idx)]
           markNotificationRead(it)
+          syncBadge(getNotificationCount())
           close()
           if(it.type==='chat'){
             activeCharId = it.charId
             saveCharList && saveCharList()
             store.set('activeCharId', activeCharId)
-            render && render()
-            window.render && window.render('chat')
+            render('chat')
           }else if(it.type==='moment' || it.type==='momentlike'){
-            window.render && window.render('moments')
+            render('moments')
           }else if(it.type==='forum'){
-            window.render && window.render('forum')
-          }else if(it.type==='dungeon'){
-            window.render && window.render('dungeonplay')
-          }
+            render('forum')
+           }
         }
       })
       const clr = mb.querySelector('#_notif_clr')
       if(clr) clr.onclick = () => {
         if(!confirm('确定全部标记为已读？'))return
         markAllNotificationsRead()
-        render()
+        draw()
       }
     }
-    render()
+    draw()
   })
 }
 // ===== 多人线下：同行者选择 =====

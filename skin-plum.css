@@ -1,0 +1,118 @@
+/* Important rules in this layer temporarily outrank the saved bubble preset. */
+@layer plum-preview {
+  html[data-skin="plum"] #app {
+    --plum-ink: #35253b;
+    --plum-muted: #705a74;
+    --plum-paper: #fff9f4;
+    --plum-panel: #fffaf7f5;
+    --plum-edge: #e5d5df;
+    --plum-soft: #f0e4ed;
+    --plum-accent: #74456d;
+    --plum-own: #76476f;
+    --plum-own-text: #fff9fa;
+    --plum-ground: #f6e8ef;
+    --plum-glow: #fff3e2;
+    --plum-shadow: 0 8px 24px rgba(87, 48, 79, .12);
+    --ink: var(--plum-ink) !important;
+    --ink-l: var(--plum-muted) !important;
+    --rose-d: var(--plum-accent) !important;
+  }
+
+  html[data-skin="plum"] #app.night {
+    --plum-ink: #faedf6;
+    --plum-muted: #d0b8cd;
+    --plum-paper: #332737;
+    --plum-panel: #302333f5;
+    --plum-edge: #654e65;
+    --plum-soft: #4a364b;
+    --plum-accent: #e8b9dc;
+    --plum-own: #b981ae;
+    --plum-own-text: #241727;
+    --plum-ground: #221925;
+    --plum-glow: #3f2c40;
+    --plum-shadow: 0 8px 24px rgba(0, 0, 0, .22);
+  }
+
+  html[data-skin="plum"] #app .plum-chat-page:not(.has-chat-wall),
+  html[data-skin="plum"] #app:not(.has-wall) .page:has(> #_homeslider) {
+    background: radial-gradient(ellipse at 90% 5%, var(--plum-glow), transparent 62%), var(--plum-ground) !important;
+  }
+
+  html[data-skin="plum"] #app :is(.app-topbar, .app-statusbar, #_inputbar) {
+    margin-inline: 12px !important;
+    background: var(--plum-panel) !important;
+    color: var(--plum-ink) !important;
+    border: 1px solid var(--plum-edge) !important;
+    box-shadow: var(--plum-shadow) !important;
+  }
+
+  html[data-skin="plum"] #app :is(.app-topbar, .app-statusbar) {
+    margin-top: max(8px, env(safe-area-inset-top)) !important;
+    margin-bottom: 8px !important;
+    padding-top: 10px !important;
+    border-radius: 24px !important;
+  }
+
+  html[data-skin="plum"] #app #_inputbar {
+    margin-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+    padding-bottom: 10px !important;
+    border-radius: 22px !important;
+  }
+
+  html[data-skin="plum"] #app :is(.card, .list-item) {
+    background: var(--plum-paper) !important;
+    border: 1px solid var(--plum-edge) !important;
+    border-radius: 16px 16px 16px 6px !important;
+  }
+
+  html[data-skin="plum"] #app .modal-box {
+    background: var(--plum-paper) !important;
+    border-radius: 26px 26px 0 0 !important;
+  }
+
+  html[data-skin="plum"] #app :is(.btn-main, .btn-sub, #_ci, #_cadd, #_creply, #_notifbell) {
+    border-radius: 999px !important;
+    border: 1px solid var(--plum-edge) !important;
+  }
+
+  html[data-skin="plum"] #app :is(.btn-main, #_creply) {
+    background: var(--plum-own) !important;
+    color: var(--plum-own-text) !important;
+    box-shadow: none !important;
+  }
+
+  html[data-skin="plum"] #app :is(.btn-sub, #_cfunc, #_ci, #_cadd, #_notifbell) {
+    background: var(--plum-soft) !important;
+    color: var(--plum-ink) !important;
+  }
+
+  html[data-skin="plum"] #app #_ci { min-width: 0; }
+
+  html[data-skin="plum"] #app ._bubble:is(._bubble-self, ._bubble-other) {
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  html[data-skin="plum"] #app ._bubble._bubble-self {
+    background: var(--plum-own) !important;
+    color: var(--plum-own-text) !important;
+    border-radius: 19px 19px 5px 19px !important;
+  }
+
+  html[data-skin="plum"] #app ._bubble._bubble-other {
+    background: var(--plum-paper) !important;
+    color: var(--plum-ink) !important;
+    border-radius: 19px 19px 19px 5px !important;
+  }
+
+  html[data-skin="plum"] #app ._bubble .app-chat-quote {
+    background: rgba(128, 105, 126, .18) !important;
+    border-left: 2px solid currentColor !important;
+    border-radius: 7px !important;
+  }
+
+  html[data-skin="plum"] #app ._offline-narration:not(._offline-html) {
+    --novel-text: var(--plum-ink) !important;
+    --novel-dialogue: var(--plum-accent) !important;
+  }
+}
