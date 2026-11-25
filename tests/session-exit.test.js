@@ -26,7 +26,8 @@ function environment(overrides = {}) {
   });
   const persona = { name: 'Player' }, character = { id: 'c', name: 'Role' };
   const context = vm.createContext({
-    store: { get: (key, fallback) => data.has(key) ? data.get(key) : fallback,
+    store: { _realKey: key => 'default::' + key,
+      get: (key, fallback) => data.has(key) ? data.get(key) : fallback,
       set: (key, value) => data.set(key, structuredClone(value)) },
     $: key => elements.get(key) || elements.set(key, node()).get(key), ce: node,
     app: node(), pages: {}, P: () => persona, activePersonaId: 'p', personaList: [persona],
@@ -166,7 +167,7 @@ test('live fan group private replies open from the notice and remain in the inbo
   assert.equal(data.get('live_pms').fan.length, 2);
 });
 
-test('an empty fan group can appoint an AI admin; leaving preserves history and discards pending invites', async () => {
+test('a normal fan can invite new fans; leaving preserves history and discards pending invites', async () => {
   const pending = deferred(), requests = [], controls = new Map();
   const group = { id: 'fan', name: 'Fan club', isLiveGroup: true, charIds: [], adminIds: [] };
   let messages = [], modal;
@@ -177,7 +178,7 @@ test('an empty fan group can appoint an AI admin; leaving preserves history and 
     updateCharRel() {}, now: () => new Date(), ftime: () => '12:00',
     askAIJson: async (_, prompt) => {
       requests.push(prompt);
-      return requests.length === 1 ? { name: 'New admin', firstMsg: 'Hello' } : pending.promise;
+      return requests.length === 1 ? { name: 'New fan', firstMsg: 'Hello' } : pending.promise;
     },
     showModal(_, build) {
       controls.clear();
@@ -191,14 +192,14 @@ test('an empty fan group can appoint an AI admin; leaving preserves history and 
   env.run(section('window.openLiveGroupList =', 'pages.live=()=>'));
   env.context.openGroupMenu(group);
   await controls.get('#_gcpullnpc').onclick();
-  assert.match(requests[0], /生成一位新管理员/);
+  assert.match(requests[0], /邀请一位新粉丝/);
   assert.equal(group.charIds.length, 1);
-  assert.equal(group.adminIds[0], group.charIds[0]);
+  assert.deepEqual(group.adminIds, []);
   assert.equal(messages.at(-1).text, 'Hello');
 
   env.context.openGroupMenu(group);
   const invite = controls.get('#_gcpullnpc').onclick();
-  assert.match(requests[1], /New admin/);
+  assert.match(requests[1], /邀请一位新粉丝/);
   controls.get('#_gmleave').onclick();
   assert.equal(group.liveGroupLeft, true);
   assert.equal(env.renders.at(-1), 'live');
