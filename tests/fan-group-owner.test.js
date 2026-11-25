@@ -49,6 +49,7 @@ function env(group = legacy(), extra = {}) {
   });
   context.window = context;
   vm.runInContext(helpers, context);
+  vm.runInContext(section('function fanGroupTurnMembers(', '// 群聊AI调用（超强智能解析版）'), context);
   return { context, data, requests, modals, alerts, controls, control, forged,
     run: source => vm.runInContext(source, context) };
 }
@@ -254,4 +255,80 @@ test('main private chat prompt includes current fan-group facts after old false 
   assert.match(prompt, /群主：江逾白/);
   assert.match(prompt, /旧.*身份错误/);
   assert.ok(prompt.lastIndexOf('当前粉丝群身份') > prompt.indexOf('旧记忆'));
+});
+
+test('normal fans can invite a new fan without becoming group managers', async () => {
+  const group = legacy(), e = env(group, { askAIJson: async () => ({ name: '新粉丝', personality: '活泼', firstMsg: '大家好' }) });
+  e.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
+  e.context.openGroupMenu(group);
+  assert.match(e.modals.at(-1).body.innerHTML, /邀请好友入群/);
+  assert.match(e.modals.at(-1).body.innerHTML, /邀请一位新粉丝入群/);
+  await e.control('#_gcpullnpc').onclick();
+  const added = e.context.charList.find(c => c.name === '新粉丝');
+  assert.ok(group.charIds.includes(added.id));
+  assert.equal(group.ownerId, 'host');
+  assert.deepEqual(group.adminIds, ['host']);
+  assert.match(e.data.get('messages')[0].text, /观众 邀请 新粉丝/);
+});
+
+test('normal fans can select an existing friend without API and without moderator rights', () => {
+  const group = legacy(), e = env(group, { getApi: () => null });
+  e.context.charList.push({ id: 'friend', name: '好友甲', bindPersonaId: 'p1' });
+  const row = { dataset: { id: 'friend' } };
+  e.forged['._gcinvitefriendrow'] = [row];
+  e.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
+  e.context.openGroupMenu(group);
+  e.control('#_gcinvitefriend').onclick();
+  row.onclick(); row.onclick();
+  assert.equal(group.charIds.filter(id => id === 'friend').length, 1);
+  assert.equal(group.ownerId, 'host'); assert.deepEqual(group.adminIds, ['host']);
+  assert.match(e.data.get('messages')[0].text, /观众 邀请 好友甲/);
+});
+
+for (const format of ['labels', 'mixed', 'colon']) test(`fan-group parser preserves distinct speakers with ${format} output`, () => {
+  const e = env(), members = [host(), fan()];
+  const raw = format === 'labels' ? '【江逾白】\n晚上好\n【小鱼】\n主播好' : format === 'mixed' ? '【江逾白】\n晚上好\n小鱼：主播好' : '江逾白：晚上好\n小鱼：主播好';
+  const replies = e.context.parseFanGroupReplies(raw, members, false);
+  assert.deepEqual(Array.from(replies, r => r.charId), ['host', 'fan']);
+});
+
+test('fan names containing the streamer name match the exact member first', () => {
+  const e = env();
+  const replies = e.context.parseFanGroupReplies('【江逾白粉】\n我也在', [host(), { id: 'superfan', name: '江逾白粉' }], false);
+  assert.equal(replies[0].charId, 'superfan');
+});
+
+test('unlabelled multi-person output is not silently attributed to the owner', () => {
+  const e = env();
+  assert.equal(e.context.parseFanGroupReplies('大家好\n收到', [host(), fan()], false).length, 0);
+});
+
+test('fan group asks missing fans for their own replies instead of accepting only the host', async () => {
+  const group = legacy(), calls = [];
+  const e = env(group, { askAI: async (system, prompt) => {
+    calls.push({ system, prompt });
+    return calls.length === 1 ? '【江逾白】\n晚上好' : '【小鱼】\n我也来了';
+  } });
+  e.run(section('async function callGroupAI(', '// 群聊菜单（增强版）'));
+  const replies = await e.context.callGroupAI(group, e.context.charList, [], [{ text: '大家好' }]);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(Array.from(new Set(replies.map(r => r.charId))), ['host', 'fan']);
+  assert.match(calls[1].prompt, /只补写【小鱼】/);
+});
+
+test('fans who have not spoken are chosen ahead of recently active fans', () => {
+  const group = legacy(), e = env(group);
+  const fans = [fan(), { id: 'f2', name: '粉丝二' }, { id: 'f3', name: '粉丝三' }];
+  const selected = e.context.fanGroupTurnMembers(group, [host(), ...fans], [{ from: 'fan' }, { from: 'f2' }]);
+  assert.ok(selected.some(c => c.id === 'f3'));
+  const all = e.context.fanGroupTurnMembers(group, [host(), ...fans], [], [], true);
+  assert.equal(all.length, 4);
+});
+
+test('muted fans are never parsed or requested to join the response', async () => {
+  const group = legacy(); group.mutedIds = ['fan'];
+  const e = env(group, { askAI: async () => '【小鱼】\n不应发言\n【江逾白】\n晚上好' });
+  e.run(section('async function callGroupAI(', '// 群聊菜单（增强版）'));
+  const replies = await e.context.callGroupAI(group, e.context.charList, [], [{ text: '大家好' }]);
+  assert.deepEqual(Array.from(replies, r => r.charId), ['host']);
 });

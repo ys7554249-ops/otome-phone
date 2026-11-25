@@ -26852,6 +26852,34 @@ contentHtml=`<div style="white-space:pre-wrap">${parsedGroupText}</div>`
 }
 
 
+function fanGroupTurnMembers(g,members,history,mentionedIds=[],atAll=false){
+  if(atAll)return members
+  const picked=members.filter(c=>mentionedIds.includes(c.id))
+  const owner=members.find(c=>c.id===groupOwnerId(g))
+  if(owner&&!picked.includes(owner))picked.push(owner)
+  const lastSpoke=id=>history.findLastIndex(m=>m.from===id)
+  const fans=members.filter(c=>c.id!==owner?.id).sort((a,b)=>lastSpoke(a.id)-lastSpoke(b.id))
+  for(const fan of fans){if(!picked.includes(fan)&&picked.length<3)picked.push(fan)}
+  return picked.length?picked:members.slice(0,3)
+}
+function parseFanGroupReplies(value,members,isDrama){
+  const text=String(value||'').trim()
+  const replies=[]
+  const headings=[...text.matchAll(/【([^】\n]+)】|^\s*(?:\*\*)?([^\n：:]{1,60}?)(?:\*\*)?\s*[：:]/gm)]
+  for(let i=0;i<headings.length;i++){
+    const heading=headings[i]
+    const name=(heading[1]||heading[2]).trim().replace(/[（(](?:群主|主播|管理员|粉丝)[）)]$/,'').trim()
+    const member=members.find(c=>c.name===name)
+    if(!member)continue
+    const body=text.slice(heading.index+heading[0].length,headings[i+1]?.index??text.length).replace(/^\s*[：:]\s*/,'').trim()
+    const lines=isDrama?[body]:body.split('\n').map(line=>line.trim()).filter(Boolean)
+    for(const line of lines)if(line)replies.push({charId:member.id,text:line})
+  }
+  // 只有单人补写请求才能将无标签正文归给该人，群回复不能默认全部归给主播。
+  if(!headings.length&&members.length===1&&text)replies.push({charId:members[0].id,text})
+  return replies
+}
+
 // 群聊AI调用（超强智能解析版）
 async function callGroupAI(g,members,allMsgs,pendingMsgs){
   normalizeGroupOwners()
@@ -26878,7 +26906,11 @@ async function callGroupAI(g,members,allMsgs,pendingMsgs){
     if(matches)matches.forEach(m=>mentionedNames.push(m.slice(1)))
   })
   const atAll = mentionedNames.includes('全体成员')
-  const mentionedChars=members.filter(c=>mentionedNames.includes(c.name))
+  const mentionedChars=speakableMembers.filter(c=>mentionedNames.includes(c.name))
+  const turnMembers=g.isLiveGroup?fanGroupTurnMembers(g,speakableMembers,allMsgs,mentionedChars.map(c=>c.id),atAll):speakableMembers
+  const requestSlot=g.isLiveGroup?store._realKey('groups'):''
+  const fanTurnValid=()=>store._realKey('groups')===requestSlot&&groups.includes(g)&&!g.liveGroupLeft
+  const fanTurnRule=g.isLiveGroup?`\n【本轮发言安排】\n必须依次由${turnMembers.map(c=>'【'+c.name+'】').join('、')}各自回应；主播不能代替粉丝发言。其他粉丝可以接话、互相回复，隐藏NPC同样是真实群成员。每人1-2句，严格以【完整角色名】开头。`:''
 
   const charInfo=speakableMembers.map(c=>`【${c.name}】性格：${c.personality||'未设定'}；心情：${c.mood||'平静'}`).join('\n')
 
@@ -26994,6 +27026,7 @@ ${normalPrivateInfo}
     }
   }
 
+  sysPrompt+=fanTurnRule
   const prompt=`${hist?'最近消息：\n'+hist+'\n\n':''}用户/指令：${userTexts.join('\n')}\n\n${isDrama?'（最高警告：当前是线下剧场模式！彻底忘掉之前的微信聊天格式，接下来的回复绝对不能包含任何@和emoji表情！必须用第三人称小说体描写！）\n\n':''}角色们的回复：`
   const _gcStreamEl=document.getElementById('_gctyping')
   let _gcScrolled=false,_gcScrolled_raf=false
@@ -27032,6 +27065,21 @@ ${normalPrivateInfo}
     window._lastAIErr=String(res).replace(/^（|）$/g,'').trim().slice(0,400)
     console.error('[callGroupAI]',res)
     return null
+  }
+
+  if(g.isLiveGroup){
+    if(!fanTurnValid())return []
+    const available=()=>turnMembers.filter(c=>(g.charIds||[]).includes(c.id)&&!(g.mutedIds||[]).includes(c.id))
+    const replies=parseFanGroupReplies(res,available(),isDrama)
+    const missing=turnMembers.filter(c=>!replies.some(r=>r.charId===c.id))
+    if(missing.length){
+      let extra
+      const completed=replies.map(r=>`${members.find(c=>c.id===r.charId)?.name}：${r.text}`).join('\n')
+      try{extra=await askAI(sysPrompt,`${prompt}\n已收到以下发言：\n${completed}\n只补写${missing.map(c=>'【'+c.name+'】').join('、')}的独立反应，不重复已发言者；每人一句，严格带【完整角色名】。`,isDrama?900:500)}catch(e){}
+      if(!fanTurnValid())return []
+      if(extra&&!isLLMError(extra))replies.push(...parseFanGroupReplies(extra,missing.filter(c=>available().includes(c)),isDrama))
+    }
+    return replies.filter(r=>(g.charIds||[]).includes(r.charId)&&!(g.mutedIds||[]).includes(r.charId))
   }
 
   // ======= 智能纠错解析器 =======
@@ -27134,7 +27182,8 @@ function openGroupMenu(g){
             </div>`
           }).join('')}
         </div>
-        <button type="button" class="btn-sub" id="_gcpullnpc" ${canManage?'':'hidden disabled'} style="display:${canManage?'block':'none'};width:100%;margin-top:10px;border-style:dashed;color:var(--rose-d)">${g.isLiveGroup&&!members.length?'+ 让AI生成粉丝群管理员':'+ 让AI随机拉NPC入群'}</button>
+        ${g.isLiveGroup?'<button type="button" class="btn-sub" id="_gcinvitefriend" style="display:block;width:100%;margin-top:10px">+ 邀请好友入群</button>':''}
+        <button type="button" class="btn-sub" id="_gcpullnpc" style="display:block;width:100%;margin-top:10px;border-style:dashed;color:var(--rose-d)">${g.isLiveGroup?'+ 邀请一位新粉丝入群':'+ 让AI随机拉NPC入群'}</button>
       </div>
 
       <div class="card">
@@ -27549,20 +27598,49 @@ mb.querySelectorAll('._gckick').forEach(el=>{
       }
     });
 
-    // AI拉NPC进群
+    const inviteFriend=mb.querySelector('#_gcinvitefriend')
+    if(inviteFriend)inviteFriend.onclick=()=>{
+      if(!groups.includes(g)||g.liveGroupLeft)return
+      const inviteSlot=store._realKey('groups')
+      const available=()=>charList.filter(c=>!c.isDeleted&&!c.isHidden&&(!c.bindPersonaId||c.bindPersonaId===activePersonaId)&&!g.charIds.includes(c.id))
+      const friends=available()
+      if(!friends.length){alert('没有可邀请的好友，现有好友都已在群里；也可以邀请一位新粉丝。');return}
+      close()
+      showModal('邀请好友入群',(picker,done)=>{
+        picker.innerHTML=friends.map(c=>`<button type="button" class="list-item _gcinvitefriendrow" data-id="${escHtml(c.id)}" style="display:flex;width:100%;gap:10px;text-align:left">${avatarEl(c.avatar,32)}<span>${escHtml(c.name)}</span><span style="margin-left:auto">邀请</span></button>`).join('')
+        picker.querySelectorAll('._gcinvitefriendrow').forEach(button=>{
+          button.onclick=()=>{
+            if(store._realKey('groups')!==inviteSlot||!groups.includes(g)||g.liveGroupLeft)return
+            const friend=available().find(c=>c.id===button.dataset.id)
+            if(!friend)return
+            g.charIds.push(friend.id);saveGroups()
+            const notice=`${P().name||'你'} 邀请 ${friend.name} 加入了群聊`
+            const arr=getGroupMsgs(g.id)
+            arr.push({from:'system',text:'[系统提示] '+notice,time:ftime(now()),type:'game',html:`<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px">${escHtml(notice)}</div>`})
+            saveGroupMsgs(g.id,arr);done();render('groupchat')
+          }
+        })
+      })
+    }
+
+    // 邀请不等于管理权限：普通粉丝也可以拉人，不能因此获得撤管、禁言或踢人的能力。
     const inviteBtn = mb.querySelector('#_gcpullnpc');
     inviteBtn.onclick=async()=>{
-      if(!canManageGroup(g)||inviteBtn.disabled || g.liveGroupLeft)return;
+      if(inviteBtn.disabled || g.liveGroupLeft)return;
       const api=getApi(); if(!api||!api.key){alert('请先配置API');return;}
       const liveMembers=members.filter(c=>g.charIds.includes(c.id)&&charList.includes(c));
       if(!liveMembers.length&&!g.isLiveGroup){alert('群里没别人，没法拉人');return;}
       const oldLabel=inviteBtn.textContent;
       inviteBtn.disabled=true;
       inviteBtn.textContent='AI正在思考拉谁进群...';
+      const inviteSlot=store._realKey('groups')
+      const userInvite=g.isLiveGroup
       const admins=g.isLiveGroup?liveMembers.filter(c=>(g.adminIds||[]).includes(c.id)):[];
       const candidates=admins.length?admins:liveMembers;
-      const inviter=candidates[Math.floor(Math.random()*candidates.length)];
-      const invitation=inviter
+      const inviter=userInvite?null:candidates[Math.floor(Math.random()*candidates.length)];
+      const invitation=userInvite
+        ? `用户「${P().name||'你'}」邀请一位新粉丝加入「${g.name}」。群主仍是主播「${groupOwner(g).name}」，新成员只是普通粉丝，不是管理员。`
+        : inviter
         ? `你是群聊里的「${inviter.name}」。你想拉一个跟你有关系的人进群。`
         : `为刚清空成员的粉丝群「${g.name}」生成一位新管理员，关系填“粉丝群管理员”。`;
       const prompt = `${invitation}
@@ -27574,11 +27652,11 @@ mb.querySelectorAll('._gckick').forEach(el=>{
       try{res=await askAIJson('只返回JSON', prompt, 500, api)}catch(e){}
       inviteBtn.disabled=false;
       inviteBtn.textContent=oldLabel;
-      if(!mb.isConnected || !groups.includes(g) || g.liveGroupLeft || !canManageGroup(g) || (inviter&&!g.charIds.includes(inviter.id)))return;
+      if(store._realKey('groups')!==inviteSlot || !mb.isConnected || !groups.includes(g) || g.liveGroupLeft || (inviter&&!g.charIds.includes(inviter.id)))return;
       if(typeof res?.name!=='string' || !res.name.trim()) {
         alert('拉人失败，再试一次吧'); return;
       }
-      const relation=inviter?(typeof res.relation==='string'&&res.relation.trim()||'熟人'):'粉丝群管理员';
+      const relation=userInvite?groupOwner(g).name+'的粉丝':inviter?(typeof res.relation==='string'&&res.relation.trim()||'熟人'):'群成员';
       const firstMsg=typeof res.firstMsg==='string'?res.firstMsg:'';
       const personality=typeof res.personality==='string'?res.personality:'';
       const nc = {id:uid(), name:res.name.trim(), personality:`【NPC】${inviter?inviter.name+'的':''}${relation}。${personality}`, relation, mood:'好奇', status:'刚进群', quote:firstMsg, avatar:'', worldBookIds:[], bindPersonaId: activePersonaId, isHidden:true, wechatId:genWcId()};
@@ -27587,12 +27665,12 @@ mb.querySelectorAll('._gckick').forEach(el=>{
       
       // 加入群聊
       g.charIds.push(nc.id);
-      if(!inviter){g.adminIds=(g.adminIds||[]).filter(id=>id!==nc.id);g.adminIds.push(nc.id)}
+      // 邀请的新粉丝不会自动升为管理员。
       saveGroups();
       
       // 发送进群消息
       const arr = getGroupMsgs(g.id);
-      const notice=inviter?`${inviter.name} 邀请 ${nc.name} 加入了群聊`:`${nc.name} 加入了群聊并成为管理员`;
+      const notice=userInvite?`${P().name||'你'} 邀请 ${nc.name} 加入了群聊`:inviter?`${inviter.name} 邀请 ${nc.name} 加入了群聊`:`${nc.name} 加入了群聊`;
       arr.push({from:'system',text:`[系统提示] ${notice}`,time:ftime(now()),type:'game',html:`<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px 0;background:rgba(0,0,0,0.03);border-radius:8px">${escHtml(notice)}</div>`});
       if(firstMsg)arr.push({from:nc.id, text:firstMsg, time:ftime(now())});
       saveGroupMsgs(g.id, arr);
