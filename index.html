@@ -27711,28 +27711,46 @@ mb.querySelectorAll('._gckick').forEach(el=>{
       if(!groups.includes(g)||g.liveGroupLeft)return
       const inviteSlot=store._realKey('groups')
       const samePersona=c=>!c.bindPersonaId||c.bindPersonaId===activePersonaId
-      const isRemoved=c=>{
-        if((g.removedMemberIds||[]).includes(c.id))return true
-        if(!c.isHidden||c.isLiveHost)return false
-        // 旧存档的移出公告只有名字，重名时无法安全地匹配原角色。
-        const notice=`[系统提示] ${c.name} 被移出了群聊`
-        return charList.filter(x=>samePersona(x)&&x.name===c.name).length===1&&
-          getGroupMsgs(g.id).some(m=>m.from==='system'&&m.type==='game'&&m.text===notice)
+      const available=()=>{
+        const canRestore=canManageGroup(g)
+        const characters=charList.filter(samePersona)
+        const removedIds=new Set(canRestore?g.removedMemberIds||[]:[])
+        if(canRestore){
+          const threads=store.get('live_pms',{})||{}
+          for(const c of characters){
+            if(threads[c.id]?.some(m=>m.from==='anchor'&&m.kind==='fan-group'&&m.sourceGroupId===g.id&&(!m.groupAction||m.groupAction==='踢出群聊')))removedIds.add(c.id)
+          }
+          // 公告只保存了姓名，只有唯一匹配时才能恢复原角色。
+          const byName=new Map()
+          for(const c of characters){
+            const name=c.name?.trim()
+            if(name)byName.set(name,byName.has(name)?null:c)
+          }
+          for(const m of getGroupMsgs(g.id)||[]){
+            if(m.from!=='system'||typeof m.text!=='string')continue
+            const name=m.text.trim().match(/^(?:\[系统提示\]\s*)?(.+?)\s*被移出(?:了)?群聊[。！!]?$/)?.[1]?.trim()
+            const c=byName.get(name)
+            if(c)removedIds.add(c.id)
+          }
+        }
+        return characters.filter(c=>!c.isDeleted&&!c.isLiveHost&&c.id!==groupOwnerId(g)&&!g.charIds.includes(c.id))
+          .map(c=>({c,returning:removedIds.has(c.id)}))
+          .filter(({c,returning})=>returning||!c.isHidden)
+          .sort((a,b)=>Number(b.returning)-Number(a.returning))
       }
-      const available=()=>charList.filter(c=>!c.isDeleted&&samePersona(c)&&!g.charIds.includes(c.id)&&(!c.isHidden||(canManageGroup(g)&&isRemoved(c))))
       const friends=available()
       if(!friends.length){alert('没有可邀请的好友或可拉回的成员。');return}
       close()
       showModal('邀请好友入群',(picker,done)=>{
-        picker.innerHTML=friends.map(c=>`<button type="button" class="list-item _gcinvitefriendrow" data-id="${escHtml(c.id)}" style="display:flex;width:100%;gap:10px;text-align:left">${avatarEl(c.avatar,32)}<span>${escHtml(c.name)}</span><span style="margin-left:auto">${canManageGroup(g)&&isRemoved(c)?'拉回群':'邀请'}</span></button>`).join('')
+        picker.innerHTML=friends.map(({c,returning})=>`<button type="button" class="list-item _gcinvitefriendrow" data-id="${escHtml(c.id)}" style="display:flex;width:100%;gap:10px;text-align:left">${avatarEl(c.avatar,32)}<span>${escHtml(c.name)}</span><span style="margin-left:auto">${returning?'拉回群':'邀请'}</span></button>`).join('')
         picker.querySelectorAll('._gcinvitefriendrow').forEach(button=>{
           button.onclick=()=>{
             if(store._realKey('groups')!==inviteSlot||!groups.includes(g)||g.liveGroupLeft)return
-            const friend=available().find(c=>c.id===button.dataset.id)
-            if(!friend)return
-             const returning=canManageGroup(g)&&isRemoved(friend)
-             g.charIds.push(friend.id);saveGroups()
-             const notice=`${P().name||'你'} 邀请 ${friend.name} ${returning?'回到了群聊':'加入了群聊'}`
+            const entry=available().find(({c})=>c.id===button.dataset.id)
+            if(!entry)return
+            const {c:friend,returning}=entry
+            g.charIds.push(friend.id);saveGroups()
+            const notice=`${P().name||'你'} 邀请 ${friend.name} ${returning?'回到了群聊':'加入了群聊'}`
             const arr=getGroupMsgs(g.id)
             arr.push({from:'system',text:'[系统提示] '+notice,time:ftime(now()),type:'game',html:`<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px">${escHtml(notice)}</div>`})
             saveGroupMsgs(g.id,arr);done();render('groupchat')

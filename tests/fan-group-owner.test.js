@@ -313,15 +313,20 @@ test('user admin can select an existing friend without API or owner changes', ()
   assert.match(e.data.get('messages')[0].text, /观众 邀请 好友甲/);
 });
 
-for (const legacyRecord of [true, false]) {
-  test(`user admin can restore the same hidden fan from ${legacyRecord ? 'old removal notice' : 'saved member ID'}`, () => {
+for (const source of ['old removal notice', 'saved member ID', 'old private message']) {
+  test(`user admin can restore the same hidden fan from ${source}`, () => {
     const group = legacy();
     group.charIds = ['host'];
     const e = env(group, { getApi: () => null });
-    if (legacyRecord) {
-      e.data.set('messages', [{ from: 'system', type: 'game', text: '[系统提示] 小鱼 被移出了群聊' }]);
-    } else {
+    if (source === 'old removal notice') {
+      e.data.set('messages', [{ from: 'system', text: '小鱼 被移出群聊。' }]);
+    } else if (source === 'saved member ID') {
       group.removedMemberIds = ['fan'];
+    } else {
+      e.data.set('live_pms', {
+        fan: [{ from: 'anchor', kind: 'fan-group', sourceGroupId: group.id }],
+        unrelated: [{ from: 'anchor', kind: 'fan-group', sourceGroupId: 'another-group' }]
+      });
     }
     e.context.charList.push({ id: 'unrelated', name: '别群粉丝', isHidden: true });
     const row = { dataset: { id: 'fan' } };
