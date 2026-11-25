@@ -9746,7 +9746,7 @@ saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
           close();cleanup()
           // 保证主播在联系人列表里
           let hostId = s.id;
-          if(s.type === 'npc' && !charList.find(x=>x.id===s.id)){
+          if(!charList.find(x=>x.id===s.id)){
               const nc = {id: s.id, name: s.name, personality: s.personality, relation: '虚拟主播', mood: '在线', status: '', quote: '', avatar: s.avatar, worldBookIds:[], bindPersonaId: activePersonaId};
              charList.push(nc); saveCharList();
           }
@@ -9775,7 +9775,7 @@ saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
             saveCharList()
 
                         // 【隔离修复】加上 isLiveGroup: true，让它只出现在直播APP的粉丝群里，不污染微聊
-            fg={id:uid(),name:fanGroupName,scene:`群主是${s.name}，这里是他的直播粉丝聊天群。`,charIds:fanIds, adminIds:[hostId], mode:'chat',createTime:new Date().toLocaleString(), isLiveGroup:true, liveHostId:s.id}
+            fg={id:uid(),name:fanGroupName,scene:`群主是主播本人「${s.name}」，这里是他的直播粉丝聊天群，群里的其他人都是他的粉丝。`,charIds:fanIds, adminIds:[hostId], ownerId:hostId, liveHostName:s.name, mode:'chat',createTime:new Date().toLocaleString(), isLiveGroup:true, liveHostId:s.id}
             groups.push(fg);saveGroups()
 
 
@@ -9786,6 +9786,13 @@ saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
           }else if(fg.liveGroupLeft || !fg.liveHostId){
             fg.liveGroupLeft=false
             fg.liveHostId=s.id
+            fg.ownerId=fg.ownerId||s.id
+            fg.liveHostName=fg.liveHostName||s.name
+            fg.charIds=fg.charIds||[]
+            if(!fg.charIds.includes(s.id)) fg.charIds.unshift(s.id)
+            fg.adminIds=fg.adminIds||[]
+            if(!fg.adminIds.includes(s.id)) fg.adminIds.unshift(s.id)
+            if(!charList.find(x=>x.id===s.id)){charList.push({id:s.id,name:s.name,personality:s.personality||'',relation:'虚拟主播',mood:'在线',status:'',quote:'',avatar:s.avatar,worldBookIds:[],bindPersonaId:activePersonaId});saveCharList()}
             saveGroups()
           }
           store.set('activeGroupId',fg.id)
@@ -25284,6 +25291,47 @@ function saveGroups(){store.set('groups',groups)}
 function getGroupMsgs(gid){return store.get('groupmsgs_'+gid,[])}
 function saveGroupMsgs(gid,arr){store.set('groupmsgs_'+gid,arr.slice(-500))}
 
+// ── 群主判定 ──
+// 直播粉丝群的群主永远是主播本人（用户只是粉丝）；普通群的群主是用户自己。
+function groupOwnerId(g){
+  if(!g)return ''
+  if(g.ownerId)return g.ownerId
+  if(g.isLiveGroup&&g.liveHostId)return g.liveHostId
+  if(g.isGodMode&&g.adminIds&&g.adminIds[0])return g.adminIds[0]
+  return ''
+}
+function groupOwner(g){
+  const id=groupOwnerId(g)
+  const c=id?charList.find(x=>x.id===id):null
+  if(g&&g.isLiveGroup)return {id:c?.id||id||'',name:c?.name||g.liveHostName||'主播',isUser:false}
+  if(c)return {id:c.id,name:c.name,isUser:false}
+  return {id:'',name:'',isUser:true}
+}
+function groupOwnerTag(g,charId){
+  const o=groupOwner(g)
+  if(o.isUser||!o.id||o.id!==charId)return ''
+  return '<span style="padding:2px 4px;border-radius:4px;background:rgba(214,90,120,.16);color:#c2415f;font-size:9px;margin-left:6px;vertical-align:middle;font-weight:normal">群主</span>'
+}
+// 旧存档修复：粉丝群补 ownerId / 把主播塞回成员和管理员，避免群主凭空消失
+function normalizeGroupOwners(){
+  let changed=false, charChanged=false
+  groups.forEach(g=>{
+    if(!g||!g.isLiveGroup||!g.liveHostId)return
+    if(!g.ownerId){g.ownerId=g.liveHostId;changed=true}
+    g.charIds=g.charIds||[]
+    if(!g.charIds.includes(g.liveHostId)){g.charIds.unshift(g.liveHostId);changed=true}
+    g.adminIds=g.adminIds||[]
+    if(!g.adminIds.includes(g.liveHostId)){g.adminIds.unshift(g.liveHostId);changed=true}
+    if(g.liveHostName&&!charList.find(x=>x.id===g.liveHostId)){
+      charList.push({id:g.liveHostId,name:g.liveHostName,personality:'',relation:'虚拟主播',mood:'在线',status:'',quote:'',avatar:'',worldBookIds:[],bindPersonaId:activePersonaId,isLiveHost:true})
+      charChanged=true
+    }
+  })
+  if(changed)saveGroups()
+  if(charChanged&&typeof saveCharList==='function')saveCharList()
+  return changed
+}
+
 // ===== 角色游戏房间 =====
 const GAME_ROOM_KEY='characterGameRooms'
 const GAME_DEFS={
@@ -25973,7 +26021,7 @@ else{p.style.background=n?'linear-gradient(180deg,#2a2035,#3a2845)':'linear-grad
     <div id="_gcback" style="padding:6px;cursor:pointer">${I.back(n?'#c8a8d0':'var(--rose-d)')}</div>
     <div style="flex:1;min-width:0">
       <div style="font-size:14px;font-weight:500;color:${n?'#f0e0f0':'var(--ink)'}">${escHtml(g.name)}</div>
-      <div style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:2px">${members.length+(g.isGodMode?0:1)}人 ${g.isGodMode?'(偷窥中)':''} · ${g.mode==='drama'?'剧场模式':'聊天模式'}</div>
+      <div style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:2px">${(()=>{const o=groupOwner(g);return o.isUser?'群主：你':`群主：${escHtml(o.name)}`})()} · ${members.length+(g.isGodMode?0:1)}人 ${g.isGodMode?'(偷窥中)':''} · ${g.mode==='drama'?'剧场模式':'聊天模式'}</div>
     </div>
     ${g.isLiveGroup?liveInboxButton():''}
     <div id="_gcmenu" style="padding:8px;cursor:pointer;font-size:18px;color:${n?'#c8a8d0':'var(--rose-d)'}">≡</div>
@@ -26548,7 +26596,8 @@ function renderGroupMsg(m,members,n,mode){
     const cavatar=char?.avatar||''
     const g=groups.find(x=>x.id===store.get('activeGroupId',''))
     const isAdmin = g && (g.adminIds||[]).includes(m.from)
-    const titleHtml = isAdmin ? `<span style="padding:2px 4px; border-radius:4px; background:rgba(138,154,110,.15); color:var(--green); font-size:9px; margin-left:6px; vertical-align:middle; font-weight:normal">管理员</span>` : ''
+    const ownerBadge = g ? groupOwnerTag(g,m.from) : ''
+    const titleHtml = ownerBadge || (isAdmin ? `<span style="padding:2px 4px; border-radius:4px; background:rgba(138,154,110,.15); color:var(--green); font-size:9px; margin-left:6px; vertical-align:middle; font-weight:normal">管理员</span>` : '')
 
     // 底部操作栏（播放、重说、删除）
     const toolsHtml = `
@@ -26793,6 +26842,11 @@ async function callGroupAI(g,members,allMsgs,pendingMsgs){
     if(gStyles.length) gStyles.forEach(s=>{styleContent+=`\n${s.content}`})
   }
 
+  const _ownerInfo=groupOwner(g)
+  const ownerLine=_ownerInfo.isUser
+    ? `群主：${pe.name||'你'}（用户本人就是群主，拥有管理权限）`
+    : `群主：${_ownerInfo.name}（${g.isLiveGroup?'主播本人，不是用户；用户只是群里的粉丝，不要把用户当成主播或群主':'本群群主，不是用户'}）`
+
   let sysPrompt;
   
   if (g.isGodMode) {
@@ -26802,6 +26856,7 @@ async function callGroupAI(g,members,allMsgs,pendingMsgs){
 场景设定：${g.scene||'未知'}
 在场角色：
 ${charInfo}
+${ownerLine}
 （注意：用户不在场，这是角色们面对面的私密剧情）
 ${godModePrivateInfo}
 【核心规则】
@@ -26820,6 +26875,7 @@ ${godModePrivateInfo}
 群聊主题：${g.scene||'未知'}
 群成员：
 ${charInfo}
+${ownerLine}
 （注意：用户不在这个群里，这是他们的私下聊天）
 ${godModePrivateInfo}
 【核心规则】
@@ -26843,6 +26899,7 @@ ${charInfo}
 （注意：${mutedIds.length?'部分角色不在场或被禁言，不要让他们发言！':''}）
 
 用户：${pe.name||'你'}${pe.identity?`（${pe.identity}）`:''}
+${ownerLine}
 ${worldContent?'【背景】'+worldContent:''}${memoryContent}
 ${styleContent?'【文风】'+styleContent:''}
 ${normalPrivateInfo}
@@ -26857,6 +26914,7 @@ ${charInfo}
 （注意：${mutedIds.length?'部分角色已被管理员禁言，绝对不能让他们发言！':''}）
 
 用户：${pe.name||'你'}
+${ownerLine}
 ${worldContent?'【背景】'+worldContent:''}
 ${memoryContent}
 ${normalPrivateInfo}
@@ -26986,17 +27044,23 @@ function openGroupMenu(g){
           ${members.map(c=>{
             const isMuted = (g.mutedIds||[]).includes(c.id);
             const isAdmin = (g.adminIds||[]).includes(c.id);
+            const isOwner = groupOwnerId(g)===c.id;
+            const badge = isOwner
+              ? '<span style="font-size:9px;color:#c2415f;margin-left:2px">群主</span>'
+              : (isAdmin?'<span style="font-size:9px;color:var(--green);margin-left:2px">🛡️</span>':'');
+            const actions = isOwner
+              ? '<div style="font-size:10px;color:var(--ink-l);opacity:.55;padding:4px 6px;white-space:nowrap">群主</div>'
+              : `<div class="_gcadmin btn-sub" data-id="${c.id}" style="margin:0;padding:4px 6px;font-size:10px">${isAdmin?'撤管':'设管'}</div>
+              <div class="_gcmute btn-sub" data-id="${c.id}" style="margin:0;padding:4px 6px;font-size:10px">${isMuted?'解禁':'禁言'}</div>
+              <div class="_gckick btn-sub" data-id="${c.id}" style="margin:0;padding:4px 6px;font-size:10px;color:#c47a7a">踢人</div>`;
             return `
             <div style="display:flex;align-items:center;gap:6px;padding:6px;background:rgba(255,255,255,.4);border-radius:10px">
               <div style="flex-shrink:0;width:32px;height:32px;cursor:pointer" class="_gc_avatar_click" data-cid="${c.id}">${avatarEl(c.avatar,32).replace('margin:0 auto','margin:0')}</div>
               <div style="flex:1;min-width:0;font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                ${escHtml(c.name)}
-                ${isAdmin?'<span style="font-size:9px;color:var(--green);margin-left:2px">🛡️</span>':''}
+                ${escHtml(c.name)}${badge}
                 ${isMuted?'<span style="font-size:9px;color:#c47a7a">(禁言)</span>':''}
               </div>
-              <div class="_gcadmin btn-sub" data-id="${c.id}" style="margin:0;padding:4px 6px;font-size:10px">${isAdmin?'撤管':'设管'}</div>
-              <div class="_gcmute btn-sub" data-id="${c.id}" style="margin:0;padding:4px 6px;font-size:10px">${isMuted?'解禁':'禁言'}</div>
-              <div class="_gckick btn-sub" data-id="${c.id}" style="margin:0;padding:4px 6px;font-size:10px;color:#c47a7a">踢人</div>
+              ${actions}
             </div>`
           }).join('')}
         </div>
@@ -27346,8 +27410,13 @@ mb.querySelector('#_gmvoice').onclick=()=>{
       const api=getApi(); if(!api||!api.key)return;
       const c = charList.find(x=>x.id===charId);
       if(!c) return;
-      const sys = `你是「${c.name}」。性格：${c.personality||''}\n你在名为「${g.name}」的群里，刚刚被我（群主）给${action}了！\n现在你要在私聊里发消息找我算账（质问/委屈/撒娇/生气，根据你的性格来）。\n要求：像真人发微信，一两句话，禁止emoji。`;
-      const reply = await askAI(sys, `我刚在群里把你${action}了，你想说什么？`, 200);
+      const _owner=groupOwner(g)
+      const _actor=_owner.isUser?'我（群主）':(groupOwnerId(g)===c.id?'我自己（群主）':`我（群主「${_owner.name}」群里的管理员）`)
+      const _ask=_owner.isUser?`我刚在群里把你${action}了，你想说什么？`
+        :(groupOwnerId(g)===c.id?`刚在你自己的粉丝群里，我以管理员身份把你${action}了，你想跟我说什么？`
+        :`我在群主「${_owner.name}」的粉丝群里把你${action}了，你想说什么？`)
+      const sys = `你是「${c.name}」。性格：${c.personality||''}\n你在名为「${g.name}」的群里，刚刚被${_actor}给${action}了！\n现在你要在私聊里发消息找我算账（质问/委屈/撒娇/生气，根据你的性格来）。\n要求：像真人发微信，一两句话，禁止emoji。`;
+      const reply = await askAI(sys, _ask, 200);
       deliverGroupPrivateReaction(g,c,reply)
     };
     // 点击头像看资料
@@ -27363,6 +27432,7 @@ mb.querySelector('#_gmvoice').onclick=()=>{
       el.onclick=()=>{
         g.adminIds = g.adminIds || [];
         const cid = el.dataset.id;
+        if(cid===groupOwnerId(g)){alert('群主不能被撤换');return}
         if(g.adminIds.includes(cid)) g.adminIds = g.adminIds.filter(id=>id!==cid);
         else g.adminIds.push(cid);
         saveGroups(); close(); openGroupMenu(g);
@@ -27374,6 +27444,7 @@ mb.querySelector('#_gmvoice').onclick=()=>{
       el.onclick=()=>{
         g.mutedIds = g.mutedIds || [];
         const cid = el.dataset.id;
+        if(cid===groupOwnerId(g)){alert('群主不能被禁言');return}
         if(g.mutedIds.includes(cid)){
           g.mutedIds = g.mutedIds.filter(id=>id!==cid);
           saveGroups(); close(); openGroupMenu(g);
@@ -27390,6 +27461,7 @@ mb.querySelectorAll('._gckick').forEach(el=>{
   el.onclick=()=>{
     if(!confirm('确定把ta踢出群聊吗？')) return;
     const cid = el.dataset.id;
+    if(cid===groupOwnerId(g)){alert('群主不能被踢出群聊');return}
     g.charIds = g.charIds.filter(id=>id!==cid);
     if(g.mutedIds) g.mutedIds = g.mutedIds.filter(id=>id!==cid);
     if(g.adminIds) g.adminIds = g.adminIds.filter(id=>id!==cid);
@@ -27439,7 +27511,7 @@ mb.querySelectorAll('._gckick').forEach(el=>{
       
       // 加入群聊
       g.charIds.push(nc.id);
-      if(!inviter)g.adminIds=[nc.id];
+      if(!inviter){g.adminIds=(g.adminIds||[]).filter(id=>id!==nc.id);g.adminIds.push(nc.id)}
       saveGroups();
       
       // 发送进群消息
@@ -28922,6 +28994,7 @@ function reloadAllSlotData(){
   globalMemory=store.get('globalMemory',{})
   curTheme=store.get('theme',curTheme)
   groups=store.get('groups',[])
+  normalizeGroupOwners()
   places=store.get('places',[])
   mapState=store.get('mapState',{activeCharId:activeCharId||charList[0]?.id||'',activePlace:''})
   dungeonTemplates=store.get('dungeonTemplates',[])
@@ -36739,6 +36812,7 @@ globalMemory=store.get('globalMemory',{})
 
   curTheme=store.get('theme',curTheme)
   groups=store.get('groups',[])
+  normalizeGroupOwners()
   places=store.get('places',[])
   mapState=store.get('mapState',mapState)
   dungeonTemplates=store.get('dungeonTemplates',[])

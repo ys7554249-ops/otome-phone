@@ -186,6 +186,7 @@ test('an empty fan group can appoint an AI admin; leaving preserves history and 
       build(body, () => { body.isConnected = false; });
     }
   });
+  env.run(section('// ── 群主判定 ──', '// ===== 角色游戏房间 ====='));
   env.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
   env.run(section('window.openLiveGroupList =', 'pages.live=()=>'));
   env.context.openGroupMenu(group);
