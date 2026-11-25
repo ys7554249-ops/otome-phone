@@ -9784,7 +9784,7 @@ saveLiveFanData(s.id,fanData);close();pushComment('加入了粉丝团','system')
             saveCharList()
 
                         // 【隔离修复】加上 isLiveGroup: true，让它只出现在直播APP的粉丝群里，不污染微聊
-            fg={id:uid(),name:fanGroupName,scene:`群主是主播本人「${s.name}」，这里是他的直播粉丝聊天群，群里的其他人都是他的粉丝。`,charIds:fanIds, adminIds:[hostId], ownerId:hostId, liveHostName:s.name, mode:'chat',createTime:new Date().toLocaleString(), isLiveGroup:true, liveHostId:s.id}
+            fg={id:uid(),name:fanGroupName,scene:`群主是主播本人「${s.name}」，这里是他的直播粉丝聊天群，群里的其他人都是他的粉丝。`,charIds:fanIds, adminIds:[hostId,'u'], userAdminVersion:1, ownerId:hostId, liveHostName:s.name, mode:'chat',createTime:new Date().toLocaleString(), isLiveGroup:true, liveHostId:s.id}
             groups.push(fg);saveGroups()
 
 
@@ -25356,7 +25356,7 @@ function groupOwnerTag(g,charId){
   return '<span style="padding:2px 4px;border-radius:4px;background:rgba(214,90,120,.16);color:#c2415f;font-size:9px;margin-left:6px;vertical-align:middle;font-weight:normal">群主</span>'
 }
 function canManageGroup(g){
-  return !g.isLiveGroup||(g.adminIds||[]).includes('u')
+  return !g.isLiveGroup||(!g.liveGroupLeft&&(g.adminIds||[]).includes('u'))
 }
 function groupOwnershipPrompt(g){
   const owner=groupOwner(g)
@@ -25376,6 +25376,11 @@ function normalizeGroupOwners(){
   let changed=false,charChanged=false
   groups.forEach(g=>{
     if(!g?.isLiveGroup)return
+    if(!g.userAdminVersion){
+      if(!Array.isArray(g.adminIds))g.adminIds=[]
+      if(!g.adminIds.includes('u'))g.adminIds.push('u')
+      g.userAdminVersion=1;changed=true
+    }
     const host=liveGroupHost(g)
     if(!host.id)return
     for(const key of ['liveHostId','ownerId']){
@@ -25397,6 +25402,72 @@ function normalizeGroupOwners(){
   if(changed)saveGroups()
   if(charChanged)saveCharList()
   return changed||charChanged
+}
+
+// 邀请请求属于存档和群，不属于设置弹窗；关闭弹窗或切页面都不会丢掉结果。
+const groupInviteJobs=new Map()
+function groupInviteKey(g){return store._realKey('groups')+'::'+g.id}
+function pendingGroupInvite(g){
+  const job=groupInviteJobs.get(groupInviteKey(g))
+  return job?.group===g&&job.state==='pending'?job:null
+}
+function cancelGroupInvite(g){groupInviteJobs.delete(groupInviteKey(g))}
+function cancelGroupInvitesForSlot(slotId){
+  const slot='slot_'+slotId+'::groups'
+  for(const [key,job] of groupInviteJobs){
+    if(job.slot!==slot)continue
+    job.state='cancelled';groupInviteJobs.delete(key)
+    for(const listener of job.listeners){try{listener()}catch(e){console.warn('更新邀请状态失败',e)}}
+    job.listeners.clear()
+  }
+}
+function requestGroupNPC(g,api,inviter){
+  const running=pendingGroupInvite(g)
+  if(running)return running.promise
+  const key=groupInviteKey(g),slot=store._realKey('groups')
+  const userInvite=!!g.isLiveGroup
+  const owner=groupOwner(g)
+  const job={group:g,key,slot,state:'pending',listeners:new Set(),userName:P().name||'你',personaId:activePersonaId}
+  const valid=()=>store._realKey('groups')===slot&&groups.includes(g)&&!g.liveGroupLeft&&groupInviteJobs.get(key)===job&&(!inviter||g.charIds.includes(inviter.id))
+  const notify=text=>{if(typeof showToast==='function')showToast(text)}
+  groupInviteJobs.set(key,job)
+  job.promise=(async()=>{
+    try{
+      const invitation=userInvite
+        ? `用户「${job.userName}」邀请一位新粉丝加入「${g.name}」。群主仍是主播「${owner.name}」，新成员只是普通粉丝，不是管理员。`
+        : `你是群聊里的「${inviter.name}」。你想拉一个跟你有关系的人进群。`
+      const res=await askAIJson('只返回JSON',`${invitation}\n请创造这个NPC。只返回JSON，格式：\n{"name":"名字","relation":"跟你的关系","personality":"性格描述（50字内）","firstMsg":"他进群后说的第一句话"}\n禁止用emoji。`,500,api)
+      if(!valid()){job.state='cancelled';return job}
+      if(typeof res?.name!=='string'||!res.name.trim())throw new Error('没有生成有效成员')
+      const relation=userInvite?owner.name+'的粉丝':(typeof res.relation==='string'&&res.relation.trim()||'熟人')
+      const firstMsg=typeof res.firstMsg==='string'?res.firstMsg:''
+      const personality=typeof res.personality==='string'?res.personality:''
+      const nc={id:uid(),name:res.name.trim(),personality:`【NPC】${inviter?inviter.name+'的':''}${relation}。${personality}`,relation,mood:'好奇',status:'刚进群',quote:firstMsg,avatar:'',worldBookIds:[],bindPersonaId:job.personaId,isHidden:true,wechatId:genWcId()}
+      charList.push(nc);saveCharList()
+      if(inviter)updateCharRel(inviter.id,nc.id,{setFamiliarity:70,event:`${inviter.name}拉了自己的${relation.slice(0,30)}进群`})
+      g.charIds.push(nc.id);saveGroups()
+      const notice=`${userInvite?job.userName:inviter.name} 邀请 ${nc.name} 加入了群聊`
+      const added=[{from:'system',text:'[系统提示] '+notice,time:ftime(now()),type:'game',html:`<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px 0;background:rgba(0,0,0,0.03);border-radius:8px">${escHtml(notice)}</div>`}]
+      if(firstMsg)added.push({from:nc.id,text:firstMsg,time:ftime(now())})
+      const arr=getGroupMsgs(g.id);arr.push(...added);saveGroupMsgs(g.id,arr)
+      job.state='success';job.member=nc
+      if(typeof _curPage!=='undefined'&&_curPage==='groupchat'&&store.get('activeGroupId','')===g.id){
+        const list=typeof document!=='undefined'?document.getElementById('_gcmsgs'):null
+        if(list&&typeof list._onGroupInvite==='function')list._onGroupInvite(nc,added)
+      }
+      notify(`${nc.name} 已加入「${g.name}」`)
+      return job
+    }catch(error){
+      if(!valid()){job.state='cancelled';return job}
+      job.state='failed';notify('邀请失败，请重试')
+      return job
+    }finally{
+      if(groupInviteJobs.get(key)===job)groupInviteJobs.delete(key)
+      for(const listener of job.listeners){try{listener()}catch(e){console.warn('更新邀请状态失败',e)}}
+      job.listeners.clear()
+    }
+  })()
+  return job.promise
 }
 
 // ===== 角色游戏房间 =====
@@ -26089,7 +26160,7 @@ else{p.style.background=n?'linear-gradient(180deg,#2a2035,#3a2845)':'linear-grad
     <div id="_gcback" style="padding:6px;cursor:pointer">${I.back(n?'#c8a8d0':'var(--rose-d)')}</div>
     <div style="flex:1;min-width:0">
       <div style="font-size:14px;font-weight:500;color:${n?'#f0e0f0':'var(--ink)'}">${escHtml(g.name)}</div>
-      <div style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:2px">${(()=>{const o=groupOwner(g);return o.isUser?'群主：你':`群主：${escHtml(o.name)}`})()} · ${members.length+(g.isGodMode?0:1)}人 ${g.isGodMode?'(偷窥中)':''} · ${g.mode==='drama'?'剧场模式':'聊天模式'}</div>
+      <div style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:2px">${(()=>{const o=groupOwner(g);return o.isUser?'群主：你':`群主：${escHtml(o.name)}`})()} · <span id="_gcmembercount">${members.length+(g.isGodMode?0:1)}</span>人 ${g.isGodMode?'(偷窥中)':''} · ${g.mode==='drama'?'剧场模式':'聊天模式'}</div>
     </div>
     ${g.isLiveGroup?liveInboxButton():''}
     <div id="_gcmenu" style="padding:8px;cursor:pointer;font-size:18px;color:${n?'#c8a8d0':'var(--rose-d)'}">≡</div>
@@ -26155,6 +26226,15 @@ else{p.style.background=n?'linear-gradient(180deg,#2a2035,#3a2845)':'linear-grad
   p.appendChild(ib)
   renderQuoteBar('_inputbar');
   app.appendChild(p)
+  ml._onGroupInvite=(member,added)=>{
+    if(!ml.isConnected)return
+    if(!members.some(c=>c.id===member.id))members.push(member)
+    if(ml.textContent.includes('还没有消息'))ml.innerHTML=''
+    added.forEach(m=>ml.appendChild(renderGroupMsg(m,members,isN(),g.mode)))
+    ml.scrollTop=ml.scrollHeight
+    const count=top.querySelector('#_gcmembercount')
+    if(count)count.textContent=members.length+(g.isGodMode?0:1)
+  }
 
   let isAutoChatting = false;
   let autoChatTimer = null;
@@ -27246,6 +27326,7 @@ function openGroupMenu(g){
     if(leaveButton) leaveButton.onclick=()=>{
       if(!confirm('确定退出粉丝群？聊天记录会保留，可从主播的粉丝信息页重新加入。'))return
       g.liveGroupLeft=true
+      cancelGroupInvite(g)
       saveGroups()
       store.set('activeGroupId','')
       close()
@@ -27623,59 +27704,30 @@ mb.querySelectorAll('._gckick').forEach(el=>{
       })
     }
 
-    // 邀请不等于管理权限：普通粉丝也可以拉人，不能因此获得撤管、禁言或踢人的能力。
-    const inviteBtn = mb.querySelector('#_gcpullnpc');
+    const inviteBtn=mb.querySelector('#_gcpullnpc')
+    const idleInviteLabel=g.isLiveGroup?'+ 邀请一位新粉丝入群':'+ 让AI随机拉NPC入群'
+    const refreshInviteButton=()=>{
+      if(!mb.isConnected)return
+      const job=pendingGroupInvite(g)
+      inviteBtn.disabled=!!job
+      inviteBtn.textContent=job?'AI正在思考拉谁进群...（关闭后继续）':idleInviteLabel
+      if(job)job.listeners.add(refreshInviteButton)
+    }
+    refreshInviteButton()
     inviteBtn.onclick=async()=>{
-      if(inviteBtn.disabled || g.liveGroupLeft)return;
-      const api=getApi(); if(!api||!api.key){alert('请先配置API');return;}
-      const liveMembers=members.filter(c=>g.charIds.includes(c.id)&&charList.includes(c));
-      if(!liveMembers.length&&!g.isLiveGroup){alert('群里没别人，没法拉人');return;}
-      const oldLabel=inviteBtn.textContent;
-      inviteBtn.disabled=true;
-      inviteBtn.textContent='AI正在思考拉谁进群...';
-      const inviteSlot=store._realKey('groups')
-      const userInvite=g.isLiveGroup
-      const admins=g.isLiveGroup?liveMembers.filter(c=>(g.adminIds||[]).includes(c.id)):[];
-      const candidates=admins.length?admins:liveMembers;
-      const inviter=userInvite?null:candidates[Math.floor(Math.random()*candidates.length)];
-      const invitation=userInvite
-        ? `用户「${P().name||'你'}」邀请一位新粉丝加入「${g.name}」。群主仍是主播「${groupOwner(g).name}」，新成员只是普通粉丝，不是管理员。`
-        : inviter
-        ? `你是群聊里的「${inviter.name}」。你想拉一个跟你有关系的人进群。`
-        : `为刚清空成员的粉丝群「${g.name}」生成一位新管理员，关系填“粉丝群管理员”。`;
-      const prompt = `${invitation}
-请创造这个NPC。只返回JSON，格式：
-{"name":"名字","relation":"跟你的关系","personality":"性格描述（50字内）","firstMsg":"他进群后说的第一句话"}
-禁止用emoji。`;
-
-      let res;
-      try{res=await askAIJson('只返回JSON', prompt, 500, api)}catch(e){}
-      inviteBtn.disabled=false;
-      inviteBtn.textContent=oldLabel;
-      if(store._realKey('groups')!==inviteSlot || !mb.isConnected || !groups.includes(g) || g.liveGroupLeft || (inviter&&!g.charIds.includes(inviter.id)))return;
-      if(typeof res?.name!=='string' || !res.name.trim()) {
-        alert('拉人失败，再试一次吧'); return;
+      if(pendingGroupInvite(g)||inviteBtn.disabled||g.liveGroupLeft||!groups.includes(g))return
+      const api=getApi();if(!api||!api.key){alert('请先配置API');return}
+      const liveMembers=g.charIds.map(id=>charList.find(c=>c.id===id)).filter(Boolean)
+      if(!liveMembers.length&&!g.isLiveGroup){alert('群里没别人，没法拉人');return}
+      const inviter=g.isLiveGroup?null:liveMembers[Math.floor(Math.random()*liveMembers.length)]
+      const request=requestGroupNPC(g,api,inviter)
+      refreshInviteButton()
+      const result=await request
+      refreshInviteButton()
+      if(result.state==='success'&&mb.isConnected){
+        close()
+        if(typeof _curPage!=='undefined'&&_curPage==='groupchat'&&store.get('activeGroupId','')===g.id)render('groupchat')
       }
-      const relation=userInvite?groupOwner(g).name+'的粉丝':inviter?(typeof res.relation==='string'&&res.relation.trim()||'熟人'):'群成员';
-      const firstMsg=typeof res.firstMsg==='string'?res.firstMsg:'';
-      const personality=typeof res.personality==='string'?res.personality:'';
-      const nc = {id:uid(), name:res.name.trim(), personality:`【NPC】${inviter?inviter.name+'的':''}${relation}。${personality}`, relation, mood:'好奇', status:'刚进群', quote:firstMsg, avatar:'', worldBookIds:[], bindPersonaId: activePersonaId, isHidden:true, wechatId:genWcId()};
-      charList.push(nc); saveCharList();
-      if(inviter)updateCharRel(inviter.id, nc.id, { setFamiliarity: 70, event: `${inviter.name}拉了自己的${relation.slice(0,30)}进群` });
-      
-      // 加入群聊
-      g.charIds.push(nc.id);
-      // 邀请的新粉丝不会自动升为管理员。
-      saveGroups();
-      
-      // 发送进群消息
-      const arr = getGroupMsgs(g.id);
-      const notice=userInvite?`${P().name||'你'} 邀请 ${nc.name} 加入了群聊`:inviter?`${inviter.name} 邀请 ${nc.name} 加入了群聊`:`${nc.name} 加入了群聊`;
-      arr.push({from:'system',text:`[系统提示] ${notice}`,time:ftime(now()),type:'game',html:`<div style="text-align:center;font-size:11px;color:var(--ink-l);padding:10px 0;background:rgba(0,0,0,0.03);border-radius:8px">${escHtml(notice)}</div>`});
-      if(firstMsg)arr.push({from:nc.id, text:firstMsg, time:ftime(now())});
-      saveGroupMsgs(g.id, arr);
-      
-      close(); render('groupchat');
     };
 
   })
@@ -29181,6 +29233,7 @@ function reloadAllSlotData(){
 async function switchSlot(slotId){
   const meta = getSavesMeta();
   if(!meta.list.find(s=>s.id===slotId)) return false;
+  if(_currentSlot!==slotId)cancelGroupInvitesForSlot(_currentSlot)
   _currentSlot = slotId;
   store.setRaw('_currentSlot', slotId);
   reloadAllSlotData();
@@ -29218,6 +29271,7 @@ async function deleteSlot(slotId){
   if(meta.list.length<=1) return false; // 至少留一个
   const idx = meta.list.findIndex(s=>s.id===slotId);
   if(idx<0) return false;
+  cancelGroupInvitesForSlot(slotId)
   meta.list.splice(idx,1);
   saveSavesMeta(meta);
   // 删除该存档所有数据

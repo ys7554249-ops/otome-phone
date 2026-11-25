@@ -167,7 +167,7 @@ test('live fan group private replies open from the notice and remain in the inbo
   assert.equal(data.get('live_pms').fan.length, 2);
 });
 
-test('a normal fan can invite new fans; leaving preserves history and discards pending invites', async () => {
+test('user admin can invite new fans; leaving preserves history and discards pending invites', async () => {
   const pending = deferred(), requests = [], controls = new Map();
   const group = { id: 'fan', name: 'Fan club', isLiveGroup: true, charIds: [], adminIds: [] };
   let messages = [], modal;
@@ -194,7 +194,7 @@ test('a normal fan can invite new fans; leaving preserves history and discards p
   await controls.get('#_gcpullnpc').onclick();
   assert.match(requests[0], /邀请一位新粉丝/);
   assert.equal(group.charIds.length, 1);
-  assert.deepEqual(group.adminIds, []);
+  assert.deepEqual(group.adminIds, ['u']);
   assert.equal(messages.at(-1).text, 'Hello');
 
   env.context.openGroupMenu(group);

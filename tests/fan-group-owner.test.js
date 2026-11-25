@@ -119,8 +119,9 @@ test('fan group opened directly from its list migrates before showing members', 
   assert.equal(group.ownerId, 'host');
 });
 
-test('a regular fan sees a read-only roster and forged moderation callbacks cannot remove anyone', async () => {
+test('an explicitly demoted user has no moderation rights after the default-admin migration', async () => {
   const group = legacy(), e = env(group);
+  group.userAdminVersion = 1;
   const kick = { dataset: { id: 'fan' } }, mute = { dataset: { id: 'fan' } }, admin = { dataset: { id: 'fan' } };
   e.forged['._gckick'] = [kick]; e.forged['._gcmute'] = [mute]; e.forged['._gcadmin'] = [admin];
   e.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
@@ -164,7 +165,7 @@ test('live PM follow-up supplies actual fan-group ownership instead of following
   e.control('#_lpm_inp').value = '你才是群主吧？';
   await e.control('#_lpm_send').onclick();
   assert.match(e.requests.at(-1).system, /群主[：是].*江逾白/);
-  assert.match(e.requests.at(-1).system, /普通粉丝/);
+  assert.match(e.requests.at(-1).system, /管理员（不是群主）/);
   assert.match(e.requests.at(-1).system, /旧.*(?:错误|误称)|历史.*(?:错误|误称)/);
   assert.equal(e.data.get('live_pms').host[0].text, '既然群主是你，为何把我踢出群聊', 'do not rewrite history');
 });
@@ -257,7 +258,7 @@ test('main private chat prompt includes current fan-group facts after old false 
   assert.ok(prompt.lastIndexOf('当前粉丝群身份') > prompt.indexOf('旧记忆'));
 });
 
-test('normal fans can invite a new fan without becoming group managers', async () => {
+test('user admin can invite a new fan without promoting that fan', async () => {
   const group = legacy(), e = env(group, { askAIJson: async () => ({ name: '新粉丝', personality: '活泼', firstMsg: '大家好' }) });
   e.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
   e.context.openGroupMenu(group);
@@ -267,11 +268,12 @@ test('normal fans can invite a new fan without becoming group managers', async (
   const added = e.context.charList.find(c => c.name === '新粉丝');
   assert.ok(group.charIds.includes(added.id));
   assert.equal(group.ownerId, 'host');
-  assert.deepEqual(group.adminIds, ['host']);
+  assert.deepEqual(group.adminIds, ['host', 'u']);
+  assert.equal(group.adminIds.includes(added.id), false);
   assert.match(e.data.get('messages')[0].text, /观众 邀请 新粉丝/);
 });
 
-test('normal fans can select an existing friend without API and without moderator rights', () => {
+test('user admin can select an existing friend without API or owner changes', () => {
   const group = legacy(), e = env(group, { getApi: () => null });
   e.context.charList.push({ id: 'friend', name: '好友甲', bindPersonaId: 'p1' });
   const row = { dataset: { id: 'friend' } };
@@ -281,7 +283,7 @@ test('normal fans can select an existing friend without API and without moderato
   e.control('#_gcinvitefriend').onclick();
   row.onclick(); row.onclick();
   assert.equal(group.charIds.filter(id => id === 'friend').length, 1);
-  assert.equal(group.ownerId, 'host'); assert.deepEqual(group.adminIds, ['host']);
+  assert.equal(group.ownerId, 'host'); assert.deepEqual(group.adminIds, ['host', 'u']);
   assert.match(e.data.get('messages')[0].text, /观众 邀请 好友甲/);
 });
 
