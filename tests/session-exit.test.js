@@ -26,7 +26,8 @@ function environment(overrides = {}) {
   });
   const persona = { name: 'Player' }, character = { id: 'c', name: 'Role' };
   const context = vm.createContext({
-    store: { get: (key, fallback) => data.has(key) ? data.get(key) : fallback,
+    store: { _realKey: key => 'default::' + key,
+      get: (key, fallback) => data.has(key) ? data.get(key) : fallback,
       set: (key, value) => data.set(key, structuredClone(value)) },
     $: key => elements.get(key) || elements.set(key, node()).get(key), ce: node,
     app: node(), pages: {}, P: () => persona, activePersonaId: 'p', personaList: [persona],
@@ -166,9 +167,9 @@ test('live fan group private replies open from the notice and remain in the inbo
   assert.equal(data.get('live_pms').fan.length, 2);
 });
 
-test('an empty fan group can appoint an AI admin; leaving preserves history and discards pending invites', async () => {
+test('an explicitly appointed moderator can invite an AI admin; leaving preserves history and discards pending invites', async () => {
   const pending = deferred(), requests = [], controls = new Map();
-  const group = { id: 'fan', name: 'Fan club', isLiveGroup: true, charIds: [], adminIds: [] };
+  const group = { id: 'fan', name: 'Fan club', isLiveGroup: true, charIds: [], adminIds: ['u'] };
   let messages = [], modal;
   const env = environment({
     groups: [group], charList: [], worldBooks: [], styleBooks: [], alert: assert.fail,
@@ -193,7 +194,8 @@ test('an empty fan group can appoint an AI admin; leaving preserves history and 
   await controls.get('#_gcpullnpc').onclick();
   assert.match(requests[0], /生成一位新管理员/);
   assert.equal(group.charIds.length, 1);
-  assert.equal(group.adminIds[0], group.charIds[0]);
+  assert.ok(group.adminIds.includes('u'));
+  assert.ok(group.adminIds.includes(group.charIds[0]));
   assert.equal(messages.at(-1).text, 'Hello');
 
   env.context.openGroupMenu(group);
