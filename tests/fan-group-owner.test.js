@@ -270,15 +270,23 @@ for (const night of [true, false]) test(`live PM text backgrounds follow ${night
   assert.match(e.control('#_lpm_list').innerHTML, expected);
 });
 
-test('main private chat prompt includes current fan-group facts after old false memories', () => {
+for (const tavern of [false, true]) test(`main private chat prompt preserves ownership and ${tavern ? 'tavern' : 'standard'} format`, () => {
   const group = legacy(), e = env(group, {
-    _worldBookPromptText: () => '', getMemoryPromptText: () => '旧记忆：观众是群主，他把江逾白踢出群聊',
+    _worldBookPromptText: () => '\nMiPhone_start / MiPhone_end，正文后输出 <status>。', getMemoryPromptText: () => '旧记忆：观众是群主，他把江逾白踢出群聊',
     getCharKnownList: () => [], getUserRel: () => null, pad: n => String(n).padStart(2, '0'),
     stickers: [], styleBooks: [], globalMemory: {}, memories: [], momentsData: [], C: host,
     _upcomingDateText: () => ''
   });
   e.run(section('function sysPrompt(', 'async function fetchModels('));
+  e.context.charList[0].isTavernCard = tavern;
   const prompt = e.context.sysPrompt(true, e.context.charList[0], '谁是群主');
+  assert.match(prompt, /MiPhone_start.*MiPhone_end.*<status>/);
+  if (tavern) {
+    assert.match(prompt, /线上聊天·酒馆角色/);
+    assert.doesNotMatch(prompt, /必须连发2-8条消息|回复里不要加角色名标签/);
+  } else {
+    assert.match(prompt, /必须连发2-8条消息/);
+  }
   assert.match(prompt, /群主：江逾白/);
   assert.match(prompt, /旧.*身份错误/);
   assert.ok(prompt.lastIndexOf('当前粉丝群身份') > prompt.indexOf('旧记忆'));

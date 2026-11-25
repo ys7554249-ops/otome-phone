@@ -88,3 +88,20 @@ test('recent messages still activate matching world-book triggers', () => {
 
   assert.match(context._worldBookPromptText(character, 'What now?'), /Moon gate setting/);
 });
+
+test('format entries match complete trigger phrases separated by Chinese or ASCII punctuation', () => {
+  const character = { id: 'selected', name: 'Selected', worldBookIds: ['phone', 'status'] };
+  const { context } = makeContext({
+    books: [
+      { id: 'phone', triggers: 'phone card；线上聊天;微聊', content: 'Use MiPhone_start and MiPhone_end.' },
+      { id: 'status', triggers: '', content: 'Include a <status> block.' }
+    ]
+  });
+
+  for (const text of ['Show the phone card', '现在开始线上聊天', '打开微聊']) {
+    assert.match(context._worldBookPromptText(character, text), /MiPhone_start/);
+  }
+  const prompt = context._worldBookPromptText(character, 'A phone rang.');
+  assert.doesNotMatch(prompt, /MiPhone_start/);
+  assert.match(prompt, /<status>/);
+});

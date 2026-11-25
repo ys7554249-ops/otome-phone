@@ -302,6 +302,15 @@ test('dungeon back goes to the list then home without reopening saved play', () 
   popstate({ state: { page: 'dungeonplay' } });
   assert.equal(shown.at(-1), 'home');
   assert.equal(context.history.state.page, 'home');
+
+  context.render('dungeonplay');
+  popstate({ state: { page: 'dungeonplay' } });
+  assert.equal(shown.at(-1), 'dungeons', 'old duplicate history must leave the play page');
+  popstate({ state: { page: 'dungeons' } });
+  assert.equal(shown.at(-1), 'home', 'old duplicate list history must leave the dungeon app');
+  context.render('dungeonplay');
+  popstate({ state: null });
+  assert.equal(shown.at(-1), 'dungeons', 'a missing browser state still returns to the list');
 });
 
 function dungeonEnv() {
@@ -349,6 +358,23 @@ test('returning cancels an uncommitted round and a retry owns its own result', a
   await retry;
   assert.equal(data.get('activeDungeon').currentRound, 1);
   assert.deepEqual(data.get('activeDungeon').story.map(event => event.text), ['new narration', 'accepted']);
+});
+
+test('late final-round response cannot reopen a dungeon after returning home', async () => {
+  const { context, data, requests, renders, template, character, start } = dungeonEnv();
+  const dungeon = start('last-round');
+  dungeon.currentRound = 4;
+  dungeon.story.push({ type: 'narration', text: 'saved progress', round: 4 });
+  context.saveActiveDungeon();
+  const pending = context.doDungeonAdvance(template, character, null, 'finish');
+  context.render('dungeons');
+  context.render('home');
+  requests[0].resolve({ story: 'late ending' });
+  await pending;
+  assert.equal(renders.at(-1), 'home');
+  assert.equal(data.get('activeDungeon').currentRound, 4);
+  assert.equal(data.get('activeDungeon').story.length, 1);
+  assert.equal(data.get('activeDungeon').status, 'ongoing');
 });
 
 test('discarding a settling dungeon cannot reward or modify its replacement', async () => {

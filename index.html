@@ -3032,7 +3032,7 @@ function _recentUserText(cid,n){
 }
 // 没有触发词 = 常驻；有触发词 = 命中才注入
 function _wbTriggersHit(b,hay){
-  const trigs=(''+(b.triggers||'')).split(/[,，、\s]+/).map(x=>x.trim().toLowerCase()).filter(Boolean)
+  const trigs=(''+(b.triggers||'')).split(/[,，、;；\r\n]+/).map(x=>x.trim().toLowerCase()).filter(Boolean)
   if(!trigs.length) return true
   return !!hay && trigs.some(t=>hay.includes(t))
 }
@@ -4822,6 +4822,13 @@ ${(c.dungeonHistory&&c.dungeonHistory.length)?'\n【你经历过的往事】\n'+
 
   }else{
 
+    // 酒馆角色的结构由其设定和已注入的世界书决定。
+    if(c.isTavernCard){
+      s+=`\n\n【当前模式：线上聊天·酒馆角色】
+按角色设定及本轮已注入世界书中的线上规则输出，完整保留其要求的手机卡片、消息边界、角色名、时间、标签和状态栏。
+聊天措辞保持符合角色的口语表达；消息数量、结构与排版遵循世界书中的格式要求。
+世界书要求每轮附带的状态栏应在正文之后完整输出。系统内部的状态与心声标签仅用于更新角色资料，与世界书状态栏分别保留。`
+    }else{
     // 线上模式：连发气泡与反终结者机制
     // 注意：当前时间 / 距离上一条消息几分钟 / 刚才通话了什么 这类"每次都在变"的信息
     // 不再拼进 system，而是由 callAI 追加到最后一条 user 消息前，
@@ -4916,6 +4923,7 @@ ${store.get('autoImageEnabled',false)
 - 标点该有的一定要有：问句必带"？"，情绪句必带"！"，别整段都是没标点的短句堆。
 
 记住：要像一个真实的、有血有肉的人在屏幕那头打字。不完美，但要有互动感和连发感。`
+    }
   }
 
 
@@ -6386,12 +6394,12 @@ function goBack(fallback){
   render(fallback||'home')
 }
 window.addEventListener('popstate', e => {
+  if(_curPage==='dungeonplay'||_curPage==='dungeons'){
+    goBack()
+    return
+  }
   if(e.state && e.state.page) {
     let page=e.state.page
-    if(_curPage==='dungeons'&&page==='dungeonplay'){
-      page='home'
-      history.replaceState({page},'', '#'+page)
-    }
     _isPopState = true;
     render(page);
   }
@@ -18663,7 +18671,7 @@ body.querySelectorAll('._wbview').forEach(el=>{
         mb.innerHTML=`
           <div class="card"><div class="card-t">标题</div><input class="inp" id="_wbt" value="${escHtml(b.title||'')}"></div>
           <div class="card"><div class="card-t">内容</div><textarea class="tarea" id="_wbc" rows="7">${escHtml(b.content||'')}</textarea></div>
-          <div class="card"><div class="card-t">触发词（可选，逗号分隔）</div><input class="inp" id="_wbtr" value="${escHtml(b.triggers||'')}" placeholder="留空 = 每轮注入"><div style="font-size:10px;color:var(--ink-l);margin-top:4px;font-style:italic">填了只在最近聊天提到时注入。例：宗门,灵根,渡劫</div></div>
+          <div class="card"><div class="card-t">触发词（可选，逗号或分号分隔）</div><input class="inp" id="_wbtr" value="${escHtml(b.triggers||'')}" placeholder="留空 = 每轮注入"><div style="font-size:10px;color:var(--ink-l);margin-top:4px;font-style:italic">填了只在最近用户消息命中时注入。手机卡片、状态栏等每轮都需要的格式条目，请留空。</div></div>
           <div class="card"><div class="card-t">挂载给角色</div><div style="display:flex;flex-direction:column;gap:6px">
   ${getMyChars().map(c=>`<label class="list-item" style="cursor:pointer;padding:10px"><input type="checkbox" class="_wch" value="${c.id}" ${(c.worldBookIds||[]).includes(b.id)?'checked':''} style="accent-color:var(--rose)"><div style="flex:1;font-size:12px;color:var(--ink)">${escHtml(c.name)}</div></label>`).join('')}
 </div></div>
