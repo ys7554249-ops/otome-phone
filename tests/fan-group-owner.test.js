@@ -207,6 +207,7 @@ test('moderator can remove a fan and their reply retains the source group for fo
   kick.onclick();
   await new Promise(setImmediate);
   assert.ok(!group.charIds.includes('fan'));
+  assert.deepEqual(Array.from(e.data.get('groups')[0].removedMemberIds), ['fan']);
   assert.equal(e.data.get('live_pms').fan[0].sourceGroupId, 'club');
   assert.equal(e.data.get('live_pms').fan[0].groupAction, '踢出群聊');
   assert.match(e.context.livePMGroupContext('fan'), /群主：江逾白/);
@@ -311,6 +312,32 @@ test('user admin can select an existing friend without API or owner changes', ()
   assert.equal(group.ownerId, 'host'); assert.deepEqual(group.adminIds, ['host', 'u']);
   assert.match(e.data.get('messages')[0].text, /观众 邀请 好友甲/);
 });
+
+for (const legacyRecord of [true, false]) {
+  test(`user admin can restore the same hidden fan from ${legacyRecord ? 'old removal notice' : 'saved member ID'}`, () => {
+    const group = legacy();
+    group.charIds = ['host'];
+    const e = env(group, { getApi: () => null });
+    if (legacyRecord) {
+      e.data.set('messages', [{ from: 'system', type: 'game', text: '[系统提示] 小鱼 被移出了群聊' }]);
+    } else {
+      group.removedMemberIds = ['fan'];
+    }
+    e.context.charList.push({ id: 'unrelated', name: '别群粉丝', isHidden: true });
+    const row = { dataset: { id: 'fan' } };
+    e.forged['._gcinvitefriendrow'] = [row];
+    e.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
+    e.context.openGroupMenu(group);
+    e.control('#_gcinvitefriend').onclick();
+    const picker = e.modals.at(-1).body.innerHTML;
+    assert.match(picker, /小鱼.*拉回群/);
+    assert.doesNotMatch(picker, /别群粉丝/);
+    row.onclick(); row.onclick();
+    assert.deepEqual(Array.from(group.charIds), ['host', 'fan']);
+    assert.deepEqual(group.adminIds, ['host', 'u']);
+    assert.match(e.data.get('messages').at(-1).text, /小鱼 回到了群聊/);
+  });
+}
 
 for (const format of ['labels', 'mixed', 'colon']) test(`fan-group parser preserves distinct speakers with ${format} output`, () => {
   const e = env(), members = [host(), fan()];
