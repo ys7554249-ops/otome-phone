@@ -44,6 +44,7 @@ function env(group = legacy(), extra = {}) {
       build(body, () => { body.isConnected = false; });
     },
     askAI: async (system, prompt) => { requests.push({ system, prompt }); return '【江逾白】\n晚上好'; },
+    callLLM: async request => { requests.push(request); return { ok: true, text: '晚上好' }; },
     deliverGroupPrivateReaction: (...args) => data.set('reaction', args),
     ...extra
   });
@@ -195,7 +196,10 @@ for (const invalidate of ['switch slot', 'restore owner', 'revoke moderation', '
 
 test('moderator can remove a fan and their reply retains the source group for follow-up', async () => {
   const group = legacy(); group.adminIds.push('u');
-  const e = env(group, { _curPage: 'live' }), kick = { dataset: { id: 'fan' } };
+  const e = env(group, { _curPage: 'live', callLLM: async request => {
+    e.requests.push(request);
+    return { ok: true, text: '吓我一跳，那还能拉我回来吗？' };
+  } }), kick = { dataset: { id: 'fan' } };
   e.forged['._gckick'] = [kick];
   e.run(section('function appendLivePM(', 'window.openLiveGroupList ='));
   e.run(section('function openGroupMenu(g)', '// ===== 群聊小游戏'));
@@ -204,16 +208,37 @@ test('moderator can remove a fan and their reply retains the source group for fo
   await new Promise(setImmediate);
   assert.ok(!group.charIds.includes('fan'));
   assert.equal(e.data.get('live_pms').fan[0].sourceGroupId, 'club');
+  assert.equal(e.data.get('live_pms').fan[0].groupAction, '踢出群聊');
   assert.match(e.context.livePMGroupContext('fan'), /群主：江逾白/);
   assert.match(e.context.livePMGroupContext('fan'), /任命的管理员/);
   e.context.openLivePM('fan');
-  e.control('#_lpm_inp').value = '你先冷静一下';
+  e.control('#_lpm_inp').value = '踢错了，抱歉';
   await e.control('#_lpm_send').onclick();
   const request = e.requests.at(-1);
   assert.match(request.system, /群主：江逾白/);
+  assert.match(request.system, /踢出群聊/);
+  assert.match(request.system, /已不在群里/);
   assert.doesNotMatch(request.system, /你是主播小鱼/);
-  assert.doesNotMatch(request.prompt, /主播：/);
-  assert.match(request.prompt, /小鱼：/);
+  assert.doesNotMatch(request.messages[0].content, /主播：/);
+  assert.match(request.messages[0].content, /小鱼：/);
+  assert.match(request.messages[0].content, /观众：踢错了，抱歉$/);
+  assert.equal(e.data.get('live_pms').fan.at(-1).text, '吓我一跳，那还能拉我回来吗？');
+});
+
+test('fan PM failure surfaces the API error and preserves the sent message without a canned reply', async () => {
+  const e = env(legacy(), {
+    callLLM: async () => ({ ok: false, err: 'HTTP 429' }),
+    _aiShowErr: (error, title) => e.alerts.push(`${title}: ${error}`)
+  });
+  e.data.set('live_pms', { fan: [{ from: 'anchor', kind: 'fan-group', sourceGroupId: 'club', sender: fan(), text: '怎么把我踢了？' }] });
+  e.run(section('function appendLivePM(', 'window.openLiveGroupList ='));
+  e.context.openLivePM('fan');
+  e.control('#_lpm_inp').value = '踢错了';
+  await e.control('#_lpm_send').onclick();
+  assert.equal(e.data.get('live_pms').fan.length, 2);
+  assert.equal(e.data.get('live_pms').fan.at(-1).text, '踢错了');
+  assert.match(e.alerts[0], /HTTP 429/);
+  assert.equal(e.control('#_lpm_send').dataset.sending, undefined);
 });
 
 test('live PM result cannot write into a newly selected save slot', async () => {

@@ -8157,10 +8157,10 @@ function markLivePMRead(sid){
 function liveInboxButton(){
   return `<button type="button" data-live-pm-open style="position:relative;flex-shrink:0;padding:5px 8px;border:0;border-radius:8px;background:#48243d;color:#ffd1df;font:inherit;font-size:11px;white-space:nowrap;cursor:pointer">私信<span data-live-pm-badge ${hasUnreadLiveInbox()?'':'hidden'} style="position:absolute;top:0;right:0;width:7px;height:7px;border-radius:50%;background:#ff587c"></span></button>`
 }
-function deliverGroupPrivateReaction(group,character,text){
+function deliverGroupPrivateReaction(group,character,text,action){
   if(typeof text!=='string'||!text.trim()||isLLMError(text))return
   if(group.isLiveGroup){
-    appendLivePM(character.id,{from:'anchor',kind:'fan-group',sourceGroupId:group.id,text},character)
+    appendLivePM(character.id,{from:'anchor',kind:'fan-group',sourceGroupId:group.id,groupAction:action,text},character)
     if(_curPage==='groupchat'&&store.get('activeGroupId','')===group.id){
       showModal('直播私信', (mb,close)=>{
         mb.innerHTML=`<p>${escHtml(character.name)} 发来一条私信</p><button type="button" class="btn-main" id="_viewFanPM">查看私信</button>`
@@ -8303,7 +8303,9 @@ window.openLivePM = (sid) => {
       // 核心：如果玩家发送了微聊号（6位以上数字），触发加好友逻辑！
       const myWc = String(P().wechatId || '');
       const looksLikeWc = /\d{6,}/.test(text) || (myWc.length >= 5 && text.includes(myWc));
-       if(looksLikeWc && pool.some(x=>x.id===sid) && !charList.find(x=>x.id===sid)) {
+       const thread=store.get('live_pms',{})[sid]||[]
+       const fanReaction=thread.findLast(m=>m.kind==='fan-group')
+       if(!fanReaction && looksLikeWc && pool.some(x=>x.id===sid) && !charList.find(x=>x.id===sid)) {
          appendLivePM(sid,{from:'anchor',text:'收到！我去加你啦，记得通过一下哦~'});
          
          // 放入微聊好友申请池 (isDeleted=true 隐身，直到通过)
@@ -8313,13 +8315,38 @@ window.openLivePM = (sid) => {
          if(!reqs.includes(sid)) { reqs.push(sid); store.set('pendingFriendReqs', reqs); }
          alert('对方已去添加你的微聊，请前往微聊的【新的朋友】中查看。');
       } else {
-         const recent=(store.get('live_pms',{})[sid]||[]).slice(-6)
-         const invitation=recent.some(m=>m.kind==='poach')
-         const identityContext=livePMGroupContext(sid)
-         let reply
-         try{if(getApi()?.key)reply=await askAI(`你是「${s.name}」。性格：${s.personality||''}。${identityContext}\n根据私信上下文自然回复一句，不要催对方消费。`,recent.map(m=>`${m.from==='u'?(P().name||'用户'):s.name}：${m.text}`).join('\n'),100)}catch(e){}
-         if(store._realKey('live_pms')!==pmSlot||livePMGroupContext(sid)!==identityContext){delete send.dataset.sending;return}
-         appendLivePM(sid,{from:'anchor',text:reply&&!isLLMError(reply)?reply:invitation?'有空来坐坐就好，我给你留位置。':'看到你的消息啦。'});
+          const recent=thread.slice(-6)
+          const invitation=recent.some(m=>m.kind==='poach')
+          const identityContext=livePMGroupContext(sid)
+          const system=`你是「${s.name}」。性格：${s.personality||''}。${identityContext}\n根据私信上下文自然回复，不要催对方消费。`
+          if(fanReaction&&!recent.includes(fanReaction))recent.unshift(fanReaction)
+          const prompt=recent.map(m=>`${m.from==='u'?(P().name||'用户'):s.name}：${m.text}`).join('\n')
+          const api=getApi()
+          let reply, replyError
+          try{
+            if(fanReaction){
+              const event=fanReaction.groupAction?`\n这段私信因用户在粉丝群对你执行「${fanReaction.groupAction}」发起。`:''
+              const instructions='\n用角色自己的口吻接住用户最后一句的具体意思。对方解释或道歉时，按你们的对话和性格回应，避免只说已读或收到。以群聊实际状态为准，不要把口头解释当作已经恢复群成员身份。只输出私信正文。'
+              if(!api?.key)replyError='请先到「设置 → API」配置并启用 API。'
+              else {
+                const result=await callLLM({api,system:system+event+instructions,messages:[{role:'user',content:prompt}],maxTokens:300,timeout:60000,stream:false})
+                reply=result.ok&&typeof result.text==='string'?result.text.trim():''
+                if(!reply||isLLMError(reply))replyError=result.err||'API 没有返回有效的私信内容。'
+              }
+            }else if(api?.key)reply=await askAI(system,prompt,100,api)
+          }catch(e){
+            if(fanReaction)replyError=e?.message||String(e)
+          }finally{
+            delete send.dataset.sending
+          }
+          if(store._realKey('live_pms')!==pmSlot||livePMGroupContext(sid)!==identityContext)return
+          if(fanReaction){
+            if(replyError){
+              if(mb.isConnected)_aiShowErr(replyError,'粉丝私信回复生成失败（你的消息已保留）')
+              return
+            }
+            appendLivePM(sid,{from:'anchor',text:reply})
+          }else appendLivePM(sid,{from:'anchor',text:reply&&!isLLMError(reply)?reply:invitation?'有空来坐坐就好，我给你留位置。':'看到你的消息啦。'});
        }
        delete send.dataset.sending
        if(!mb.isConnected)return
@@ -25369,7 +25396,10 @@ function livePMGroupContext(sid){
   const thread=store.get('live_pms',{})[sid]||[]
   const sourceId=thread.findLast(m=>m.sourceGroupId)?.sourceGroupId
   return groups.filter(g=>g.isLiveGroup&&(sourceId?g.id===sourceId:groupOwnerId(g)===sid||(g.charIds||[]).includes(sid)))
-    .map(g=>`粉丝群「${g.name}」：\n${groupOwnershipPrompt(g)}`).join('\n')
+    .map(g=>{
+      const membership=sourceId?`\n私信发件人当前${(g.charIds||[]).includes(sid)?'仍在群里':'已不在群里'}。`:''
+      return `粉丝群「${g.name}」：\n${groupOwnershipPrompt(g)}${membership}`
+    }).join('\n')
 }
 // 所有入口共用迁移：启动、导入、粉丝群列表、群页面、群菜单、AI 与直播间重新入群。
 function normalizeGroupOwners(){
@@ -27620,7 +27650,7 @@ mb.querySelector('#_gmvoice').onclick=()=>{
       const reply=await askAI(sys,`用户刚在群里把你${action}了，你想对用户说什么？`,200)
       const stillApplies=action==='禁言'?(g.mutedIds||[]).includes(charId):!(g.charIds||[]).includes(charId)
       if(store._realKey('live_pms')!==reactionKey||!groups.includes(g)||g.liveGroupLeft||!canManageGroup(g)||groupOwnerId(g)!==ownerId||charId===groupOwnerId(g)||!stillApplies)return
-      deliverGroupPrivateReaction(g,c,reply)
+      deliverGroupPrivateReaction(g,c,reply,action)
     };
     // 点击头像看资料
     mb.querySelectorAll('._gc_avatar_click').forEach(el=>{
