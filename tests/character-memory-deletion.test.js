@@ -111,7 +111,7 @@ test('extraction keeps new events pending and late table updates respect deletio
   assert.equal(mem.keyEvents[0].text, '新的朋友圈');
 });
 
-test('deletion unwinds state, removes only the linked duplicate turn and invalidates generated memory', async () => {
+test('deletion unwinds state, removes only the linked duplicate turn and preserves consolidated memory', async () => {
   const { ctx, c, messages, db } = harness();
   const old = { from: 'c', mode: 'online', text: '这句重复的话' };
   const removed = { from: 'c', mode: 'offline', text: old.text };
@@ -136,11 +136,44 @@ test('deletion unwinds state, removes only the linked duplicate turn and invalid
   assert.deepEqual(messages.get(c.id)[1], { from: 'u', mode: 'online', text: '继续' });
   assert.equal(mem.keyEvents.length, 1);
   assert.equal(mem.keyEvents[0], keptEvent);
-  assert.equal(mem.summary, mem.manualSummary);
-  assert.deepEqual(Array.from(mem.memoryTable.promise), [{ k: '旧约定', v: '手写', manual: true }]);
+  assert.equal(mem.summary, '自动摘要：桥边的争吵');
+  assert.deepEqual(Array.from(mem.memoryTable.promise), [{ k: '旧约定', v: '手写', manual: true }, { k: '新约定', v: '自动档案' }]);
   const hits = await ctx.searchMemoryByVector(c.id, '桥边的争吵', 5);
   assert.equal(hits.length, 1);
   assert.equal(hits[0].text, keptEvent.text);
+});
+
+test('consolidated memory survives deleting source or newer messages and reloading storage', async () => {
+  for (const deleteSource of [true, false]) {
+    const storage = new Map();
+    const store = {
+      get: (key, fallback) => storage.has(key) ? structuredClone(storage.get(key)) : fallback,
+      set: (key, value) => storage.set(key, structuredClone(value)),
+    };
+    const { ctx, c, messages } = harness({
+      store,
+      callLLM: async () => ({ ok: true, text: '我们约好周五在书店见面。' }),
+    });
+    const source = { from: 'c', mode: 'offline', text: '周五在书店见面吧' };
+    ctx.rememberChatTurn(c, [], [source]);
+    assert.equal(await ctx.autoSummarizeMemory(c.id, true), true);
+    const mem = ctx.getCharMemory(c.id);
+    const summaryTime = mem.lastSummaryTime;
+    mem.memoryTable.promise = [{ k: '见面', v: '周五书店' }];
+    const newer = { from: 'c', mode: 'offline', text: '今天天气很好' };
+    ctx.rememberChatTurn(c, [], [newer]);
+    ctx.removeChatMessages(c, [source, newer], [deleteSource ? source : newer]);
+    assert.equal(messages.get(c.id).length, 1);
+
+    const reloaded = harness({ store }).ctx;
+    const saved = reloaded.getCharMemory(c.id);
+    assert.equal(saved.summary, '我们约好周五在书店见面。');
+    assert.equal(saved.lastSummaryTime, summaryTime);
+    assert.deepEqual(Array.from(saved.memoryTable.promise), [{ k: '见面', v: '周五书店' }]);
+    assert.equal(saved.keyEvents.length, 1);
+    assert.equal(Boolean(saved.keyEvents[0].summarized), !deleteSource);
+    assert.match(reloaded.getMemoryPromptText(c.id), /我们约好周五在书店见面/);
+  }
 });
 
 test('deleting an older turn preserves newer state and rewires its later rollback', () => {

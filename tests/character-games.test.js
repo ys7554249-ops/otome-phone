@@ -223,9 +223,9 @@ test('a rejected character API request makes a legal fallback move and keeps the
   room.currentTurn = 1;
   await context.runCharacterGameTurns(room);
 
-  assert.equal(room.state.board[0][0], 1);
+  assert.equal(room.state.board[7][7], 1);
   assert.equal(room.currentTurn, 0);
-  assert.match(room.chat.at(-1).text, /默认合法动作/);
+  assert.match(room.chat.at(-1).text, /局面策略/);
   assert.equal(room.status, 'playing');
 });
 
@@ -238,8 +238,58 @@ test('an illegal character action uses the same deterministic legal fallback', a
   room.currentTurn = 1;
   await context.runCharacterGameTurns(room);
 
-  assert.equal(room.state.board[0][0], 1);
-  assert.match(room.chat.at(-1).text, /默认合法动作/);
+  assert.equal(room.state.board[7][7], 1);
+  assert.match(room.chat.at(-1).text, /局面策略/);
+});
+
+test('gomoku wins and blocks on every axis even when the model chooses a legal weak move', async () => {
+  for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) {
+    for (const owner of [0, 1]) {
+      const context = createGameContext({
+        callLLM: async () => ({ ok: true, text: '{"action":{"row":0,"col":0}}' })
+      });
+      const room = createRoom(context);
+      room.currentTurn = 1;
+      room.state.board[7 - dr][7 - dc] = 1 - owner;
+      for (let i = 0; i < 4; i++) room.state.board[7 + dr * i][7 + dc * i] = owner;
+      room.state.moves = 5;
+      await context.runCharacterGameTurns(room);
+      assert.equal(room.state.board[7 + dr * 4][7 + dc * 4], 1);
+      assert.equal(room.status, owner === 1 ? 'completed' : 'playing');
+    }
+  }
+});
+
+test('gomoku prefers winning to blocking and recognizes split threats from any opponent', () => {
+  const context = createGameContext({ charList: [
+    { id: 'c1', name: 'One', bindPersonaId: 'persona-1' },
+    { id: 'c2', name: 'Two', bindPersonaId: 'persona-1' }
+  ] });
+  const room = createRoom(context, 'gomoku', 2);
+  for (const col of [3, 4, 6, 7]) room.state.board[5][col] = 2;
+  let move = context.rankGomokuMoves(room, 1)[0];
+  assert.deepEqual([move.row, move.col], [5, 5]);
+  for (let col = 3; col < 7; col++) room.state.board[10][col] = 1;
+  move = context.rankGomokuMoves(room, 1)[0];
+  assert.equal(move.row, 10);
+  assert.equal(move.priority, 2);
+});
+
+test('gomoku builds an open four and supplies identity and ranked legal choices to the model', async () => {
+  let request;
+  const context = createGameContext({ callLLM: async options => {
+    request = JSON.parse(options.messages[0].content);
+    return { ok: true, text: '{"action":{"row":null,"col":""}}' };
+  } });
+  const room = createRoom(context);
+  room.currentTurn = 1;
+  for (const col of [6, 7, 8]) room.state.board[7][col] = 1;
+  await context.runCharacterGameTurns(room);
+  assert.ok(room.state.board[7][5] === 1 || room.state.board[7][9] === 1);
+  assert.equal(request.game.summary.selfPlayerIndex, 1);
+  assert.equal(request.game.summary.players.length, 2);
+  assert.ok(request.game.summary.legalActions.length > 0);
+  assert.equal(room.state.board[0][0], null);
 });
 
 test('game-room chat replies leave the persisted game state unchanged', async () => {

@@ -3307,14 +3307,7 @@ function removeChatMessages(c, history, removed){
     : legacy.some(({mode,snip})=>(!mode||!ev.mode||mode===ev.mode)&&!legacySurvivors.has(mode+':'+snip)&&ev.text.includes(snip)))))
   const offlineDeleted=turns.some(m=>m.mode==='offline'||(!m.mode&&c.offlineMode))
   if(turns.length||kept.length!==mem.keyEvents.length){
-    // A prose summary has no reliable per-message boundaries. Rebuild it from surviving events.
-    if(mem.lastSummaryTime&&turns.some(m=>m.from==='c'||m.replied)){
-      mem.summary=mem.manualSummary||''
-      for(const cat of MT_CATS) mem.memoryTable[cat.key]=mem.memoryTable[cat.key].filter(e=>e.manual)
-      kept.forEach(e=>delete e.summarized)
-      delete mem.lastSummaryTime
-      delete mem._sumFailAt
-    }
+    // Consolidated memory survives chat deletion; explicit memory clearing handles forgetting.
     mem.keyEvents=kept
     mem._deleteRevision=(mem._deleteRevision||0)+1
     mem.lastUpdate=Date.now()
@@ -25566,6 +25559,53 @@ function gomokuWinner(board,row,col,player){
     return count>=5
   })
 }
+function rankGomokuMoves(room,playerIndex){
+  const board=room.state.board,axes=[[1,0],[0,1],[1,1],[1,-1]]
+  const occupied=[]
+  for(let r=0;r<15;r++)for(let c=0;c<15;c++)if(board[r][c]!==null)occupied.push([r,c])
+  const strength=(row,col,player)=>{
+    let score=0,fours=0,threes=0
+    for(const [dr,dc] of axes){
+      let count=1,open=0
+      for(const sign of [-1,1]){
+        let r=row+dr*sign,c=col+dc*sign
+        while(board[r]?.[c]===player){count++;r+=dr*sign;c+=dc*sign}
+        if(board[r]?.[c]===null)open++
+      }
+      if(count>=5)return 10000000
+      if(count===4&&open){fours++;score+=open===2?200000:20000}
+      if(count===3&&open===2){threes++;score+=6000}
+      if(count===2&&open===2)score+=300
+      // Five-cell windows also recognize broken threes and split fours.
+      for(let offset=-4;offset<=0;offset++){
+        let stones=0,valid=true
+        for(let step=offset;step<offset+5;step++){
+          const r=row+dr*step,c=col+dc*step,value=board[r]?.[c]
+          if(r===row&&c===col){stones++;continue}
+          if(value===player)stones++
+          else if(value!==null){valid=false;break}
+        }
+        if(valid)score+=[0,1,15,180,4000,10000000][stones]
+      }
+    }
+    if(fours>=2||fours&&threes)score+=400000
+    else if(threes>=2)score+=100000
+    return score
+  }
+  const candidates=[]
+  for(let row=0;row<15;row++)for(let col=0;col<15;col++){
+    if(board[row][col]!==null)continue
+    if(occupied.length&&!occupied.some(([r,c])=>Math.abs(r-row)<=2&&Math.abs(c-col)<=2))continue
+    const attack=strength(row,col,playerIndex)
+    let defense=0
+    for(let opponent=0;opponent<room.participants.length;opponent++){
+      if(opponent!==playerIndex)defense=Math.max(defense,strength(row,col,opponent))
+    }
+    const priority=attack>=10000000?2:defense>=10000000?1:0
+    candidates.push({row,col,priority,score:attack+defense*1.1+(14-Math.abs(row-7)-Math.abs(col-7))})
+  }
+  return candidates.sort((a,b)=>b.priority-a.priority||b.score-a.score)
+}
 function applyGomokuMove(room,playerIndex,row,col){
   const board=room?.state?.board
   if(room?.gameType!=='gomoku'||room.status!=='playing'||room.currentTurn!==playerIndex||!Number.isInteger(row)||!Number.isInteger(col)||row<0||row>=15||col<0||col>=15||board[row]?.[col]!==null)return {ok:false,error:'当前位置不可落子'}
@@ -25608,6 +25648,45 @@ function resolveFlightMove(room,playerIndex,tokenIndex){
   state.die=null
   room.log.push({id:uid(),text:`${room.participants[playerIndex].name} 移动棋子 ${tokenIndex+1}${captured?'，撞回对手棋子':''}${won?'并获胜':''}`,time:Date.now()})
   return {ok:true,captured,winner:won?room.winner:''}
+}
+function scoreFlightCandidates(room,playerIndex){
+  const state=room.state,finish=FLIGHT_TRACK_LENGTH+FLIGHT_HOME_LENGTH-1
+  return validFlightMoves(room,playerIndex).map(move=>{
+    const destination=move.launch?0:move.position+state.die
+    const tokens=state.tokens.map(row=>row.slice())
+    tokens[playerIndex][move.index]=destination
+    let captures=0
+    if(destination<FLIGHT_TRACK_LENGTH){
+      const absolute=(playerIndex*8+destination)%FLIGHT_TRACK_LENGTH
+      tokens.forEach((row,other)=>{if(other!==playerIndex)row.forEach((position,index)=>{
+        if(position>=0&&position<FLIGHT_TRACK_LENGTH&&(other*8+position)%FLIGHT_TRACK_LENGTH===absolute){row[index]=-1;captures++}
+      })})
+    }
+    // Estimate next-roll exposure after removing captured opponents; home lanes are safe.
+    let risk=0
+    tokens.forEach((row,other)=>{if(other!==playerIndex){
+      for(let die=1;die<=6;die++){
+        let loss=0
+        row.forEach(position=>{
+          const next=position<0?(die===6?0:-1):position+die
+          if(next<0||next>=FLIGHT_TRACK_LENGTH)return
+          const absolute=(other*8+next)%FLIGHT_TRACK_LENGTH
+          const exposed=tokens[playerIndex].filter(own=>own>=0&&own<FLIGHT_TRACK_LENGTH&&(playerIndex*8+own)%FLIGHT_TRACK_LENGTH===absolute)
+          loss=Math.max(loss,exposed.reduce((sum,own)=>sum+40+own*4,0))
+        })
+        risk+=loss/6
+      }
+    }})
+    const finishes=destination===finish,progress=move.launch?6:destination-move.position
+    const score=(finishes?(state.finished[playerIndex]===1?10000:1000):0)+captures*120+progress*4+destination*.5-risk
+    return {tokenIndex:move.index,from:move.position,destination,finishes,captures,progress,risk,score}
+  }).sort((a,b)=>b.score-a.score||a.tokenIndex-b.tokenIndex)
+}
+function shouldBuyMonopolyProperty(room,playerIndex){
+  const state=room.state,space=state.board[state.positions[playerIndex]]
+  const active=state.bankrupt.filter(value=>!value).length,remaining=Math.max(0,120-state.turnCount-1)
+  const reserve=Math.max(200,...state.board.map((tile,index)=>tile.type==='property'&&state.ownership[index]!==null&&state.ownership[index]!==playerIndex?tile.rent*2:tile.type==='fee'?tile.amount*2:0))
+  return space.type==='property'&&state.ownership[state.positions[playerIndex]]===null&&space.rent>0&&state.money[playerIndex]-space.price>=reserve&&remaining>=Math.max(12,Math.ceil(space.price/space.rent)*active*2)
 }
 function rollFlightDie(room,playerIndex,random=Math.random){
   if(room?.gameType!=='flight-chess'||room.status!=='playing'||room.currentTurn!==playerIndex||room.state.die!==null)return {ok:false,error:'现在不能掷骰'}
@@ -25711,35 +25790,40 @@ async function runCharacterGameTurns(room){
       const playerIndex=room.currentTurn,participant=room.participants[playerIndex]
       let action=null,dialogue='',fallback=false
       if(room.gameType==='gomoku'){
-        action=await requestCharacterGameAction(room,participant,{board:room.state.board,legalAction:'choose an empty intersection by row 0-14 and col 0-14'})
+         const candidates=rankGomokuMoves(room,playerIndex)
+         const best=candidates[0]
+         if(!best)break
+         const choices=candidates.filter(move=>move.priority===best.priority&&move.score>=best.score*.95).slice(0,6)
+         action=await requestCharacterGameAction(room,participant,{board:room.state.board,selfPlayerIndex:playerIndex,players:room.participants.map((p,index)=>({index,name:p.name})),rules:'轮流落子，横竖斜连续五子获胜。null 是空位。争取获胜并阻止对手成五。',legalActions:choices.map(({row,col})=>({row,col})),actionSchema:{row:'integer 0-14',col:'integer 0-14'}})
         if(!stillPlaying())return
         dialogue=typeof action?.dialogue==='string'?action.dialogue:''
-        const result=applyGomokuMove(room,playerIndex,Number(action?.action?.row),Number(action?.action?.col))
-        if(!result.ok){
-          fallback=true
-          outer:for(let row=0;row<15;row++)for(let col=0;col<15;col++)if(room.state.board[row][col]===null){applyGomokuMove(room,playerIndex,row,col);break outer}
-        }
+         const chosen=choices.find(move=>move.row===action?.action?.row&&move.col===action?.action?.col)
+         fallback=!chosen
+         const move=chosen||best
+         applyGomokuMove(room,playerIndex,move.row,move.col)
       }else if(room.gameType==='flight-chess'){
         const rolled=rollFlightDie(room,playerIndex)
         if(!rolled.ok)break
         if(!rolled.moves.length){room.log.push({id:uid(),text:`${participant.name} 掷出 ${rolled.value}，没有可移动棋子`,time:Date.now()});room.state.die=null;room.state.extraTurn=false;room.currentTurn=(playerIndex+1)%room.participants.length}
         else{
-          action=await requestCharacterGameAction(room,participant,{die:rolled.value,tokens:room.state.tokens[playerIndex],legalTokenIndexes:rolled.moves.map(move=>move.index)})
+          const candidates=scoreFlightCandidates(room,playerIndex)
+          action=await requestCharacterGameAction(room,participant,{playerIndex,participants:room.participants,die:rolled.value,tokens:room.state.tokens,finished:room.state.finished,extraTurn:room.state.extraTurn,candidates,legalTokenIndexes:rolled.moves.map(move=>move.index),legalAction:'action: {tokenIndex: integer}; choose a legal candidate, higher score is better',rules:{trackLength:FLIGHT_TRACK_LENGTH,homeLength:FLIGHT_HOME_LENGTH,hangar:-1,launch:'Only a six launches a token to position 0',movement:'Add die to relative position; exact finish at 37, overshoots forbidden; finished tokens cannot move',sharedTrack:'Positions 0-31 map to (playerIndex * 8 + position) % 32; landing captures all opposing tokens on that square back to -1',home:'Positions 32-37 are private and safe',extraTurn:'Six or capture grants another turn',win:'First player with both tokens at 37 wins',risk:'Candidate risk estimates next-roll exposure after captures; scores are local heuristics'}})
           if(!stillPlaying())return
           dialogue=typeof action?.dialogue==='string'?action.dialogue:''
-          let tokenIndex=Number(action?.action?.tokenIndex)
-          if(!rolled.moves.some(move=>move.index===tokenIndex)){tokenIndex=rolled.moves[0].index;fallback=true}
+          let tokenIndex=action?.action?.tokenIndex
+          const chosen=candidates.find(candidate=>candidate.tokenIndex===tokenIndex)
+          if(!chosen||candidates[0].score-chosen.score>=30){tokenIndex=candidates[0].tokenIndex;fallback=true}
           resolveFlightMove(room,playerIndex,tokenIndex)
         }
       }else if(room.gameType==='monopoly'){
         const rolled=rollMonopolyDie(room,playerIndex)
         if(!rolled.ok)break
         if(rolled.canBuy){
-          action=await requestCharacterGameAction(room,participant,{destination:rolled.space,availableFunds:room.state.money[playerIndex],legalActions:['buy','pass']})
+          action=await requestCharacterGameAction(room,participant,{playerIndex,participants:room.participants,state:room.state,destination:rolled.space,availableFunds:room.state.money[playerIndex],remainingTurns:Math.max(0,120-room.state.turnCount-1),recommendedBuy:shouldBuyMonopolyProperty(room,playerIndex),legalActions:[{buy:true},{buy:false}],legalAction:'action: {buy: boolean}; true buys, false passes; strings are invalid',rules:{turnLimit:120,ranking:'At 120 total completed player turns, highest cash among non-bankrupt players wins; property value is excluded; ties use participant order',win:'Last non-bankrupt player wins immediately',movement:'Two six-sided dice; passing start pays 200',property:'Unowned property may be bought at price; landing on opponent property transfers rent; no resale or upgrades',fee:'Pay the board tile amount',chance:'Equal chance of +100 or -80',bankruptcy:'Cash below zero eliminates player and releases all properties',strategy:'Keep a cash reserve for rent and fees; near turn 120 prefer cash over purchases with little time to earn rent'}})
           if(!stillPlaying())return
           dialogue=typeof action?.dialogue==='string'?action.dialogue:''
-          const buy=action?.action?.buy===true&&room.state.money[playerIndex]>=rolled.space.price
-          if(action?.action?.buy!==true&&action?.action?.buy!==false)fallback=true
+          fallback=typeof action?.action?.buy!=='boolean'
+          const buy=fallback?shouldBuyMonopolyProperty(room,playerIndex):action.action.buy
           buyMonopolyProperty(room,playerIndex,buy)
         }else{
           room.log.push({id:uid(),text:`${participant.name} 掷骰到达${rolled.space.name}${rolled.event?'，'+rolled.event:''}`,time:Date.now()})
@@ -25748,7 +25832,7 @@ async function runCharacterGameTurns(room){
       }
       if(dialogue)addCharacterGameChat(room,participant.id,dialogue)
       if(!api||!api.key)fallback=true
-      if(fallback)addCharacterGameChat(room,'system',`${participant.name} 按默认合法动作继续了这回合。`)
+       if(fallback)addCharacterGameChat(room,'system',`${participant.name} 根据局面策略完成了这回合。`)
       persistCharacterGameRoom(room)
       if(_curPage==='gameroom'&&store.get('activeCharacterGameRoomId')===room.id)render('gameroom')
       consecutive++
