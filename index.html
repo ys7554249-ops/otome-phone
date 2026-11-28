@@ -22590,6 +22590,8 @@ pages.settings=()=>{
     <div style="margin-bottom:8px">
       <div style="font-size:11px;color:var(--ink-l);margin-bottom:3px">模型</div>
       <input class="inp" id="_mem_model" value="${escHtml(memApi.model||'')}" placeholder="留空跟随聊天 API；如 gpt-4o-mini" style="padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.7);border:1px solid rgba(232,160,180,.15)">
+      <button type="button" class="btn-sub" id="_mem_fetch" style="margin-top:8px">拉取模型</button>
+      <div id="_mem_models" style="font-size:11px;line-height:1.8;margin-top:8px"></div>
     </div>
     <div class="btn-sub" id="_mem_save" style="font-size:12px;padding:8px;border-radius:14px">保存记忆总结配置</div>
     <div style="font-size:10px;color:var(--ink-l);margin-top:6px">当前：${memApi.key?'独立 / '+escHtml(memApi.provider||'openai')+' / '+escHtml(memApi.model||'未选模型'):'跟随聊天 API'}</div>
@@ -22707,6 +22709,24 @@ pages.settings=()=>{
     embApi.model=$('#_emb_model').value.trim()||'text-embedding-3-small'
     saveEmbApi()
     showToast('Embedding 配置已保存')
+  }
+  if($('#_mem_fetch')) $('#_mem_fetch').onclick=async()=>{
+    const button=$('#_mem_fetch'),output=$('#_mem_models'),input=$('#_mem_model')
+    const key=$('#_mem_key').value.trim()
+    const config=key?{provider:$('#_mem_provider').value,baseUrl:$('#_mem_base').value.trim(),key}:getApi()
+    if(!config?.key){output.textContent='请填写记忆总结 API Key，或先配置聊天 API';return}
+    button.disabled=true;output.textContent=key?'正在拉取模型...':'未填写独立密钥，正在使用聊天 API 拉取模型...'
+    try{
+      const models=await fetchModels(config)
+      if(!models.length){output.textContent='未获取到模型，请检查地址、密钥或服务商是否支持模型列表；也可手动输入模型 ID。';return}
+      output.textContent=key?'选择后请保存记忆总结配置。':'当前跟随聊天 API。使用独立模型需填写记忆总结密钥并保存配置。'
+      const select=ce('select','inp'),placeholder=ce('option')
+      select.setAttribute('aria-label','选择记忆总结模型')
+      placeholder.value='';placeholder.textContent='选择模型';select.appendChild(placeholder)
+      for(const model of models){const option=ce('option');option.value=model;option.textContent=model;select.appendChild(option)}
+      select.onchange=()=>{if(select.value)input.value=select.value}
+      output.appendChild(select)
+    }finally{button.disabled=false}
   }
   if($('#_mem_save')) $('#_mem_save').onclick=()=>{
     memApi.provider=$('#_mem_provider').value
