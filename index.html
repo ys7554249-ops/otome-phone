@@ -25565,7 +25565,7 @@ function isValidCharacterGameRoom(room){
 }
 function loadCharacterGameRooms(storeApi=store){
   const rooms=storeApi.get(GAME_ROOM_KEY,[])
-  return Array.isArray(rooms)?rooms.filter(isValidCharacterGameRoom).slice(-50):[]
+  return Array.isArray(rooms)?rooms.filter(isValidCharacterGameRoom).slice(-50).map(room=>({...room,chat:room.chat.filter(message=>!(message.from==='system'&&message.text.endsWith(' 根据局面策略完成了这回合。')))})):[]
 }
 function persistCharacterGameRoom(room,storeApi=store){
   if(!room||!room.id||!GAME_DEFS[room.gameType])return false
@@ -25807,8 +25807,7 @@ async function runCharacterGameTurns(room){
   if(!room||room.status!=='playing'||activeCharacterGameBots.has(room.id))return
   const wasSaved=!!latestCharacterGameRoom(room)
   activeCharacterGameBots.add(room.id)
-  const api=getApi()
-  const stillPlaying=()=>{
+   const stillPlaying=()=>{
     const saved=latestCharacterGameRoom(room)
     if(room.status!=='playing'||(wasSaved&&saved?.status!=='playing'))return false
     if(saved)room.chat=saved.chat.slice()
@@ -25861,8 +25860,6 @@ async function runCharacterGameTurns(room){
         }
       }
       if(dialogue)addCharacterGameChat(room,participant.id,dialogue)
-      if(!api||!api.key)fallback=true
-       if(fallback)addCharacterGameChat(room,'system',`${participant.name} 根据局面策略完成了这回合。`)
       persistCharacterGameRoom(room)
       if(_curPage==='gameroom'&&store.get('activeCharacterGameRoomId')===room.id)render('gameroom')
       consecutive++

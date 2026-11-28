@@ -43,6 +43,30 @@ function createRoom(context, gameType = 'gomoku', characterCount = 1) {
   return result.room;
 }
 
+test('legacy routine notices are hidden while dialogue and useful errors remain', () => {
+  const context = createGameContext();
+  const room = createRoom(context);
+  context.addCharacterGameChat(room, 'system', 'Mina 根据局面策略完成了这回合。');
+  context.addCharacterGameChat(room, 'user', '聊聊天');
+  context.addCharacterGameChat(room, 'character-1', '轮到你啦');
+  context.addCharacterGameChat(room, 'system', '角色聊天需要先配置聊天 API。');
+  context.persistCharacterGameRoom(room);
+  const loaded = context.loadCharacterGameRooms()[0];
+  assert.equal(loaded.chat.length, 3);
+  assert.equal(loaded.chat[0].text, '聊聊天');
+  assert.equal(loaded.chat[2].text, '角色聊天需要先配置聊天 API。');
+});
+
+test('local strategy advances a turn without adding routine chat notices', async () => {
+  const context = createGameContext({ getApi: () => null });
+  const room = createRoom(context);
+  room.currentTurn = 1;
+  await context.runCharacterGameTurns(room);
+  assert.equal(room.state.moves, 1);
+  assert.equal(room.chat.length, 0);
+  assert.ok(room.log.length > 0);
+});
+
 test('game lobby displays the avatar and name without rendering raw character card data', () => {
   const createButton = {};
   const body = { style: {}, querySelector: () => createButton, querySelectorAll: () => [] };
@@ -225,7 +249,7 @@ test('a rejected character API request makes a legal fallback move and keeps the
 
   assert.equal(room.state.board[7][7], 1);
   assert.equal(room.currentTurn, 0);
-  assert.match(room.chat.at(-1).text, /局面策略/);
+  assert.equal(room.chat.length, 0);
   assert.equal(room.status, 'playing');
 });
 
@@ -239,7 +263,8 @@ test('an illegal character action uses the same deterministic legal fallback', a
   await context.runCharacterGameTurns(room);
 
   assert.equal(room.state.board[7][7], 1);
-  assert.match(room.chat.at(-1).text, /局面策略/);
+  assert.equal(room.chat.length, 1);
+  assert.equal(room.chat[0].text, 'Try an invalid move');
 });
 
 test('gomoku wins and blocks on every axis even when the model chooses a legal weak move', async () => {
