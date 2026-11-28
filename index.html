@@ -29096,7 +29096,7 @@ function openTtsApiEditor(){
     toggleOpts()
 
     // Model discovery is optional; providers may omit the models endpoint.
-    for(const prefix of ['ta','tm']){
+    for(const prefix of ['ta']){
       const input=mb.querySelector('#_'+prefix+'model')
       const button=ce('button','btn-sub'),output=ce('div')
       button.type='button';button.textContent='拉取模型';button.style.marginTop='8px'
