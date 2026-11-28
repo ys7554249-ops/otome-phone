@@ -673,3 +673,54 @@ test('failed or stale scans and advances cannot overwrite scores', async () => {
   assert.equal(dungeon.npcProfiles, undefined);
   assert.equal(dungeon.npcAffection['楚瑶'], 78);
 });
+
+test('dungeon keeps early events and durable state across many rounds and reloads', async () => {
+  const { context, data, requests, prompts, template, character, start, run } = dungeonEnv();
+  const dungeon = start('continuity');
+  dungeon.maxRounds = 30;
+  dungeon.story = Array.from({ length: 12 }, (_, i) => ({ type: 'narration', round: i + 1, text: i ? '继续调查' : '穿着白色祭服，已找到地下室钥匙。' }));
+  dungeon.currentRound = 12;
+  const pending = context.doDungeonAdvance(template, character, null, '核对钥匙');
+  assert.match(prompts[0][0], /穿着白色祭服，已找到地下室钥匙/);
+  requests[0].resolve({ story: '仍穿白色祭服，用钥匙打开地下室。', stateUpdates: { outfit: '白色祭服', clues: ['已找到地下室钥匙'], facts: ['地下室已打开'], goals: ['调查地下室'] } });
+  await pending;
+  context.dungeon = structuredClone(data.get('activeDungeon'));
+  run('activeDungeon=dungeon');
+  const next = context.doDungeonAdvance(template, character, null, '');
+  assert.match(prompts[1][0], /服装：白色祭服/);
+  assert.match(prompts[1][0], /已发现线索：已找到地下室钥匙/);
+  requests[1].resolve({ story: '继续调查。', stateUpdates: { outfit: '红裙', clues: ['已找到地下室钥匙'], goals: [] } });
+  await next;
+  assert.equal(data.get('activeDungeon').dungeonMemory.outfit, '白色祭服');
+  assert.deepEqual(data.get('activeDungeon').dungeonMemory.clues, ['已找到地下室钥匙']);
+  assert.deepEqual(data.get('activeDungeon').dungeonMemory.goals, []);
+});
+
+test('memory updates validate values and preserve clues with evidenced outfit changes', () => {
+  const { context, start } = dungeonEnv();
+  const dungeon = start('memory');
+  context.mergeDungeonMemory(dungeon, { outfit: '白袍', facts: ['事实', '事实', null], clues: ['钥匙'], goals: ['找钥匙'] });
+  context.mergeDungeonMemory(dungeon, { outfit: 3, clues: [false, {}], facts: null });
+  context.mergeDungeonMemory(dungeon, { outfit: '黑袍', evidence: '换上黑袍', goals: [] }, '她换上黑袍。');
+  assert.equal(dungeon.dungeonMemory.outfit, '黑袍');
+  assert.deepEqual(Array.from(dungeon.dungeonMemory.facts), ['事实']);
+  assert.deepEqual(Array.from(dungeon.dungeonMemory.clues), ['钥匙']);
+  assert.equal(dungeon.dungeonMemory.goals.length, 0);
+});
+
+test('fresh first round initializes explicit AI extracted scores before applying changes', async () => {
+  const { context, data, requests, template, character, start } = dungeonEnv();
+  const dungeon = start('first');
+  dungeon.npcAffection = { '罗恩': 50 };
+  const pending = context.doDungeonAdvance(template, character, null, '');
+  requests[0].resolve({ story: '祭司现身。', npcProfiles: [{ name: '神秘祭司', initialAffection: 0 }, { name: '罗恩', initialAffection: 20 }], npcChanges: [{ name: '神秘祭司', delta: 5, currentAffection: 99 }, { name: '罗恩', delta: 2 }] });
+  await pending;
+  assert.deepEqual(data.get('activeDungeon').npcAffection, { '罗恩': 52, '神秘祭司': 5 });
+});
+
+test('initial scores parse common explicit formats without treating thresholds as values', () => {
+  const { context, start } = dungeonEnv();
+  const dungeon = start('formats');
+  context.initDungeonAffection(dungeon, { scenario: '罗恩(好感50)\n艾德温亲王（初始好感度：20）\n祭司：初始好感为0\n老苏初始好感为45\n好感>80解锁剧情' });
+  assert.deepEqual(JSON.parse(JSON.stringify(dungeon.npcAffection)), { '罗恩': 50, '艾德温亲王': 20, '祭司': 0, '老苏': 45 });
+});
