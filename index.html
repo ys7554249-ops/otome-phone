@@ -29095,6 +29095,31 @@ function openTtsApiEditor(){
     provEl.onchange=toggleOpts
     toggleOpts()
 
+    // Model discovery is optional; providers may omit the models endpoint.
+    for(const prefix of ['ta','tm']){
+      const input=mb.querySelector('#_'+prefix+'model')
+      const button=ce('button','btn-sub'),output=ce('div')
+      button.type='button';button.textContent='拉取模型';button.style.marginTop='8px'
+      output.style.cssText='font-size:11px;line-height:1.8;margin-top:8px;overflow-wrap:anywhere'
+      input.parentNode.appendChild(button);input.parentNode.appendChild(output)
+      button.onclick=async()=>{
+        const key=mb.querySelector('#_takey').value.trim()
+        if(!key){output.textContent='请先填写 API Key';return}
+        const baseUrl=mb.querySelector('#_'+prefix+'base').value.trim()||(prefix==='tm'?'https://api.minimaxi.com':'https://api.openai.com/v1')
+        button.disabled=true;button.textContent='拉取中...';output.textContent=''
+        try{
+          const models=await fetchModels({provider:'openai',baseUrl,key})
+          if(!models.length){output.textContent='未获取到模型列表：服务可能未提供列表接口，或网络、鉴权失败。可在上方直接输入完整模型 ID。';return}
+          output.textContent='接口返回的模型（请确认所选模型支持语音合成）：'
+          const select=ce('select','inp');select.setAttribute('aria-label','选择语音模型')
+          const placeholder=ce('option');placeholder.value='';placeholder.textContent='选择模型';select.appendChild(placeholder)
+          for(const model of models){const option=ce('option');option.value=model;option.textContent=model;select.appendChild(option)}
+          select.onchange=()=>{if(select.value)input.value=select.value}
+          output.appendChild(select)
+        }finally{button.disabled=false;button.textContent='拉取模型'}
+      }
+    }
+
     // 滑块实时显示
     mb.querySelector('#_taspeed').oninput=function(){mb.querySelector('#_speedval').textContent=this.value}
     mb.querySelector('#_tatemp').oninput=function(){mb.querySelector('#_tempval').textContent=this.value}
