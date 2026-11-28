@@ -5385,6 +5385,32 @@ async function genTTS(text,opts){
 }
 
 // 生图
+function imageResultUrl(value){
+  if(typeof value==='string'){
+    if(/^https?:\/\//i.test(value)||/^data:image\//i.test(value)||/^blob:/i.test(value))return value
+    return null
+  }
+  if(!value||typeof value!=='object')return null
+  for(const key of ['b64_json','base64']){
+    if(typeof value[key]==='string'&&value[key])return 'data:image/png;base64,'+value[key]
+  }
+  for(const key of ['image','image_url','url','src']){
+    const result=imageResultUrl(value[key])
+    if(result)return result
+  }
+  for(const key of ['data','images','output','results','result']){
+    const result=imageResultUrl(value[key])
+    if(result)return result
+  }
+  if(Array.isArray(value))for(const item of value){const result=imageResultUrl(item);if(result)return result}
+  return null
+}
+async function imageResponseUrl(response){
+  const type=(response.headers?.get?.('content-type')||'').toLowerCase()
+  if(type.startsWith('image/'))return URL.createObjectURL(await response.blob())
+  const text=await response.text()
+  try{return imageResultUrl(JSON.parse(text))}catch(e){return imageResultUrl(text)}
+}
 async function genImage(prompt,opts){
   if(!imgApi.key)return null
   opts=opts||{}
@@ -5599,17 +5625,12 @@ if(!isGptImage) bodyObj.response_format = 'b64_json'
         return null
       }
 
-      const d=await r.json()
-      const item=d.data?.[0]
-if(!item){
-  const _em='生图接口没有返回图片：'+JSON.stringify(d||{}).slice(0,400)
-  console.error('[genImage]',_em); alert(_em); return null
-}
-if(item.b64_json)return 'data:image/png;base64,'+item.b64_json
-// gpt-image-1 返回的字段名是 b64_json，但有些中转可能用 base64
-if(item.base64)return 'data:image/png;base64,'+item.base64
-if(item.url)return item.url
-return null
+      const url=await imageResponseUrl(r)
+      if(!url){
+        const _em='生图接口没有返回可识别的图片'
+        console.error('[genImage]',_em); alert(_em); return null
+      }
+      return url
     }
 
   }catch(e){
