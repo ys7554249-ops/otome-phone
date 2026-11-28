@@ -5960,16 +5960,18 @@ function refListOf(opts){
 }
 
 
-// ===== 翻译功能（免费，不消耗API额度）=====
+// ===== 免费翻译，不调用聊天 API =====
 async function translateText(text,targetLang){
   const langMap={'中文':'zh','英文':'en','日文':'ja','韩文':'ko','法文':'fr','德文':'de','西班牙文':'es','俄文':'ru'}
   const tl=langMap[targetLang]||'zh'
+  const source=/[\u3040-\u30ff]/.test(text)?'ja':/[\uac00-\ud7af]/.test(text)?'ko':/[\u4e00-\u9fff]/.test(text)?'zh':'en'
+  if(!text.trim()||source===tl)return text
   
   // 方法1：MyMemory免费翻译（国内能用）
   try{
     const chunks=[]
     // 长文本分段翻译
-    const maxLen=400
+    const maxLen=120
     let remaining=text
     while(remaining.length>0){
       chunks.push(remaining.slice(0,maxLen))
@@ -5978,33 +5980,37 @@ async function translateText(text,targetLang){
     let fullResult=''
     for(const chunk of chunks){
       const encoded=encodeURIComponent(chunk)
-      const url=`https://api.mymemory.translated.net/get?q=${encoded}&langpair=en|${tl}`
-      const r=await fetch(url)
-      const data=await r.json()
-      if(data&&data.responseData&&data.responseData.translatedText){
+      const url=`https://api.mymemory.translated.net/get?q=${encoded}&langpair=${source}|${tl}`
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000)
+      let data
+      try{
+        const r=await fetch(url,{signal:controller.signal})
+        if(!r.ok)throw new Error('免费翻译服务暂时不可用')
+        data=await r.json()
+      }finally{clearTimeout(timer)}
+      if(Number(data?.responseStatus)!==200||data?.quotaFinished)throw new Error('免费翻译额度已用尽或服务暂时不可用')
+      if(typeof data?.responseData?.translatedText==='string'&&data.responseData.translatedText){
         fullResult+=data.responseData.translatedText
       }else{
-        fullResult+=chunk
+        throw new Error('免费翻译未返回译文')
       }
     }
-    if(fullResult&&fullResult!==text) return fullResult
-  }catch(e){}
-  
-  // 方法2：用你自己的聊天API翻译（兜底，会消耗少量额度）
-  try{
-    const api=getApi()
-    if(api&&api.key){
-      const lang=targetLang||'中文'
-      const res=await askAI(
-        `你是翻译机器。只输出翻译结果，不要任何解释、引号、前缀。`,
-        `翻译成${lang}：${text.slice(0,800)}`,
-        600
-      )
-      if(res&&!isLLMError(res)) return res
-    }
-  }catch(e){}
-  
-  return '（翻译失败，请检查网络）'
+    return fullResult
+  }catch(e){throw new Error(e.name==='AbortError'?'免费翻译超时，请稍后重试':e.message||'免费翻译失败，请检查网络')}
+}
+
+function renderImagePrompt(el,prompt){
+  el.textContent=prompt||'无提示词'
+  if(!prompt||(/[\u4e00-\u9fff]/.test(prompt)&&!/[\u3040-\u30ff\uac00-\ud7af]/.test(prompt)))return
+  const button=ce('button','btn-sub'),result=ce('div')
+  button.type='button';button.textContent='免费翻译成中文';button.style.marginTop='8px'
+  el.appendChild(button);el.appendChild(result)
+  button.onclick=async()=>{
+    button.disabled=true;result.textContent='正在请求免费翻译服务...'
+    try{result.textContent=await translateText(prompt,'中文')}
+    catch(e){result.textContent=e.message+'；原文已保留'}
+    finally{button.disabled=false}
+  }
 }
 
 function showTranslateModal(text){
@@ -17355,15 +17361,7 @@ ${recentMsgs}
             res.style.display='block'
             mb.querySelector('#_sireason').textContent='AI思路：'+lastReason
             mb.querySelector('#_siimg').src=url
-            mb.querySelector('#_siprompt').innerHTML=`<div style="font-size:11px;color:var(--ink-l)">提示词翻译中...</div>`
-            // 自动翻译提示词
-            translateText(finalPrompt,'中文').then(zh=>{
-              const el=mb.querySelector('#_siprompt')
-              if(el) el.innerHTML=`<div style="font-size:11px;color:var(--ink);line-height:1.8;margin-bottom:6px">📝 ${escHtml(zh)}</div><div style="font-size:9px;color:var(--ink-l);opacity:.6;line-height:1.6">原文：${escHtml(finalPrompt)}</div>`
-            }).catch(()=>{
-              const el=mb.querySelector('#_siprompt')
-              if(el) el.textContent='Prompt: '+finalPrompt
-            })
+            renderImagePrompt(mb.querySelector('#_siprompt'),finalPrompt)
           }
 
           mb.querySelector('#_sigo').onclick=doGen
@@ -21607,20 +21605,10 @@ ${userHint?'用户要求：'+userHint:'自由发挥'}
     const parts=inp.value.split(',').map(s=>s.trim()).filter(s=>s)
     if(parts.length>0){parts.pop();inp.value=parts.join(', ')}
   }
-  // 自动翻译所有生图记录的prompt（带超时保护）
+  // Preserve prompts until the user explicitly requests a translation.
   body.querySelectorAll('._imgprompt').forEach(el=>{
     const prompt=decodeURIComponent(el.dataset.prompt||'')
-    if(!prompt){el.textContent='无提示词';return}
-    // 先显示原文，翻译好了再替换
-    el.innerHTML=`<div style="color:var(--ink);opacity:.7;font-size:11px">${escHtml(prompt.slice(0,80))}${prompt.length>80?'...':''}</div><div style="font-size:10px;color:var(--ink-l);opacity:.5;margin-top:4px">翻译中...</div>`
-    // 8秒超时
-    const timeout=new Promise((_,reject)=>setTimeout(()=>reject('timeout'),8000))
-    Promise.race([translateText(prompt,'中文'),timeout]).then(zh=>{
-      if(zh&&zh!==prompt) el.innerHTML=`<div style="color:var(--ink);margin-bottom:4px">📝 ${escHtml(zh)}</div><details style="margin-top:2px"><summary style="font-size:9px;color:var(--ink-l);cursor:pointer;opacity:.6">查看原文</summary><div style="font-size:9px;color:var(--ink-l);opacity:.5;margin-top:4px;line-height:1.6">${escHtml(prompt)}</div></details>`
-      else el.innerHTML=`<div style="color:var(--ink);font-size:11px;line-height:1.6">${escHtml(prompt)}</div>`
-    }).catch(()=>{
-      el.innerHTML=`<div style="color:var(--ink);font-size:11px;line-height:1.6">${escHtml(prompt)}</div><div style="font-size:10px;color:var(--ink-l);opacity:.5;margin-top:2px">（翻译超时，显示原文）</div>`
-    })
+    renderImagePrompt(el,prompt)
   })
 
 
@@ -21652,16 +21640,7 @@ ${userHint?'用户要求：'+userHint:'自由发挥'}
             </div>
           </div>
         `
-        // 翻译prompt
-        if(item.prompt){
-          translateText(item.prompt,'中文').then(zh=>{
-            const el=mb.querySelector('#_viewprompt')
-            if(el) el.innerHTML=`<div style="color:var(--ink)">📝 ${escHtml(zh)}</div><div style="font-size:9px;color:var(--ink-l);opacity:.5;margin-top:4px">${escHtml(item.prompt)}</div>`
-          }).catch(()=>{
-            const el=mb.querySelector('#_viewprompt')
-            if(el) el.textContent=item.prompt
-          })
-        }
+        renderImagePrompt(mb.querySelector('#_viewprompt'),item.prompt||'')
 
 
         mb.querySelector('#_viewdl').onclick=()=>{
