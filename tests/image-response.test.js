@@ -32,3 +32,9 @@ test('binary image responses become object URLs', async () => {
   const response = { headers: { get: () => 'image/png' }, blob: async () => ({}) };
   assert.equal(await ctx.imageResponseUrl(response), 'blob:generated');
 });
+
+test('download flow opens a direct image fallback before async fetch', () => {
+  const source = html.slice(html.indexOf('async function downloadImage('), html.indexOf('// ===== IndexedDB图片存储', html.indexOf('async function downloadImage(')));
+  assert.match(source, /fallbackWindow=window\.open\(realUrl,'_blank'\)/);
+  assert.ok(source.indexOf('fallbackWindow=window.open') < source.indexOf('await fetch(realUrl)'));
+});

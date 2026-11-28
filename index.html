@@ -5652,6 +5652,12 @@ async function downloadImage(url,filename){
     realUrl=await loadImage(url)
     if(!realUrl){realUrl=url}
   }
+
+  // Open the fallback during the original click so mobile browsers allow it.
+  let fallbackWindow=null
+  if(realUrl&&/^(https?:\/\/|data:|blob:)/i.test(realUrl)){
+    try{fallbackWindow=window.open(realUrl,'_blank')}catch(e){}
+  }
   
   // 统一转成blob
   let blob
@@ -5696,27 +5702,31 @@ async function downloadImage(url,filename){
       a.style.cssText='position:fixed;top:-9999px;left:-9999px;opacity:0'
       document.body.appendChild(a)
       // 延迟点击以兼容Safari
-      await new Promise(r=>setTimeout(r,100))
-      a.click()
-      // 延迟移除
-      setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(blobUrl)},5000)
-      return
-    }catch(e){}
+       await new Promise(r=>setTimeout(r,100))
+       a.click()
+       // 延迟移除
+       setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(blobUrl)},5000)
+       if(fallbackWindow&&!fallbackWindow.closed)fallbackWindow.close()
+       return
+     }catch(e){}
   }
 
   // 方法3：新标签页打开（让用户长按保存）
   if(realUrl && (realUrl.startsWith('data:')||realUrl.startsWith('blob:')||realUrl.startsWith('http'))){
     try{
-      const w=window.open('')
-      if(w){
-        w.document.write(`<html><head><title>长按图片保存</title></head><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#111"><img src="${realUrl}" style="max-width:100%;max-height:100vh;object-fit:contain"></body></html>`)
-        w.document.close()
-        return
-      }
+       const w=fallbackWindow||window.open('')
+       if(w){
+         if(!fallbackWindow){
+           w.document.write(`<html><head><title>长按图片保存</title></head><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#111"><img src="${realUrl}" style="max-width:100%;max-height:100vh;object-fit:contain"></body></html>`)
+           w.document.close()
+         }
+         return
+       }
     }catch(e){}
   }
 
   // 方法4：兜底弹窗
+  if(fallbackWindow&&!fallbackWindow.closed){fallbackWindow.close()}
   showModal('保存图片',(mb,close)=>{
     mb.innerHTML=`
       <div style="text-align:center">
