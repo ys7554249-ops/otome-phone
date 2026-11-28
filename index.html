@@ -35572,7 +35572,7 @@ let activeDungeon = store.get('activeDungeon', null)
 let inventory = store.get('inventory', [])
 function saveDungeonTemplates(){store.set('dungeonTemplates',dungeonTemplates)}
 function saveActiveDungeon(){
-  if(activeDungeon)delete activeDungeon.npcAffection
+  if(activeDungeon?.npcAffection)activeDungeon.npcAffection=Object.fromEntries(Object.entries(activeDungeon.npcAffection).filter(([,value])=>Number.isFinite(value)))
   store.set('activeDungeon',activeDungeon)
 }
 const dungeonAdvances=new WeakMap(),dungeonSettlements=new WeakSet()
@@ -35719,22 +35719,20 @@ function updateBuiltinDungeonRelations(template){
 5.雇主·影子：来历和关系都不明朗，真实目的有待揭晓。`]
   }
   if(!Object.hasOwn(defaults,template.id))return false
-  const [signature,npcText]=defaults[template.id]
-  const matches=(text,hash)=>Array.from(text).reduce((h,c)=>Math.imul(h,31)+c.codePointAt(0)|0,0)===hash
-  const scenario=typeof template.scenario==='string'?template.scenario.replace(/【(?:关键|团队)NPC·初始好感】[\s\S]+?(?=\n\n|$)/,section=>matches(section,signature)?npcText:section)
-    .replace(/【过载系统】[^\n]+/,section=>template.id==='builtin_cyberpunk'&&matches(section,-1648557453)?'【过载系统】初始0，每次用零的能力+10-20，达100永久失去一段记忆，影响过往经历在剧情中的延续。':section)
-    :template.scenario
+  const [,npcText]=defaults[template.id]
+  const original=builtinDungeons.find(t=>t.id===template.id)
+  const originalSection=original.scenario.match(/【(?:关键|团队)NPC·初始好感】[\s\S]+?(?=\n\n|$)/)[0]
+  const scenario=typeof template.scenario==='string'?template.scenario.replace(/【(?:关键|团队)NPC·叙事关系】[\s\S]+?(?=\n\n|$)/,section=>section===npcText?originalSection:section)
+    .replace('【过载系统】初始0，每次用零的能力+10-20，达100永久失去一段记忆，影响过往经历在剧情中的延续。',section=>template.id==='builtin_cyberpunk'?original.scenario.match(/【过载系统】[^\n]+/)[0]:section):template.scenario
   let rules=template.rules
-  if(template.id==='builtin_xianjian')rules=rules?.replace('好感度影响NPC是否帮你或出卖你。','NPC根据动机和过往经历决定是否相助。')
-  if(template.id==='builtin_showbiz')rules=rules?.replace('好感度非常重要。','与NPC的关系随互动和关键抉择发展。')
+  if(template.id==='builtin_xianjian'&&rules===original.rules.replace('好感度影响NPC是否帮你或出卖你。','NPC根据动机和过往经历决定是否相助。'))rules=original.rules
+  if(template.id==='builtin_showbiz'&&rules===original.rules.replace('好感度非常重要。','与NPC的关系随互动和关键抉择发展。'))rules=original.rules
   if(scenario===template.scenario&&rules===template.rules)return false
   template.scenario=scenario;template.rules=rules
   return true
 }
 
 // 内置副本注入
-if(!store.get('builtinDungeonsV3',false)){
-  store.set('builtinDungeonsV3',true)
   const builtinDungeons=[
     {id:'builtin_xianjian',name:'仙门叛徒·逆天改命',description:'你是仙门首席弟子，一夜之间被扣上叛徒帽子，师尊下令全门追杀。七天内找到真相，否则魂飞魄散。',difficulty:'hard',rounds:15,targetRole:'被冤枉的仙门首席弟子',rules:'角色用古风语气说话。战斗根据属性判定。好感度影响NPC是否帮你或出卖你。',worldBookIds:[],styleBookIds:[],scenario:`【世界观】修仙世界「九霄大陆」，五大仙门分治天下。「青云宗」是正道魁首，你是掌门座下首席弟子。三天前宗门圣物「天衍珠」失窃，所有证据指向你——储物戒里被搜出碎片，剑上残留守卫长老的血，房间发现与魔道联络的密信。师尊含泪下令七日内捉拿叛徒。你从封印阵挣脱逃出，只剩三成修为，一把断剑。\n\n【修为系统】练气→筑基→金丹→元婴→化神。你目前金丹期被封印后相当于筑基巅峰。力量影响近战，智力影响法术和破阵，魅力影响说服，幸运影响奇遇和逃脱。\n\n【关键NPC·初始好感】\n1.师妹·楚瑶(好感60)：对你有超出师兄妹的感情，不信你是叛徒但被禁足。好感>80冒死送情报；<30开始怀疑你\n2.二师兄·沈无渡(好感35)：活在你阴影下，嫌疑最大的黑手——也可能被利用。好感>70可能反水帮你\n3.师尊·玄清子(好感50)：铁面无私但内心痛苦，暗中调查真相。好感>85暗中放水\n4.魔道圣女·月无霜(好感20)：主动找你说"我知道真相，但你要答应我一个条件"。帮助有巨大代价\n5.药师·老苏(好感45)：山脚凡人药师，你曾救过他女儿。能帮你疗伤炼丹\n\n【线索链】1.碎片被人种进储物戒——种的人必须接触过你的戒指 2.守卫长老伤口不是你的剑法但模仿得很像 3.密信笔迹有一个字写法不对 4.幕后与五十年前旧案有关 5.天衍珠没失窃——被转移到某人体内\n\n【阶段】1-4轮逃亡疗伤收集线索；5-8轮深入调查；9-12轮真相浮现面临抉择；13-15轮最终对决`},
     {id:'builtin_cyberpunk',name:'霓虹深渊·赛博亡魂',description:'2087年，你是底层黑客，意外下载了一段被谋杀的AI残魂到神经接口里。凶手是这座城市最大的企业。',difficulty:'hard',rounds:14,targetRole:'底层黑客',rules:'赛博朋克风格，可用网络俚语。战斗分肉体战和赛博空间战。神经接口有过载风险——用AI能力越多过载越高，超阈值永久失去部分记忆。',worldBookIds:[],styleBookIds:[],scenario:`【世界观】2087年巨型都市「新上海」，分三层：上层云端区（权贵天堂）、中层霓虹区（灰色地带永远霓虹夜）、下层深渊区（断电区黑市非法改造诊所）。你住霓虹区胶囊旅馆，靠黑客任务混饭。装备：二手神经接口、电磁手枪（三发）、防弹内衬。\n\n【核心】你接了窃取「曙光集团」数据的任务，在数据里发现AI人格残片。AI自称「零」，生前是曙光首席AI研究员，被CEO灭口后意识碎片化封存。零寄生在你神经接口里，能入侵任何系统，但每次使用加重过载。曙光派企业杀手追杀你。\n\n【过载系统】初始0，每次用零的能力+10-20，达100永久失去一段记忆（随机删除一个NPC好感记录）\n\n【关键NPC·初始好感】\n1.零·AI残魂(好感55)：毒舌但有用。好感高主动提供情报；低时关键时刻"卡bug"坑你\n2.小满·军火商(好感40)：深渊区军火贩。好感>60拿折扣和稀有装备；>80告诉你安全通道\n3.刀疤·赏金猎人(好感15)：被雇来追杀你。好感>50可能放你一马；>80反水\n4.林医生·地下诊所(好感50)：非法义体医生，能降过载值。好感<20在义体里装后门\n5.白先生·曙光CEO(好感0)：最终BOSS，不可说服只能击败\n\n【道具】神经抑制剂(降过载20)、隐形芯片(一轮隐身)、破解密钥(自动通过黑客判定)、义体升级(永久+2属性)\n\n【阶段】1-3轮被追杀躲深渊区；4-7轮收集证据在霓虹区周旋；8-11轮准备反击组队；12-14轮潜入云端区最终对决`},
@@ -35742,8 +35740,10 @@ if(!store.get('builtinDungeonsV3',false)){
     {id:'builtin_showbiz',name:'娱乐圈沉浮·顶流之路',description:'你是刚签约大公司的新人艺人，颜值在线资源为零。在吃人不吐骨头的圈子里杀出血路。',difficulty:'normal',rounds:12,targetRole:'新人艺人',rules:'不限制OOC自由发挥。魅力影响人气和说服力，智力影响判断和避坑，幸运影响机遇。每轮一个关键抉择导向不同路线。好感度非常重要。',worldBookIds:[],styleBookIds:[],scenario:`【世界观】现代娱乐圈，你签约top3经纪公司「星辰娱乐」。起点：零作品零粉丝零人脉，优势是好脸和不服输。\n\n【规则】人气值影响工作级别，口碑值太高被嫉妒太低被封杀需平衡。每轮1-2个工作机会可能需竞争或交换条件。和NPC互动过多产生绯闻，可炒热度也可毁事业。\n\n【关键NPC·初始好感】\n1.经纪人·周琳(好感50)：精明冷酷。好感>70好资源优先给你；<30冷处理你；>90为你得罪高层\n2.顶流·顾辞(好感35)：公司一哥/一姐，外界完美私下复杂。好感>60公开带你；<20暗中打压；>80暧昧线开启\n3.竞争对手·林夕(好感25)：同期新人，条件差不多。好感>50成盟友；<10死对头\n4.金主·赵总(好感20)：投资方，手握电影资源，帮忙从来不免费\n5.粉丝站·小鹿(好感60)：第一个站长真心喜欢你。好感>80组织打投；<30脱粉回踩\n\n【每轮事件】综艺邀约/绯闻危机/资源争夺/粉丝事件/金主饭局/前辈提携/剧本选择(商业片vs文艺片)/人设管理\n\n【路线】实力派(接好本练演技慢但稳)/流量派(炒话题快但险)/关系派(经营人脉稳但有代价)/独立派(拒绝潜规则难但保留自我)`},
     {id:'builtin_heist',name:'金库风暴·完美犯罪',description:'你是天才策划师，72小时内带临时团队盗取全球最安全金库里的一个U盘。报酬每人一亿。',difficulty:'hard',rounds:14,targetRole:'盗窃行动策划师',rules:'前半段准备(踩点组队制定计划)后半段执行(潜入突发随机应变)。智力影响计划完善度，魅力影响团队管理，幸运影响意外事件。',worldBookIds:[],styleBookIds:[],scenario:`【世界观】现代都市。目标：「环球金融中心」地下三层私人金库，归军火商维克多·陈。金库里一个U盘，雇主没说内容，只说拿到每人一亿。72小时准备12小时执行。\n\n【安防】地面层：保安12人轮班+监控。地下一层：生物识别(指纹+虹膜)。地下二层：激光网+压力感应地板。地下三层：30吨钢门三把钥匙三个人同时插入。\n\n【团队NPC·初始好感】\n1.阿杰·黑客(好感45)：顶级但有赌瘾欠债。好感>70全力以赴；<30可能被威胁出卖\n2.莉莉·前特工(好感40)：擅长伪装格斗，不信任人。好感>60分享额外情报；<20留后手\n3.老马·开锁匠(好感55)：六十岁老贼手艺精湛身体不好。好感>80教你老派技巧解锁特殊选项\n4.小北·内应(好感30)：金融中心保安。好感>70冒死帮你；<40反水报警\n5.雇主·影子(好感?)：变声电话联系，真实目的可能和你想的不一样\n\n【准备阶段1-7轮】踩点/招募管理团队/黑市买装备(从钱包扣钱)/制定计划(正门/通风管/下水道/直升机)/搞定内应/获取生物信息\n\n【执行阶段8-12轮】按计划执行但必出意外。准备越充分意外越小。属性判定成败。\n\n【收尾13-14轮】撤退+雇主真实身份揭晓。选择：交U盘拿钱/打开看内容/背叛雇主/销毁\n\n【黑市道具】EMP脉冲器(瘫痪电子设备30秒,3000元)/变声器(1000元)/微型无人机(2000元)/闪光弹(500元)/假证件(1500元)/生物复制手套(5000元)`}
   ]
+if(!store.get('builtinDungeonsV3',false)){
+  store.set('builtinDungeonsV3',true)
   const existingIds=dungeonTemplates.map(t=>t.id)
-  builtinDungeons.forEach(bd=>{if(!existingIds.includes(bd.id)){updateBuiltinDungeonRelations(bd);dungeonTemplates.push(bd)}})
+  builtinDungeons.forEach(bd=>{if(!existingIds.includes(bd.id))dungeonTemplates.push(JSON.parse(JSON.stringify(bd)))})
   saveDungeonTemplates()
 }
 // 副本列表页
@@ -35773,7 +35773,9 @@ pages.dungeons=()=>{
       </div>`
     body.querySelector('#_continuedg')?.addEventListener('click',()=>render('dungeonplay'))
     body.querySelector('#_discarddg').onclick=()=>{if(confirm('放弃当前副本？'))leaveDungeon(dungeon)}
-  }else{
+  }
+  const library=ce('div')
+  {
     let html=`<div style="font-size:11px;color:${n?'#b8a8c8':'var(--ink-l)'};font-style:italic;padding:0 4px 12px;line-height:1.8">角色穿越副本，完成深度角色扮演挑战。支持单人/多人模式，NPC关系随剧情发展。</div>`
     if(dungeonTemplates.length){
       dungeonTemplates.forEach(t=>{
@@ -35785,12 +35787,18 @@ pages.dungeons=()=>{
     html+=`<div class="list-item" id="_adddg" style="border:1px dashed ${n?'rgba(200,180,220,.2)':'rgba(232,160,180,.25)'};justify-content:center;gap:8px;opacity:.8;margin-top:12px">${I.plus(ic,18)}<span style="font-size:13px;color:${n?'#c8a8d0':'var(--ink-l)'}">创建副本</span></div>`
     html+=`<div class="list-item" id="_aidg" style="border:1px dashed ${n?'rgba(180,200,220,.2)':'rgba(180,200,220,.25)'};justify-content:center;gap:8px;opacity:.8;margin-top:8px">${I.quill(n?'#a0c0d0':'#6a90b0',18)}<span style="font-size:13px;color:${n?'#a0c0d0':'var(--ink-l)'}">AI生成副本</span></div>`
     html+=`<div style="display:flex;gap:10px;margin-top:16px"><div class="list-item" id="_gobag" style="flex:1;justify-content:center;gap:6px">${itemIcons.book(ic,18)}<span style="font-size:13px;color:${n?'#c8a8d0':'var(--ink-l)'}">背包</span></div><div class="list-item" id="_gostat" style="flex:1;justify-content:center;gap:6px">${itemIcons.star(n?'#d0c090':'#b0a060',18)}<span style="font-size:13px;color:${n?'#c8a8d0':'var(--ink-l)'}">属性</span></div></div>`
-    body.innerHTML=html
+    library.innerHTML=html
   }
+  body.appendChild(library)
+  library.querySelectorAll('._dgstart').forEach(el=>{
+    const view=ce('button','btn-sub');view.type='button';view.textContent='剧本设定与规则'
+    view.onclick=()=>openDungeonRules(dungeonTemplates.find(t=>t.id===el.dataset.id))
+    el.parentNode.appendChild(view)
+  })
   p.appendChild(body);app.appendChild(p)
   body.querySelectorAll('._dgstart').forEach(el=>{el.onclick=()=>openDungeonStart(el.dataset.id)})
   body.querySelectorAll('._dgedit').forEach(el=>{el.onclick=()=>openDungeonEditor(el.dataset.id)})
-  body.querySelectorAll('._dgdel').forEach(el=>{el.onclick=()=>{if(!confirm('删除？'))return;dungeonTemplates=dungeonTemplates.filter(t=>t.id!==el.dataset.id);saveDungeonTemplates();render('dungeons')}})
+  body.querySelectorAll('._dgdel').forEach(el=>{el.onclick=()=>{if(activeDungeon?.templateId===el.dataset.id){alert('当前副本正在引用此模板，请先完成或放弃副本');return}if(!confirm('删除？'))return;dungeonTemplates=dungeonTemplates.filter(t=>t.id!==el.dataset.id);saveDungeonTemplates();render('dungeons')}})
   if($('#_adddg'))$('#_adddg').onclick=()=>openDungeonEditor()
   if($('#_aidg'))$('#_aidg').onclick=()=>openAIDungeonGen()
   if($('#_gobag'))$('#_gobag').onclick=()=>render('inventory')
@@ -35799,6 +35807,7 @@ pages.dungeons=()=>{
 
 // 副本编辑器
 function openDungeonEditor(editId){
+  if(editId&&activeDungeon?.templateId===editId){alert('当前副本正在引用此模板，请先完成或放弃副本');return}
   const isEdit=!!editId
   const cur=dungeonTemplates.find(t=>t.id===editId)||{id:uid(),name:'',description:'',scenario:'',targetRole:'',worldBookIds:[],styleBookIds:[],rounds:12,difficulty:'normal',rules:''}
   showModal(isEdit?'编辑副本':'创建副本',(mb,close)=>{
@@ -35814,6 +35823,7 @@ function openDungeonEditor(editId){
     let selDiff=cur.difficulty||'normal'
     mb.querySelectorAll('._ddf').forEach(el=>{el.onclick=()=>{mb.querySelectorAll('._ddf').forEach(e=>{e.style.background='rgba(255,255,255,.5)';e.style.border='1px solid transparent'});el.style.background='rgba(232,160,180,.3)';el.style.border='2px solid var(--rose)';selDiff=el.dataset.v}})
     mb.querySelector('#_dgsv').onclick=()=>{
+      if(isEdit&&activeDungeon?.templateId===editId){alert('当前副本正在引用此模板，请先完成或放弃副本');return}
       const t={id:cur.id,name:mb.querySelector('#_dgn').value.trim()||'未命名',description:mb.querySelector('#_dgd').value.trim(),scenario:mb.querySelector('#_dgs').value.trim(),targetRole:mb.querySelector('#_dgr').value.trim(),rules:mb.querySelector('#_dgru').value.trim(),difficulty:selDiff,rounds:parseInt(mb.querySelector('#_dgro').value)||12,worldBookIds:cur.worldBookIds||[],styleBookIds:cur.styleBookIds||[]}
       if(isEdit){const idx=dungeonTemplates.findIndex(x=>x.id===t.id);if(idx>=0)dungeonTemplates[idx]=t}else dungeonTemplates.push(t)
       saveDungeonTemplates();close();render('dungeons')
@@ -35831,7 +35841,7 @@ function openAIDungeonGen(){
       const hint=mb.querySelector('#_aidgh').value.trim()||'随机'
       const btn=mb.querySelector('#_aidgg'),out=mb.querySelector('#_aidgo')
       btn.textContent='生成中...';btn.style.opacity='.5';out.style.display='block';out.innerHTML='<div style="color:var(--ink-l)">思考中...</div>'
-      const res=await askAIJson('只返回JSON。保持虚构叙事，涉及危险行为时聚焦人物和后果，省略现实可操作的细节。',`设计副本，主题「${hint}」。按用户描述设计剧情。NPC关系用文字描述，勿设置关系分值或阈值。返回JSON：{"name":"","description":"50字","scenario":"详细设定含NPC资料和叙事关系","targetRole":"","difficulty":"easy/normal/hard/nightmare","rounds":12,"rules":""}`,1500)
+      const res=await askAIJson('只返回JSON。保持虚构叙事，涉及危险行为时聚焦人物和后果，省略现实可操作的细节。',`设计副本，主题「${hint}」。按用户描述设计剧情。保留NPC文字关系；需要副本局部攻略值时，在剧本中用独立行“1.名字(好感60)：关系说明”明确初始值，在规则中明确增减及剧情阈值。未知初始值写问号。返回JSON：{"name":"","description":"50字","scenario":"详细设定含NPC资料和叙事关系","targetRole":"","difficulty":"easy/normal/hard/nightmare","rounds":12,"rules":""}`,1500)
       btn.textContent='生成';btn.style.opacity='1'
       if(!res){out.innerHTML='<div style="color:#c47a7a">失败，重试</div>';return}
       out.innerHTML=`<div class="card"><div style="font-size:15px;font-weight:500;color:var(--ink)">${escHtml(res.name||'')}</div><div style="font-size:11px;color:var(--ink-l);margin-top:6px;line-height:1.8">${escHtml(res.description||'')}</div></div><div style="display:flex;gap:8px;margin-top:10px"><div class="btn-main" id="_aidga" style="flex:1;margin:0">添加</div><div class="btn-sub" id="_aidgr" style="flex:1;margin:0">重新生成</div></div>`
@@ -35843,6 +35853,7 @@ function openAIDungeonGen(){
 
 // 开始副本（单人/多人选择）
 function openDungeonStart(tid){
+  if(activeDungeon){alert('仅支持一个活动副本。请先继续并完成，或放弃当前副本，再开始新局。');return}
   const template=dungeonTemplates.find(t=>t.id===tid);if(!template)return
   let myChars=typeof getMyChars==='function'?getMyChars():charList;if(!myChars.length)myChars=charList
   const pe=P()
@@ -35886,6 +35897,7 @@ function openDungeonStart(tid){
         savePersonaList()
       }
       const dungeon={id:uid(),templateId:template.id,charId:cid,isPlayerSelf:isPlayerSelf,isMulti:dgMode==='multi',partnerIds:[],npcProfiles:{},status:'ongoing',currentRound:0,maxRounds:template.rounds+Math.floor(Math.random()*6),story:[],oocCount:0,startTime:new Date().toLocaleString(),playerStats:isPlayerSelf?JSON.parse(JSON.stringify(pe.stats)):null,usedItems:[]}
+      initDungeonAffection(dungeon,template)
 if(dgMode==='multi'){
   close()
   const candidates=isPlayerSelf?myChars:myChars.filter(x=>x.id!==cid)
@@ -35955,6 +35967,7 @@ const partner=partners[0]||null
   const partnerNames=partners.map(x=>x.name).join('、')
 top.innerHTML=`<div id="_dgbk" style="padding:6px;cursor:pointer">${I.back(n?'#c8a8d0':'var(--rose-d)')}</div><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:500;color:${n?'#f0e0f0':'var(--ink)'}">${escHtml(template.name)}</div><div style="font-size:10px;color:${n?'#a898b8':'var(--ink-l)'};margin-top:2px">${escHtml(c.name)}${partnerNames?' + '+escHtml(partnerNames):''} → ${escHtml(template.targetRole)}</div></div><div style="text-align:right"><div id="_dgpt" style="font-size:12px;color:${n?'#c8a8d0':'var(--rose-d)'};font-weight:500">${activeDungeon.currentRound}/${activeDungeon.maxRounds}</div></div>`
   p.appendChild(top)
+  const rulesButton=ce('button','btn-sub');rulesButton.type='button';rulesButton.textContent='剧本设定与规则';rulesButton.style.cssText='margin:8px 16px;flex-shrink:0';rulesButton.onclick=()=>openDungeonRules(template);p.appendChild(rulesButton)
   const progBar=ce('div');progBar.style.cssText='height:4px;background:'+(n?'rgba(255,255,255,.1)':'rgba(0,0,0,.08)')+';flex-shrink:0'
   progBar.innerHTML=`<div id="_dgpg" style="height:100%;width:${(activeDungeon.currentRound/activeDungeon.maxRounds)*100}%;background:linear-gradient(90deg,var(--rose-l),var(--rose));transition:width .3s"></div>`
   p.appendChild(progBar)
@@ -36110,25 +36123,28 @@ top.innerHTML=`<div id="_dgbk" style="padding:6px;cursor:pointer">${I.back(n?'#c
       
   $('#_dgnpc').onclick=()=>showModal('NPC资料',mb=>{
     const draw=()=>{
-      const profiles=Object.entries(dungeon.npcProfiles||{})
+      const profiles=dungeonNpcNames(dungeon).map(name=>[name,dungeon.npcProfiles?.[name]||{}])
       const canScan=dungeon.status==='ongoing'
       mb.innerHTML=profiles.map(([name,prof={}])=>`<div class="card">
         <div class="card-t">${escHtml(name)}</div>
         <div style="font-size:12px;color:var(--ink);line-height:1.8">
+          <div>副本攻略值：${Number.isFinite(dungeon.npcAffection?.[name])?dungeon.npcAffection[name]:'未知'}</div>
           ${prof?.role?`<div>身份：${escHtml(prof.role)}</div>`:''}
           ${prof?.personality?`<div>性格：${escHtml(prof.personality)}</div>`:''}
           ${prof?.relation?`<div>关系：${escHtml(prof.relation)}</div>`:''}
           ${prof?.firstMet?`<div>初次登场：第${escHtml(prof.firstMet)}轮</div>`:''}
-        </div></div>`).join('')||`<div style="text-align:center;color:var(--ink-l);padding:20px">还没有NPC资料</div>${canScan?'<div class="btn-sub" id="_scanNpc">从剧本中扫描NPC</div>':''}`
+        </div></div>`).join('')||'<div style="text-align:center;color:var(--ink-l);padding:20px">还没有NPC资料</div>'
+      if(canScan)mb.innerHTML+='<div class="btn-sub" id="_scanNpc">从剧本中扫描NPC</div>'
       const sb=mb.querySelector('#_scanNpc')
       if(!sb)return
       sb.onclick=async()=>{
         const api=getApi();if(!api||!api.key){alert('需要配置API');return}
         sb.onclick=null;sb.textContent='扫描中...';sb.style.opacity='.5'
         let res
-        try{res=await askAIJson('只返回JSON。提取NPC资料和文字关系，忽略关系分值及阈值。',`从副本剧本提取NPC：\n${(template.scenario||'').slice(0,1500)}\n\n返回JSON：{"npcs":[{"name":"名字","role":"身份","personality":"简述性格","relation":"与主角的叙事关系"}]}`,800)}catch(e){}
-        if(activeDungeon!==dungeon||dungeon.status!=='ongoing')return
-        if(mergeDungeonNpcProfiles(dungeon,res?.npcs)){
+        const scanRound=dungeon.currentRound,persona=P()
+        try{res=await askAIJson('只返回JSON。提取NPC资料和文字关系，保留剧本攻略值及阈值的文字说明。',`从副本剧本提取NPC：\n${template.scenario||''}\n规则：${template.rules||''}\n当前资料：${summarizeDungeonNpcProfiles(dungeon)}\n${scanRound===0?'当前为新局第0轮：仅从剧本明确给出的初始数值提取 initialAffection，必须为有限数字（含0）；未知或未明确给出时省略该字段，禁止猜测。':'当前为进行中的副本：省略 initialAffection，禁止以初始值重置或填补丢失进度。'}\n\n返回JSON：{"npcs":[{"name":"名字","role":"身份","personality":"简述性格","relation":"与主角的叙事关系"}]}`,1200)}catch(e){}
+        if(activeDungeon!==dungeon||P()!==persona||dungeon.status!=='ongoing'||dungeon.currentRound!==scanRound||!mb.isConnected)return
+        if(mergeDungeonNpcProfiles(dungeon,res?.npcs,undefined,true)){
           saveActiveDungeon();if(mb.isConnected)draw()
         }else if(mb.isConnected){
           draw();const retry=mb.querySelector('#_scanNpc');if(retry)retry.textContent='扫描失败，重试'
@@ -36142,8 +36158,7 @@ top.innerHTML=`<div id="_dgbk" style="padding:6px;cursor:pointer">${I.back(n?'#c
 function mkStoryCard(s,n){
   let legacyNpcNotes=''
   if(s.type==='npc_change'){
-    // 旧记录原样留档，回放只显示其中的剧情缘由。
-    legacyNpcNotes=Array.from((s.text||'').matchAll(/^(.+?) 好感[↑↓][^（\n]+（([\s\S]*?)）→ \d+(?:\.\d+)?$/gm),m=>m[2].trim()?`${m[1]}：${m[2].trim()}`:'').filter(Boolean).join('\n')
+    legacyNpcNotes=typeof s.text==='string'?s.text:''
     if(!legacyNpcNotes)return null
   }
   const card=ce('div','card');card.style.cssText='margin-bottom:12px;animation:fadeIn .3s'
@@ -36181,6 +36196,7 @@ async function doDungeonAdvance(template,c,partner,intervention){
   const dungeon=activeDungeon
   if(dungeon?.status!=='ongoing'||dungeonAdvances.has(dungeon))return
   const attempt={}
+  const persona=P()
   dungeonAdvances.set(dungeon,attempt)
   const release=()=>{if(dungeonAdvances.get(dungeon)===attempt)dungeonAdvances.delete(dungeon)}
   _setPageTeardown(release)
@@ -36246,16 +36262,16 @@ ${diceInfoTeam}
    - D20骰点≥${critHi}强制crit_success（含隐藏奖励），≤${critLo}强制crit_fail（意外恶果）
    - 剧情必须体现出这次判定的过程和结果，让判定结果真正影响接下来的剧情走向（成功给好处，失败付代价）
    - 若本轮纯剧情推进无挑战点，diceCheck 填 null
-3. 根据已有剧情、NPC的身份、性格、动机和文字关系决定其行动。关系随剧情发展；忽略剧本中的NPC关系分值、增减与阈值。
+3. 根据已有剧情、NPC的身份、性格、动机和文字关系决定其行动。副本局部攻略值严格遵循剧本规则的分值、增减和阈值，不设统一范围。npcChanges 仅返回本轮有依据的增减 delta 和 reason，未知分值保持未知，禁止猜测或重置为初始值。阈值与文字关系共同影响剧情。
 4. 不要用emoji
 5. npcProfiles 记录本轮新登场或资料、关系有更新的NPC。已知NPC沿用【当前NPC资料与关系】里的原名；没有更新时填空数组。relation 用一句话写清关系及其剧情依据。
 
 返回JSON：
-{"story":"剧情正文","ooc":false,"oocReason":"","diceCheck":{"stat":"charm/strength/intelligence/luck","difficulty":15,"description":"简述这次判定的具体内容","outcome":"crit_success/success/fail/crit_fail"},${autoImgEnabled ? '"imagePrompt":"英文生图tag一句话",' : ''}"npcProfiles":[{"name":"NPC名","role":"身份","personality":"简述性格","relation":"与主角的叙事关系"}]}`
+{"story":"剧情正文","ooc":false,"oocReason":"","diceCheck":{"stat":"charm/strength/intelligence/luck","difficulty":15,"description":"简述这次判定的具体内容","outcome":"crit_success/success/fail/crit_fail"},${autoImgEnabled ? '"imagePrompt":"英文生图tag一句话",' : ''}"npcChanges":[{"name":"NPC名","delta":5,"reason":"本轮依据"}],"npcProfiles":[{"name":"NPC名","role":"身份","personality":"简述性格","relation":"与主角的叙事关系"}]}`
 
   let res
   try{res=await askAIJson(sysP,'生成第'+round+'轮',2000)}catch(e){}
-  if(activeDungeon!==dungeon||dungeon.status!=='ongoing'||dungeonAdvances.get(dungeon)!==attempt){release();return}
+  if(activeDungeon!==dungeon||P()!==persona||dungeon.status!=='ongoing'||dungeonAdvances.get(dungeon)!==attempt){release();return}
   release()
   if(!res||!res.story){
     btn.textContent='推进剧情';btn.style.opacity='1';btn.style.pointerEvents='auto'
@@ -36287,6 +36303,8 @@ ${diceInfoTeam}
   if(res.ooc){activeDungeon.oocCount++;const oe={type:'ooc_warning',text:res.oocReason||'行为与身份不符',round:activeDungeon.currentRound};activeDungeon.story.push(oe);sa.appendChild(mkStoryCard(oe,n))}
 
   mergeDungeonNpcProfiles(dungeon,res.npcProfiles,round)
+  const changes=applyDungeonAffection(dungeon,res.npcChanges)
+  if(changes.length){const changeEntry={type:'npc_change',text:changes.join('\n'),round};dungeon.story.push(changeEntry);sa.appendChild(mkStoryCard(changeEntry,n))}
 
   // 剧情卡片
   const entry={type:'narration',text:res.story,round:activeDungeon.currentRound,image:''}
@@ -36307,16 +36325,55 @@ ${diceInfoTeam}
   }
 }
 
-function mergeDungeonNpcProfiles(dungeon,updates,round){
+function dungeonNpcNames(dungeon){
+  return [...new Set([...Object.keys(dungeon.npcAffection||{}),...Object.keys(dungeon.npcProfiles||{})])]
+}
+function dungeonNpcKey(dungeon,name){
+  const names=dungeonNpcNames(dungeon)
+  const parts=value=>value.split(/[·・\s]+/).filter(Boolean)
+  const incoming=parts(name)
+  const aliases=names.filter(key=>{const known=parts(key);return known.length===1?incoming.includes(key):incoming.length===1?known.includes(name):known.at(-1)===incoming.at(-1)})
+  return names.includes(name)||aliases.length!==1?name:aliases[0]
+}
+function initDungeonAffection(dungeon,template){
+  dungeon.npcAffection={}
+  // Only explicit initial values in a fresh game's script are recoverable.
+  for(const match of (template.scenario||'').matchAll(/^\s*\d+[.、]\s*([^\n(（]+)[(（]好感\s*([+-]?\d+(?:\.\d+)?)[)）]/gm)){
+    const name=dungeonNpcKey(dungeon,match[1].trim()),value=Number(match[2])
+    if(Number.isFinite(value))Object.defineProperty(dungeon.npcAffection,name,{value,enumerable:true,writable:true,configurable:true})
+  }
+}
+function applyDungeonAffection(dungeon,updates){
+  const notes=[],seen=new Set()
+  if(!Array.isArray(updates))return notes
+  for(const npc of updates){
+    if(typeof npc?.name!=='string'||!npc.name.trim()||!Number.isFinite(npc.delta))continue
+    const key=dungeonNpcKey(dungeon,npc.name.trim()),scores=dungeon.npcAffection
+    if(seen.has(key)||!scores||!Object.hasOwn(scores,key)||!Number.isFinite(scores[key])||!Number.isFinite(scores[key]+npc.delta))continue
+    seen.add(key);scores[key]+=npc.delta
+    const reason=typeof npc.reason==='string'?npc.reason:''
+    notes.push(`${key} 攻略值${npc.delta>=0?'+':''}${npc.delta}（${reason}）→ ${scores[key]}`)
+  }
+  return notes
+}
+function openDungeonRules(template){
+  if(!template)return
+  showModal('剧本设定与规则',mb=>{
+    mb.innerHTML=[['名称',template.name],['简介',template.description],['扮演身份',template.targetRole],['难度',template.difficulty],['轮数',template.rounds],['详细剧本',template.scenario],['规则',template.rules]].map(([label,value])=>`<div class="card"><div class="card-t">${label}</div><div style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8">${escHtml(String(value??''))}</div></div>`).join('')
+  })
+}
+function mergeDungeonNpcProfiles(dungeon,updates,round,allowInitial=false){
   if(!Array.isArray(updates))return false
   const profiles=dungeon.npcProfiles??={}
-  const bareName=name=>name.replace(/^[^·・\s]{1,6}[·・\s]/,'').trim()
   let changed=false
   for(const npc of updates){
     const name=typeof npc?.name==='string'?npc.name.trim():''
     if(!name)continue
-    const aliases=Object.keys(profiles).filter(key=>bareName(key)===bareName(name))
-    const key=Object.hasOwn(profiles,name)||aliases.length!==1?name:aliases[0]
+    const key=dungeonNpcKey(dungeon,name)
+    if(allowInitial&&dungeon.currentRound===0&&Number.isFinite(npc.initialAffection)){
+      const scores=dungeon.npcAffection??={}
+      if(!Object.hasOwn(scores,key))Object.defineProperty(scores,key,{value:npc.initialAffection,enumerable:true,writable:true,configurable:true})
+    }
     const old=Object.hasOwn(profiles,key)?profiles[key]:{}
     const profile={...old}
     for(const field of ['role','personality','relation']){
@@ -36331,7 +36388,7 @@ function mergeDungeonNpcProfiles(dungeon,updates,round){
 }
 
 function summarizeDungeonNpcProfiles(dungeon){
-  return Object.entries(dungeon.npcProfiles||{}).map(([name,p])=>[name,p?.role,p?.personality,p?.relation].filter(Boolean).join('：')).join('\n')
+  return dungeonNpcNames(dungeon).map(name=>{const p=dungeon.npcProfiles?.[name];return [name,p?.role,p?.personality,p?.relation,Number.isFinite(dungeon.npcAffection?.[name])?'副本攻略值 '+dungeon.npcAffection[name]:'副本攻略值未知'].filter(Boolean).join('：')}).join('\n')
 }
 
 // 副本结算（奖励只发放一次；弹窗被背景点击关闭后重进只重放结算界面，不重复发放）
@@ -36446,7 +36503,7 @@ async function doDungeonComplete(template,c){
     showModal('副本失败',(mb,close)=>{
       mb.innerHTML=`<div style="text-align:center;padding:20px 0"><div style="font-size:18px;font-weight:600;color:#c06060">通关失败</div><div style="font-size:12px;color:var(--ink-l);margin-top:8px">OOC次数过多：${activeDungeon.oocCount}/${activeDungeon.maxRounds}</div></div><div style="display:flex;gap:10px;margin-top:16px"><div class="btn-main" id="_dgretry" style="flex:1;margin:0">重新挑战</div><div class="btn-sub" id="_dgexit" style="flex:1;margin:0">放弃</div></div>`
       // 【修复】重新挑战保留 isPlayerSelf/多人伙伴/玩家属性，否则玩家亲自穿越的存档会软锁、多人队伍会散
-      mb.querySelector('#_dgretry').onclick=()=>{if(activeDungeon!==dungeon)return;activeDungeon={id:uid(),templateId:template.id,charId:c.id,isPlayerSelf:dungeon.isPlayerSelf,isMulti:dungeon.isMulti,partnerIds:(dungeon.partnerIds||[]).slice(),partnerId:dungeon.partnerId,playerStats:dungeon.isPlayerSelf&&dungeon.playerStats?JSON.parse(JSON.stringify(dungeon.playerStats)):null,npcProfiles:{},usedItems:[],status:'ongoing',currentRound:0,maxRounds:template.rounds+Math.floor(Math.random()*6),story:[],oocCount:0,startTime:new Date().toLocaleString()};saveActiveDungeon();close();render('dungeonplay')}
+      mb.querySelector('#_dgretry').onclick=()=>{if(activeDungeon!==dungeon)return;activeDungeon={id:uid(),templateId:template.id,charId:c.id,isPlayerSelf:dungeon.isPlayerSelf,isMulti:dungeon.isMulti,partnerIds:(dungeon.partnerIds||[]).slice(),partnerId:dungeon.partnerId,playerStats:dungeon.isPlayerSelf&&dungeon.playerStats?JSON.parse(JSON.stringify(dungeon.playerStats)):null,npcProfiles:{},usedItems:[],status:'ongoing',currentRound:0,maxRounds:template.rounds+Math.floor(Math.random()*6),story:[],oocCount:0,startTime:new Date().toLocaleString()};initDungeonAffection(activeDungeon,template);saveActiveDungeon();close();render('dungeonplay')}
       mb.querySelector('#_dgexit').onclick=()=>leaveDungeon(dungeon,close)
       const back=ce('button','btn-sub');back.type='button';back.textContent='关闭结算';back.onclick=close;mb.appendChild(back)
     })
@@ -36500,6 +36557,7 @@ async function doDungeonComplete(template,c){
           targetRole:template.targetRole,
           rounds:dungeon.currentRound,
           npcProfiles:JSON.parse(JSON.stringify(dungeon.npcProfiles||{})),
+          npcAffection:JSON.parse(JSON.stringify(dungeon.npcAffection||{})),
           memoir:(legacyData&&legacyData.memoir)||'',
           legacies:acceptedLegs,
           completedAt:new Date().toLocaleString()

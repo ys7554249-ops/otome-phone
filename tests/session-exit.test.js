@@ -406,6 +406,7 @@ test('closed settlement reopens without duplicate rewards and finish exits befor
   context.autoUpdateMemoryTable = async () => {};
   const dungeon = start('first', 'finished');
   dungeon.npcProfiles = { '楚瑶': { role: '师妹', relation: '因共同经历而互相信任' } };
+  dungeon.npcAffection = { '楚瑶': 83 };
   const pending = context.doDungeonComplete(template, character);
   await context.doDungeonComplete(template, character);
   assert.equal(requests.length, 1);
@@ -426,14 +427,14 @@ test('closed settlement reopens without duplicate rewards and finish exits befor
   assert.equal(data.get('activeDungeon'), null);
   assert.equal(rewards, 1);
   assert.equal(character.dungeonHistory[0].npcProfiles['楚瑶'].relation, '因共同经历而互相信任');
-  assert.equal('npcAffection' in character.dungeonHistory[0], false);
+  assert.equal(character.dungeonHistory[0].npcAffection['楚瑶'], 83);
   start('replacement');
   memory.resolve();
   await memory.promise;
   assert.equal(data.get('activeDungeon').id, 'replacement');
 });
 
-test('dungeon progression keeps narrative profiles and ignores legacy relationship scores', async () => {
+test('dungeon progression preserves local scores and narrative profiles', async () => {
   const { context, data, requests, prompts, run, template, character, start } = dungeonEnv();
   const dungeon = start('legacy');
   dungeon.npcAffection = { '楚瑶': 73 };
@@ -442,24 +443,25 @@ test('dungeon progression keeps narrative profiles and ignores legacy relationsh
   dungeon.currentRound = 1;
   const pending = context.doDungeonAdvance(template, character, null, '');
   assert.match(prompts[0][0], /楚瑶：师妹：敏锐/);
-  assert.doesNotMatch(prompts[0][0], /73|npcChanges/);
+  assert.match(prompts[0][0], /73/);
+  assert.match(prompts[0][0], /严格遵循剧本规则的分值、增减和阈值/);
   requests[0].resolve({
     story: '楚瑶决定留下。',
-    npcChanges: [{ name: '旧字段', delta: 5 }],
+    npcChanges: [{ name: '师妹·楚瑶', delta: 10, reason: '留下' }, { name: '旧字段', delta: 5 }],
     npcProfiles: [{ name: '师妹·楚瑶', relation: '愿意一起找出真相', delta: 10 }, { name: '老苏', relation: 80 }]
   });
   await pending;
   const saved = data.get('activeDungeon');
-  assert.equal('npcAffection' in saved, false);
+  assert.deepEqual(saved.npcAffection, { '楚瑶': 83 });
   assert.deepEqual(saved.npcProfiles, {
     '楚瑶': { role: '师妹', personality: '敏锐', firstMet: 1, relation: '愿意一起找出真相' },
     '老苏': { firstMet: 2 }
   });
-  assert.deepEqual(saved.story.map(entry => entry.type), ['npc_change', 'narration']);
+  assert.deepEqual(saved.story.map(entry => entry.type), ['npc_change', 'npc_change', 'narration']);
   run(section('function mkStoryCard(', '\n// 推进剧情核心'));
   const oldCard = context.mkStoryCard(saved.story[0], false);
-  assert.match(oldCard.innerHTML, /楚瑶：同心解谜/);
-  assert.doesNotMatch(oldCard.innerHTML, /好感|73/);
+  assert.match(oldCard.innerHTML, /同心解谜/);
+  assert.match(oldCard.innerHTML, /73/);
 });
 
 test('dungeon template upgrade changes only original NPC relationship sections', () => {
@@ -467,18 +469,17 @@ test('dungeon template upgrade changes only original NPC relationship sections',
   run(section('function updateBuiltinDungeonRelations(', '\n// 副本列表页'));
   assert.equal(context.dungeonTemplates.length, 5);
   for (const template of context.dungeonTemplates) {
-    assert.match(template.scenario, /NPC·叙事关系/);
-    assert.doesNotMatch(template.scenario + template.rules, /好感/);
+    assert.match(template.scenario, /NPC·初始好感/);
   }
   const custom = { id: 'builtin_escape', scenario: '【关键NPC·初始好感】\n自定义关系与剧情' };
   data.set('builtinDungeonsV3', true);
   context.dungeonTemplates = [custom];
   assert.equal(context.updateBuiltinDungeonRelations(custom), false);
   assert.deepEqual(custom, { id: 'builtin_escape', scenario: '【关键NPC·初始好感】\n自定义关系与剧情' });
-  const defaults = section('const builtinDungeons=[', '\n  const existingIds');
-  const [saved] = run(defaults + '\nbuiltinDungeons');
+  const saved = context.dungeonTemplates[0] || run('structuredClone(builtinDungeons[0])');
+  saved.scenario = saved.scenario.replace(/【关键NPC·初始好感】[\s\S]+?(?=\n\n|$)/, '【关键NPC·叙事关系】\n自定义');
   saved.scenario += '\n\n用户追加的剧情';
-  assert.equal(context.updateBuiltinDungeonRelations(saved), true);
+  assert.equal(context.updateBuiltinDungeonRelations(saved), false);
   assert.match(saved.scenario, /NPC·叙事关系/);
   assert.match(saved.scenario, /用户追加的剧情$/);
   assert.equal(context.updateBuiltinDungeonRelations(saved), false);
@@ -489,6 +490,7 @@ test('NPC scan saves text profiles and drops results after leaving the dungeon',
   context.dungeonTemplates = [template];
   context.I = { back: () => '' };
   context.updateBuiltinDungeonRelations = () => false;
+  template.scenario = '药师老苏记得主角救人的恩情，初始好感为45。';
   run(section('pages.dungeonplay=()=>{', '\nfunction mkStoryCard('));
   const openNpcPanel = () => {
     context.pages.dungeonplay();
@@ -515,4 +517,159 @@ test('NPC scan saves text profiles and drops results after leaving the dungeon',
   await currentScan;
   assert.deepEqual(data.get('activeDungeon').npcProfiles['老苏'], { role: '药师', personality: '温厚', relation: '记得主角的帮助' });
   assert.match(modal.innerHTML, /身份：药师[\s\S]*性格：温厚[\s\S]*关系：记得主角的帮助/);
+  assert.deepEqual(data.get('activeDungeon').npcAffection, { '老苏': 45 });
+  assert.match(prompts[1][1], /初始好感为45/);
+  assert.match(prompts[1][1], /initialAffection.*有限数字/);
+  assert.match(prompts[1][1], /未知或未明确给出时省略该字段，禁止猜测/);
+  assert.match(modal.innerHTML, /副本攻略值：45/);
+  const page = context.app.children.at(-1);
+  assert.equal(page.children[1].textContent, '剧本设定与规则');
+  assert.equal(page.children[0].children.includes(page.children[1]), false);
+});
+
+test('scan initial scores accept zero, reject invalid values and preserve existing aliases', () => {
+  const { context, data, start } = dungeonEnv();
+  const dungeon = start('scan-initial');
+  dungeon.npcProfiles = { '师妹·楚瑶': { relation: '相识' } };
+  dungeon.npcAffection = { '老苏': 78, '零': 0 };
+  context.mergeDungeonNpcProfiles(dungeon, [
+    { name: '楚瑶', initialAffection: 0 },
+    { name: '师妹·楚瑶', initialAffection: 60 },
+    { name: '药师·老苏', initialAffection: 45 },
+    { name: '零·AI残魂', initialAffection: 55 },
+    ...[NaN, Infinity, -Infinity, '45', null, false, {}, undefined].map((value, i) => ({ name: 'invalid' + i, initialAffection: value }))
+  ], undefined, true);
+  context.saveActiveDungeon();
+  assert.deepEqual(data.get('activeDungeon').npcAffection, { '老苏': 78, '零': 0, '师妹·楚瑶': 0 });
+  assert.equal(dungeon.npcProfiles['师妹·楚瑶'].relation, '相识');
+  context.mergeDungeonNpcProfiles(dungeon, [{ name: '推进注入', initialAffection: 20 }], 1);
+  assert.equal(Object.hasOwn(dungeon.npcAffection, '推进注入'), false);
+});
+
+test('ongoing scans never initialize lost scores or reset known progress', async () => {
+  const { context, data, requests, prompts, modals, run, template, start } = dungeonEnv();
+  context.dungeonTemplates = [template];
+  context.I = { back: () => '' };
+  context.updateBuiltinDungeonRelations = () => false;
+  run(section('pages.dungeonplay=()=>{', '\nfunction mkStoryCard('));
+  const dungeon = start('ongoing-scan');
+  Object.assign(dungeon, { currentRound: 3, templateId: template.id, charId: 'c', npcAffection: { '老苏': 78 } });
+  context.pages.dungeonplay();
+  context.$('#_dgnpc').onclick();
+  const scan = modals.at(-1).querySelector('#_scanNpc').onclick();
+  assert.match(prompts[0][1], /省略 initialAffection，禁止以初始值重置或填补丢失进度/);
+  requests[0].resolve({ npcs: [{ name: '楚瑶', initialAffection: 60 }, { name: '药师·老苏', initialAffection: 45 }] });
+  await scan;
+  assert.deepEqual(data.get('activeDungeon').npcAffection, { '老苏': 78 });
+  assert.match(modals.at(-1).innerHTML, /副本攻略值：未知/);
+  const legacy = { currentRound: 2 };
+  context.mergeDungeonNpcProfiles(legacy, [{ name: '楚瑶', initialAffection: 60 }], undefined, true);
+  assert.equal(legacy.npcAffection, undefined);
+});
+
+test('local score initialization, finite validation and ambiguous aliases preserve unknowns', () => {
+  const { context, data, start } = dungeonEnv();
+  const dungeon = start('scores');
+  context.initDungeonAffection(dungeon, { scenario: '1.师妹·楚瑶(好感60)：说明\n2.零·AI残魂(好感-20)：说明\n3.影子(好感?)：未知' });
+  context.mergeDungeonNpcProfiles(dungeon, [{ name: '楚瑶', relation: '信任' }, { name: '零', role: 'AI' }]);
+  context.applyDungeonAffection(dungeon, [
+    { name: '楚瑶', delta: 100 }, { name: '师妹·楚瑶', delta: 1 },
+    { name: '零', delta: -5 }, { name: '影子', delta: 10 },
+    { name: '楚瑶', delta: Infinity }, { name: '零', delta: '5' }, null
+  ]);
+  dungeon.npcAffection.bad = NaN;
+  context.saveActiveDungeon();
+  assert.deepEqual(data.get('activeDungeon').npcAffection, { '师妹·楚瑶': 160, '零·AI残魂': -25 });
+  assert.equal(dungeon.npcProfiles['师妹·楚瑶'].relation, '信任');
+  dungeon.npcAffection['姐姐·同名'] = 2;
+  dungeon.npcAffection['妹妹·同名'] = 3;
+  assert.equal(context.dungeonNpcKey(dungeon, '同名'), '同名');
+  assert.deepEqual(Array.from(context.applyDungeonAffection(dungeon, {})), []);
+  const lost = { npcProfiles: { '楚瑶': { relation: '熟识' } } };
+  context.applyDungeonAffection(lost, [{ name: '楚瑶', delta: 8, initialAffection: 60 }]);
+  assert.equal(lost.npcAffection, undefined);
+});
+
+test('exact migrated builtins restore original values once and protect custom text', () => {
+  const { context, run } = environment({ dungeonTemplates: [], saveDungeonTemplates() {} });
+  run(section('function updateBuiltinDungeonRelations(', '\n// 副本列表页'));
+  const migrated = [...html.matchAll(/builtin_\w+:\[-?\d+,`([\s\S]*?)`\]/g)].map(match => match[1]);
+  assert.equal(migrated.length, 5);
+  context.dungeonTemplates.forEach((template, i) => {
+    const original = template.scenario;
+    template.scenario = original.replace(/【(?:关键|团队)NPC·初始好感】[\s\S]+?(?=\n\n|$)/, migrated[i]) + '\n\n自定义尾注';
+    assert.equal(context.updateBuiltinDungeonRelations(template), true);
+    assert.equal(template.scenario, original + '\n\n自定义尾注');
+    assert.equal(context.updateBuiltinDungeonRelations(template), false);
+    template.scenario = migrated[i] + '\n自定义NPC';
+    assert.equal(context.updateBuiltinDungeonRelations(template), false);
+  });
+});
+
+test('rules viewer escapes full script and opens independently of AI', () => {
+  const { context, modals, requests } = dungeonEnv();
+  context.escHtml = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+  const scenario = '<script>\n' + '完整剧本'.repeat(1000) + '\n末尾规则';
+  const template = { name: '<title>', scenario, rules: '好感>150\n下一行', targetRole: '"角色"' };
+  context.openDungeonRules(template);
+  const body = modals.at(-1).innerHTML;
+  assert.match(body, /&lt;script&gt;\n/);
+  assert.match(body, /末尾规则/);
+  assert.match(body, /好感&gt;150\n下一行/);
+  assert.match(body, /white-space:pre-wrap/);
+  assert.doesNotMatch(body, /<script>|<textarea|<input/);
+  assert.equal(requests.length, 0);
+  assert.equal(template.scenario, scenario);
+});
+
+test('active dungeon stays alongside library and protects its template and new-game slot', () => {
+  const alerts = [];
+  const { context, run, start, node, template } = dungeonEnv();
+  context.alert = message => alerts.push(message);
+  context.dungeonTemplates = [template];
+  context.saveDungeonTemplates = () => assert.fail('protected template was saved');
+  context.updateBuiltinDungeonRelations = () => false;
+  context.bgNow = () => '';
+  context.topBar = node;
+  context.I = new Proxy({}, { get: () => () => '' });
+  run(section('pages.dungeons=()=>{', '\n// AI生成副本'));
+  run(section('function openDungeonStart(', '\n// 副本游玩页'));
+  const dungeon = start('active');
+  dungeon.templateId = template.id;
+  dungeon.charId = 'c';
+  context.pages.dungeons();
+  const body = context.app.children.at(-1).children[1];
+  assert.match(body.innerHTML, /进行中/);
+  assert.match(body.children[0].innerHTML, /_dgstart/);
+  assert.match(body.children[0].innerHTML, /_adddg/);
+  context.openDungeonStart(template.id);
+  context.openDungeonEditor(template.id);
+  assert.equal(alerts.length, 2);
+  assert.equal(dungeon.id, 'active');
+});
+
+test('failed or stale scans and advances cannot overwrite scores', async () => {
+  const { context, requests, start, template, character, run, modals } = dungeonEnv();
+  context._aiShowErr = () => {};
+  const dungeon = start('failure');
+  dungeon.npcAffection = { '楚瑶': 78 };
+  const advance = context.doDungeonAdvance(template, character, null, '');
+  requests[0].reject(new Error('offline'));
+  await advance;
+  assert.equal(dungeon.currentRound, 0);
+  assert.equal(dungeon.npcAffection['楚瑶'], 78);
+  context.dungeonTemplates = [template];
+  context.I = { back: () => '' };
+  context.updateBuiltinDungeonRelations = () => false;
+  dungeon.templateId = template.id;
+  dungeon.charId = 'c';
+  run(section('pages.dungeonplay=()=>{', '\nfunction mkStoryCard('));
+  context.pages.dungeonplay();
+  context.$('#_dgnpc').onclick();
+  const scan = modals.at(-1).querySelector('#_scanNpc').onclick();
+  dungeon.currentRound++;
+  requests[1].resolve({ npcs: [{ name: '楚瑶', relation: '过时关系', initialAffection: 60 }] });
+  await scan;
+  assert.equal(dungeon.npcProfiles, undefined);
+  assert.equal(dungeon.npcAffection['楚瑶'], 78);
 });
